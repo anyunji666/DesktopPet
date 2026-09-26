@@ -331,4 +331,5 @@ module.exports = {
   switchScene,
   resetSceneAdjust,
   reloadScenes,
+  getAutoLaunchMode,
 };

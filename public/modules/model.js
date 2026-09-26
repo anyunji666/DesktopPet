@@ -85,7 +85,7 @@ function fixLowFootIkIterations(root) {
 }
 
 export function loadModel(url, opts = {}) {
-  const { playEntrance = true } = opts; // 程序初次打开传 false：直接待机，不跳开场舞；切换角色时保持 true
+  const { playEntrance = true, onReady } = opts; // 程序初次打开传 false：直接待机，不跳开场舞；切换角色时保持 true
   loader.load(
     url,
     (loaded) => {
@@ -100,6 +100,7 @@ export function loadModel(url, opts = {}) {
       setupIdle();
       frameModel();
       hideLoading();
+      if (typeof onReady === 'function') onReady(); // 模型此刻已经出现在屏幕上，仅初次启动计时用
       if (playEntrance) {
         // 模型就绪后跳一次开场舞，播完自动回待机（app.js 的 animate() 里已有这个逻辑），不循环
         const entranceIdx = state.dances.findIndex((d) => d.name === ENTRANCE_DANCE_NAME);

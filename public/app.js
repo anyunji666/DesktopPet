@@ -161,6 +161,7 @@ document.addEventListener('dblclick', (e) => {
 
 // 聊天记录窗口发起的对话回复，也在这边头顶显示一下
 window.petAPI.onShowBubble((text) => showBubble(text, 5000));
+window.petAPI.onBootTimerBubble((text) => showBubble(text, 16000));
 // AI 回复的语音合成好了：播放，并把气泡延长到语音结束
 initTtsPlayback();
 
@@ -219,7 +220,7 @@ window.petAPI.onInit((data) => {
   state.ignoreBones = new Set(data.ignoreBones || []);
   state.materialFixes = data.materialFixes || null;
   applyScene(data.scene || null);
-  loadModel(data.model, { playEntrance: false });
+  loadModel(data.model, { playEntrance: false, onReady: () => window.petAPI.notifyModelReady() });
 });
 
 // ---------------- 切换角色 ----------------

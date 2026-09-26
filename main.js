@@ -1,12 +1,18 @@
-const { app, BrowserWindow, ipcMain, dialog, powerMonitor } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, powerMonitor, screen } = require('electron');
 const path = require('path');
 const crypto = require('crypto');
+const os = require('os');
+const { execFile } = require('child_process');
+
+// 进程真正起跑的时间点，尽量贴近文件顶部，用来算"程序启动用时"（跟开机、登录、
+// 隔了多久才手动打开都没关系，纯粹是这个 Electron 进程自己跑起来花了多久）
+const APP_PROCESS_START_MS = Date.now();
 
 const ROOT = __dirname;
 
 const { startServer } = require('./main-modules/server');
 const { state } = require('./main-modules/state');
-const { loadConfig } = require('./main-modules/config');
+const { loadConfig, updateConfig } = require('./main-modules/config');
 const { scanCharacters } = require('./main-modules/character');
 const { scanScenes, setAdjust, normAdjust } = require('./main-modules/scene');
 const {
@@ -73,6 +79,66 @@ if (!gotLock) {
   });
 }
 
+// ---------- 启动计时气泡 ----------
+// 不管是不是开机自启动触发的，每次模型出现都报一次用时；但同一场开机内只在"第一次启动"
+// 报完整的「开机用时 + 程序启动用时」，之后同一场开机里再打开（手动关了又重开等）只报
+// 真实的「程序启动用时」，不再重复报开机用时（开机用时跟这是第几次打开程序无关）。
+let bootTimerReported = false; // 防止 model-ready 被重复触发时重复计算 / 重复弹气泡
+
+// 同一场开机内多次启动，各自算出来的"开机时间点"理论上只差几秒（时钟精度/计算时机导致的误差），
+// 超过这个容差就认为是不同的一场开机（比如重启过、休眠又开机）
+const SAME_BOOT_TOLERANCE_MS = 15000;
+
+function formatBootDuration(seconds) {
+  if (seconds < 60) return `${seconds.toFixed(1)}秒`;
+  const m = Math.floor(seconds / 60);
+  const s = seconds - m * 60;
+  return `${m}分${s.toFixed(1)}秒`;
+}
+
+// 查当前这次交互登录（本地账号 / 微软账号，含指纹或 PIN 登录）的登录时间点，返回毫秒时间戳；查不到返回 null。
+// 用 PowerShell 走 CIM（Win32_LogonSession）而不是解析 `query user` 的文字输出——后者的表头和日期格式
+// 会跟着系统语言/区域走，中文/英文/其它语言下格式都不一样，解析很容易出错；CIM 的 StartTime 转成
+// DateTimeOffset 再转 Unix 毫秒，是纯数字，不受语言/区域影响。
+// LogonType：2=交互登录（本机键盘密码/PIN/指纹），10/12=远程交互（RDP），11=缓存的域凭据交互登录——
+// 覆盖常见的本地开机登录场景；同一用户可能有多条记录，取时间最新的一条。
+function getInteractiveLogonTimeMs() {
+  return new Promise((resolve) => {
+    if (process.platform !== 'win32') return resolve(null);
+    const script =
+      '$s = Get-CimInstance Win32_LogonSession | ' +
+      'Where-Object { $_.LogonType -in 2,10,11,12 } | ' +
+      'Sort-Object StartTime -Descending | Select-Object -First 1; ' +
+      'if ($s -and $s.StartTime) { [DateTimeOffset]$s.StartTime | ForEach-Object { $_.ToUnixTimeMilliseconds() } }';
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', script],
+      { timeout: 5000, windowsHide: true },
+      (err, stdout) => {
+        if (err) return resolve(null);
+        const ms = parseInt(String(stdout).trim(), 10);
+        resolve(Number.isFinite(ms) && ms > 0 ? ms : null);
+      }
+    );
+  });
+}
+
+
+// 上次关闭时记的位置是否还能用：显示器插拔/分辨率变化后，坐标可能落在当前所有屏幕范围之外，
+// 那种情况下用它会导致窗口开到看不见的地方，宁可放弃、退回默认居中
+function isPositionOnScreen(x, y) {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+  return screen.getAllDisplays().some(({ bounds }) => {
+    return x >= bounds.x && x < bounds.x + bounds.width && y >= bounds.y && y < bounds.y + bounds.height;
+  });
+}
+
+// 上次关闭时记的宽度是否还能用：落在 [WIN_MIN_W, WIN_MAX_W] 区间内才算合法，
+// 高度始终按固定比例（WIN_H/WIN_W）跟着宽度换算，不单独存/单独校验
+function isWidthValid(width) {
+  return Number.isFinite(width) && width >= WIN_MIN_W && width <= WIN_MAX_W;
+}
+
 async function createWindow() {
   const server = await startServer();
   const port = server.address().port;
@@ -86,9 +152,20 @@ async function createWindow() {
   state.scenes = scanScenes();
   state.currentSceneName = state.scenes.some((s) => s.name === cfg.lastScene) ? cfg.lastScene : null;
 
+  // 记住主窗口关闭前的位置：只在坐标仍落在当前屏幕范围内时采用，否则走默认居中
+  const savedPos = cfg.winPosition;
+  const useSavedPos = savedPos && isPositionOnScreen(savedPos.x, savedPos.y);
+
+  // 记住关闭前的大小：宽度合法就用，高度按固定比例跟着换算（跟拖拽缩放手柄时的算法保持一致）
+  const savedSize = cfg.winSize;
+  const useSavedSize = savedSize && isWidthValid(savedSize.width);
+  const initW = useSavedSize ? Math.round(savedSize.width) : WIN_W;
+  const initH = useSavedSize ? Math.round((initW * WIN_H) / WIN_W) : WIN_H;
+
   state.win = new BrowserWindow({
-    width: WIN_W,
-    height: WIN_H,
+    width: initW,
+    height: initH,
+    ...(useSavedPos ? { x: Math.round(savedPos.x), y: Math.round(savedPos.y) } : {}),
     transparent: true,
     frame: false,
     resizable: false,
@@ -134,6 +211,41 @@ setLlmLogListener((call) => {
 });
 
 // ---------- IPC ----------
+// 模型刚出现在屏幕上（渲染进程通知）：算一次启动用时气泡。
+// 「程序启动用时」= 从这个进程真正起跑（APP_PROCESS_START_MS）到模型出现，跟开机/登录/
+// 手动打开的时机都无关，是真实的程序启动耗时，每次都算。
+// 「开机用时」= 登录完成时间 − 开机时间，纯粹是 Windows 系统本身加载到能登录的耗时，
+// 只在"这场开机第一次启动本程序"时才报一次，之后同一场开机内重开就不重复报了。
+ipcMain.on('model-ready', async () => {
+  if (bootTimerReported) return;
+  bootTimerReported = true;
+
+  const now = Date.now();
+  const programStartSec = (now - APP_PROCESS_START_MS) / 1000;
+  const uptimeSec = os.uptime();
+  const bootAtMs = now - uptimeSec * 1000;
+
+  const cfg = loadConfig();
+  const sameBoot = Number.isFinite(cfg.lastBootAtMs) && Math.abs(bootAtMs - cfg.lastBootAtMs) <= SAME_BOOT_TOLERANCE_MS;
+  const alreadyShownThisBoot = sameBoot && cfg.bootIntroShown;
+
+  if (alreadyShownThisBoot) {
+    send('boot-timer-bubble', `你好啊~本次程序启动用时${formatBootDuration(programStartSec)}。`);
+    return;
+  }
+
+  // 这场开机第一次启动：查登录完成时间，算出纯 Windows 加载耗时
+  const loginAtMs = await getInteractiveLogonTimeMs();
+  // 登录时间要落在"开机之后、现在之前"才算有效，否则（查不到 / 系统时钟被调过导致的异常值）
+  // 开机用时那部分就报不精确，但程序启动用时依然是精确值
+  const valid = loginAtMs != null && loginAtMs >= bootAtMs && loginAtMs <= now;
+  const text = valid
+    ? `你好啊~本次开机用时${formatBootDuration((loginAtMs - bootAtMs) / 1000)}，程序启动用时${formatBootDuration(programStartSec)}。`
+    : `你好啊~本次开机用时未能精确获取，程序启动用时${formatBootDuration(programStartSec)}。`;
+  send('boot-timer-bubble', text);
+  updateConfig({ lastBootAtMs: bootAtMs, bootIntroShown: true });
+});
+
 ipcMain.on('window-move', (_e, dx, dy) => {
   if (!state.win) return;
   const [x, y] = state.win.getPosition();
@@ -448,7 +560,14 @@ app.whenReady().then(() => {
 });
 app.on('window-all-closed', () => app.quit());
 
-// 退出时强制销毁窗口，防止渲染进程卡住（WebGL 资源释放慢）拖着整个进程退不干净
+// 退出前记住主窗口位置，下次启动原样恢复；随后强制销毁窗口，防止渲染进程卡住
+// （WebGL 资源释放慢）拖着整个进程退不干净。注意：任务管理器强杀/断电这类非正常退出不会走到这里，
+// 那种情况下位置就不会更新，这是可以接受的取舍。
 app.on('before-quit', () => {
-  if (state.win && !state.win.isDestroyed()) state.win.destroy();
+  if (state.win && !state.win.isDestroyed()) {
+    const [x, y] = state.win.getPosition();
+    const { width, height } = state.win.getBounds();
+    updateConfig({ winPosition: { x, y }, winSize: { width, height } });
+    state.win.destroy();
+  }
 });

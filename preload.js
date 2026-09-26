@@ -34,6 +34,10 @@ contextBridge.exposeInMainWorld('petAPI', {
   openHistoryWindow: (characterName) => ipcRenderer.send('open-history-window', characterName),
   // 主进程推送：别的窗口（如聊天记录窗口）发起的对话有了回复，主宠物窗口据此显示头顶气泡
   onShowBubble: (cb) => ipcRenderer.on('show-bubble', (_e, text) => cb(text)),
+  // 初次启动：模型刚出现在屏幕上这一刻通知主进程，仅用于开机自启动计时
+  notifyModelReady: () => ipcRenderer.send('model-ready'),
+  // 主进程推送：开机自启动计时气泡（3 秒后自动消失，和普通对话气泡分开一个通道，时长不同）
+  onBootTimerBubble: (cb) => ipcRenderer.on('boot-timer-bubble', (_e, text) => cb(text)),
   // 主进程推送：主窗口发起的对话完成，聊天记录窗口据此实时追加消息
   onChatUpdated: (cb) => ipcRenderer.on('chat-updated', (_e, data) => cb(data)),
   // 聊天记录窗口的消息编辑 / 添加 / 删除 / 清空
