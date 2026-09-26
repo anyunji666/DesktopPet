@@ -1,0 +1,18 @@
+{
+  "name": "desktop-pet",
+  "version": "0.1.0",
+  "description": "桌面 MMD 自设宠物",
+  "main": "main.js",
+  "author": "安运",
+  "homepage": "https://github.com/anyunji666/DesktopPet",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^44.0.0"
+  },
+  "dependencies": {
+    "three": "0.170.0",
+    "ws": "^8.18.0"
+  }
+}

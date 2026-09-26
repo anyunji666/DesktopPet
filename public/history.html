@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>聊天记录</title>
+<style>
+  body {
+    font-family: "Microsoft YaHei", sans-serif;
+    margin: 0;
+    padding: 16px;
+    background: #faf7f6;
+    color: #333;
+  }
+  h2 { margin: 0 0 12px; font-size: 15px; color: #a02440; }
+  #list { display: flex; flex-direction: column; gap: 10px; }
+  .msg {
+    max-width: 86%;
+    padding: 8px 12px;
+    border-radius: 14px;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  .msg-line { display: flex; align-items: flex-start; gap: 6px; }
+  .msg-text { word-break: break-word; white-space: pre-wrap; }
+  .msg.user {
+    align-self: flex-end;
+    background: #e04060;
+    color: #fff;
+    border-bottom-right-radius: 4px;
+  }
+  .msg.assistant {
+    align-self: flex-start;
+    background: #fff;
+    border: 1px solid #eee;
+    color: #333;
+    border-bottom-left-radius: 4px;
+  }
+  .ts { font-size: 10px; color: #aaa; margin-top: 3px; }
+  .msg.user .ts { text-align: right; color: rgba(255, 255, 255, 0.75); }
+
+  /* 标题栏：标题 + 右侧"⋯"更多菜单（插入消息/清空对话，交互参照 plot-assistant 手机私信页头部） */
+  /* 标题栏置顶悬浮（类似表格冻结首行）：sticky + 半透明底色 + 毛玻璃模糊，消息从下方滚过时隐约可见但不影响标题辨认；
+     负 margin 抵消 body 的 16px 内边距，让标题栏贴顶铺满，原有的 16px 边距/12px 下间距改由自身 padding 承担 */
+  #title-bar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: -16px -16px 0;
+    padding: 16px 16px 12px;
+    background: rgba(250, 247, 246, 0.6);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+  }
+  #title { margin: 0; flex: 1; }
+  #menu-wrap { position: relative; flex: none; }
+  #menu-btn {
+    border: none;
+    background: #fff;
+    border-radius: 50%;
+    width: 26px;
+    height: 26px;
+    font-size: 14px;
+    line-height: 1;
+    color: #a02440;
+    cursor: pointer;
+    box-shadow: 0 1px 3px rgba(160, 30, 60, 0.2);
+  }
+  #menu-btn:hover { background: #fdf2f4; }
+  #menu {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 4px);
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 110px;
+    padding: 5px;
+    background: #fff;
+    border: 1px solid #eee;
+    border-radius: 10px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+  }
+  #menu.hidden { display: none; }
+  #menu button {
+    border: none;
+    background: transparent;
+    text-align: left;
+    padding: 6px 12px;
+    font-size: 13px;
+    border-radius: 6px;
+    color: #333;
+    cursor: pointer;
+  }
+  #menu button:hover { background: #faf2f4; }
+  #menu .danger { color: #d33; }
+  #menu .danger:hover { background: #fdf0f0; }
+
+  /* 插入消息弹窗：居中模态，说明 + 多行输入 + 双身份按钮（参照 plot-assistant 的"私信插入"） */
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.35);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+  }
+  .overlay.hidden { display: none; }
+  #insert-dialog {
+    width: min(360px, calc(100vw - 32px));
+    background: #fff;
+    border-radius: 12px;
+    padding: 14px 16px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+    box-sizing: border-box;
+  }
+  .dialog-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 14px;
+    font-weight: 600;
+    color: #a02440;
+    margin-bottom: 8px;
+  }
+  #insert-close {
+    border: none;
+    background: transparent;
+    font-size: 20px;
+    line-height: 1;
+    color: #aaa;
+    cursor: pointer;
+    padding: 0;
+  }
+  #insert-close:hover { color: #666; }
+  .dialog-hint { font-size: 12px; color: #999; line-height: 1.5; margin-bottom: 8px; }
+  #insert-text {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 120px;
+    resize: vertical;
+    border: 1px solid #eee;
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-family: inherit;
+    font-size: 13px;
+    line-height: 1.5;
+    outline: none;
+    color: #333;
+  }
+  #insert-text:focus { border-color: rgba(224, 64, 96, 0.6); }
+  .dialog-btns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
+  .dialog-btns button {
+    border: none;
+    border-radius: 8px;
+    padding: 7px 14px;
+    font-size: 13px;
+    color: #fff;
+    cursor: pointer;
+  }
+  .dialog-btns button:disabled { opacity: 0.6; cursor: default; }
+  #insert-as-user { background: #4caf50; }
+  #insert-as-assistant { background: #5b9cf6; }
+
+  /* 每条消息的"⋯"：hover 才显示，点开在气泡下方露出 编辑/删除 */
+  .msg-more {
+    flex: none;
+    border: none;
+    background: transparent;
+    padding: 0 4px;
+    font-size: 14px;
+    line-height: 1.4;
+    color: rgba(0, 0, 0, 0.35);
+    cursor: pointer;
+    visibility: hidden;
+  }
+  .msg.user .msg-more { color: rgba(255, 255, 255, 0.75); }
+  .msg:hover .msg-more { visibility: visible; }
+  .msg-actions { display: none; gap: 6px; margin-top: 6px; }
+  .msg.actions-show .msg-actions { display: flex; }
+  .msg-actions button {
+    border: none;
+    border-radius: 10px;
+    padding: 3px 12px;
+    font-size: 12px;
+    background: rgba(255, 255, 255, 0.92);
+    color: #a02440;
+    cursor: pointer;
+  }
+  .msg.assistant .msg-actions { align-self: flex-start; }
+  .msg.user .msg-actions { align-self: flex-end; }
+  .msg-actions .act-del { color: #d33; }
+
+  /* 原地编辑态：气泡文本位置换成 textarea + 取消/保存 */
+  .msg-edit { display: flex; flex-direction: column; gap: 6px; }
+  .edit-input {
+    width: 100%;
+    box-sizing: border-box;
+    border: none;
+    border-radius: 8px;
+    padding: 6px 8px;
+    font: inherit;
+    line-height: 1.5;
+    min-height: 3em;
+    resize: vertical;
+    outline: none;
+    background: rgba(255, 255, 255, 0.95);
+    color: #333;
+  }
+  .edit-btns { display: flex; gap: 6px; }
+  .msg.user .edit-btns { justify-content: flex-end; }
+  .edit-btns button {
+    border: none;
+    border-radius: 10px;
+    padding: 3px 12px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .edit-cancel { background: #f0f0f0; color: #888; }
+  .edit-save { background: #e04060; color: #fff; }
+
+  /* 图片消息：气泡里直接显示缩略图 */
+  .msg-img {
+    display: block;
+    max-width: 100%;
+    max-height: 220px;
+    object-fit: contain;
+    border-radius: 8px;
+    margin-bottom: 4px;
+  }
+
+  /* 输入条的 📷 / 🎙 图标按钮共用同一套样式 */
+  #img-btn, #mic-btn {
+    flex: none;
+    border: none;
+    background: transparent;
+    border-radius: 50%;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 4px 2px;
+  }
+  #img-btn:hover, #mic-btn:hover { background: rgba(224, 64, 96, 0.08); }
+  #mic-btn.recording { background: rgba(224, 64, 96, 0.18); color: #e04060; }
+  #img-preview {
+    position: fixed;
+    right: 14px;
+    bottom: 60px;
+    display: none;
+    align-items: center;
+    gap: 8px;
+    background: #fff;
+    border: 1px solid #eee;
+    border-radius: 10px;
+    padding: 6px;
+    z-index: 10;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  }
+  #img-preview.show { display: flex; }
+  #img-preview img { width: 64px; height: 64px; object-fit: cover; border-radius: 6px; }
+  #img-remove {
+    border: none;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    border-radius: 50%;
+    width: 20px;
+    height: 20px;
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0;
+  }
+
+  #empty { color: #999; font-size: 13px; text-align: center; margin-top: 40px; }
+
+  /* 底部常驻输入条：不需要像主窗口气泡那样呼出/收起，独立窗口直接常驻即可 */
+  body { padding-bottom: 64px; }
+  #input-bar {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    background: #fff;
+    border-top: 1px solid #eee;
+    box-sizing: border-box;
+  }
+  #chat-input {
+    flex: 1;
+    min-width: 0;
+    border: 1px solid #eee;
+    border-radius: 16px;
+    padding: 8px 14px;
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+    color: #333;
+  }
+  #chat-input:focus { border-color: rgba(224, 64, 96, 0.6); }
+  #chat-input:disabled { background: #f5f5f5; color: #aaa; }
+  #send-btn {
+    flex: none;
+    border: none;
+    border-radius: 16px;
+    padding: 8px 16px;
+    font-size: 13px;
+    background: #e04060;
+    color: #fff;
+    cursor: pointer;
+  }
+  #send-btn:disabled { background: #eab8c2; cursor: default; }
+</style>
+</head>
+<body>
+  <div id="title-bar">
+    <h2 id="title">聊天记录</h2>
+    <div id="menu-wrap">
+      <button id="menu-btn" title="更多操作">⋯</button>
+      <div id="menu" class="hidden">
+        <button id="menu-insert">插入消息</button>
+        <button id="menu-clear" class="danger">清空对话</button>
+      </div>
+    </div>
+  </div>
+  <div id="list"></div>
+  <div id="empty" style="display:none;">还没有聊天记录，双击角色呼出输入框试试吧～</div>
+
+  <div id="input-bar">
+    <button id="img-btn" title="发送图片">📷</button>
+    <button id="mic-btn" title="语音输入">🎙</button>
+    <input id="chat-input" type="text" maxlength="300" placeholder="想对TA说点什么…" />
+    <button id="send-btn">发送</button>
+  </div>
+  <input id="img-file" type="file" accept="image/*" style="display: none;" />
+  <div id="img-preview">
+    <img id="img-preview-el" alt="待发送图片" />
+    <button id="img-remove" title="移除图片">×</button>
+  </div>
+
+  <div id="insert-overlay" class="overlay hidden">
+    <div id="insert-dialog">
+      <div class="dialog-head">
+        <span>插入消息</span>
+        <button id="insert-close" title="关闭">×</button>
+      </div>
+      <div class="dialog-hint">手动补充一条聊天记录（不会触发生成回复）。直接输入或粘贴文本，选择消息归属即可。</div>
+      <textarea id="insert-text" placeholder="输入要插入的消息内容…"></textarea>
+      <div class="dialog-btns">
+        <button id="insert-as-user">作为我说的插入</button>
+        <button id="insert-as-assistant">作为TA说的插入</button>
+      </div>
+    </div>
+  </div>
+
+<script src="/public/image-utils.js"></script>
+<script type="module">
+  import { startRecording, stopRecording } from './modules/mic.js';
+  function fmtTs(ts) {
+    const d = new Date(ts);
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+
+  const params = new URLSearchParams(location.search);
+  const characterName = params.get('character') || '';
+  document.getElementById('title').textContent = '聊天记录 · ' + characterName;
+
+  const list = document.getElementById('list');
+  const emptyEl = document.getElementById('empty');
+  const chatInput = document.getElementById('chat-input');
+  const sendBtn = document.getElementById('send-btn');
+  let sending = false;
+  // 已渲染的消息条数：每行的 data-index 直接用主进程里记录数组的下标（渲染顺序 = 数组顺序），
+  // 编辑/删除按这个索引回传主进程操作文件。
+  let msgCount = 0;
+
+  function appendMsg(role, content, ts, imageDataURL) {
+    emptyEl.style.display = 'none';
+
+    const div = document.createElement('div');
+    div.className = 'msg ' + (role === 'user' ? 'user' : 'assistant');
+    div.dataset.index = msgCount++;
+    div.dataset.text = content || '';
+
+    const line = document.createElement('div');
+    line.className = 'msg-line';
+
+    if (imageDataURL) {
+      const img = document.createElement('img');
+      img.className = 'msg-img';
+      img.src = imageDataURL;
+      img.alt = '图片';
+      line.appendChild(img);
+    }
+
+    if (content) {
+      const text = document.createElement('div');
+      text.className = 'msg-text';
+      text.textContent = content;
+      line.appendChild(text);
+    }
+
+    const more = document.createElement('button');
+    more.className = 'msg-more';
+    more.title = '编辑/删除';
+    more.textContent = '⋯';
+    line.appendChild(more);
+
+    div.appendChild(line);
+
+    const actions = document.createElement('div');
+    actions.className = 'msg-actions';
+    const editBtn = document.createElement('button');
+    editBtn.className = 'act-edit';
+    editBtn.textContent = '编辑';
+    const delBtn = document.createElement('button');
+    delBtn.className = 'act-del';
+    delBtn.textContent = '删除';
+    actions.appendChild(editBtn);
+    actions.appendChild(delBtn);
+    div.appendChild(actions);
+
+    const tsEl = document.createElement('div');
+    tsEl.className = 'ts';
+    tsEl.textContent = fmtTs(ts);
+    div.appendChild(tsEl);
+
+    list.appendChild(div);
+    window.scrollTo(0, document.body.scrollHeight);
+  }
+
+  function alertError(err) {
+    window.alert('出错了：' + (err && err.message ? err.message : String(err)));
+  }
+
+  // 全量重绘（编辑/删除后调用）；keepScroll 时恢复原滚动位置，避免编辑中间的消息后跳到底部
+  async function reload(keepScroll = false) {
+    const prevScroll = window.scrollY;
+    list.innerHTML = '';
+    msgCount = 0;
+    await load();
+    if (keepScroll) window.scrollTo(0, prevScroll);
+  }
+
+  async function load() {
+    const history = await window.petAPI.getChatHistory(characterName);
+    if (!history.length) {
+      emptyEl.style.display = 'block';
+      return;
+    }
+    for (const m of history) appendMsg(m.role, m.content, m.ts, m.imageDataURL);
+  }
+
+  // ---------------- 发送图片：选文件 / 粘贴 -> 压缩 -> 预览，随下一条消息一起发出 ----------------
+  let pendingImage = null; // dataURL，发送前暂存
+  const imgBtn = document.getElementById('img-btn');
+  const imgFile = document.getElementById('img-file');
+  const imgPreview = document.getElementById('img-preview');
+  const imgPreviewEl = document.getElementById('img-preview-el');
+  const imgRemove = document.getElementById('img-remove');
+
+  function setPendingImage(dataURL) {
+    pendingImage = dataURL;
+    if (dataURL) {
+      imgPreviewEl.src = dataURL;
+      imgPreview.classList.add('show');
+    } else {
+      imgPreview.classList.remove('show');
+    }
+  }
+
+  async function acceptImageFile(file) {
+    if (!file || !file.type.startsWith('image/')) return;
+    try {
+      setPendingImage(await window.imageUtils.fileToCompressedDataURL(file));
+      chatInput.focus();
+    } catch (err) {
+      alertError(err);
+    }
+  }
+
+  imgBtn.addEventListener('click', () => imgFile.click());
+  imgFile.addEventListener('change', async () => {
+    await acceptImageFile(imgFile.files && imgFile.files[0]);
+    imgFile.value = ''; // 允许连续选同一个文件
+  });
+  imgRemove.addEventListener('click', () => setPendingImage(null));
+  // 输入框里直接 Ctrl+V 粘贴截图
+  chatInput.addEventListener('paste', async (e) => {
+    const file = window.imageUtils.imageFileFromPaste(e);
+    if (!file) return;
+    e.preventDefault();
+    await acceptImageFile(file);
+  });
+
+  async function sendMessage() {
+    const text = chatInput.value.trim();
+    const image = pendingImage;
+    if ((!text && !image) || sending || !characterName) return;
+    sending = true;
+    chatInput.value = '';
+    chatInput.disabled = true;
+    sendBtn.disabled = true;
+    const sendingImage = image; // 下面马上清预览，先存住
+    setPendingImage(null);
+
+    const userTs = Date.now();
+    appendMsg('user', text, userTs, sendingImage);
+
+    try {
+      const reply = await window.petAPI.chatSend(characterName, text, sendingImage);
+      appendMsg('assistant', reply, Date.now());
+    } catch (err) {
+      appendMsg('assistant', '出错了：' + (err && err.message ? err.message : String(err)), Date.now());
+      // 失败时把图片放回预览，方便直接重发
+      if (sendingImage) setPendingImage(sendingImage);
+    } finally {
+      sending = false;
+      chatInput.disabled = false;
+      sendBtn.disabled = false;
+      chatInput.focus();
+    }
+  }
+
+  sendBtn.addEventListener('click', sendMessage);
+  chatInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+
+  // ---------------- 语音输入：点击🎙开始，再点一下停止，识别文字实时写回输入框（跟主窗口逻辑一致）----------------
+  const micBtn = document.getElementById('mic-btn');
+  let voiceState = 'idle'; // idle -> starting -> recording -> idle（再次点击收尾）
+  let asrSessionId = null;
+
+  function setRecordingUI(on) {
+    micBtn.classList.toggle('recording', on);
+    micBtn.textContent = on ? '⏹' : '🎙';
+    micBtn.title = on ? '停止录音' : '语音输入';
+    chatInput.placeholder = on ? '正在听，点击⏹停止…' : '想对TA说点什么…';
+  }
+
+  async function startVoiceInput() {
+    if (voiceState !== 'idle' || sending) return;
+    voiceState = 'starting';
+    setRecordingUI(true);
+    let sessionId;
+    try {
+      sessionId = await window.petAPI.asrStart();
+    } catch (err) {
+      voiceState = 'idle';
+      setRecordingUI(false);
+      alertError(err);
+      return;
+    }
+    if (voiceState !== 'starting') {
+      // 等 asrStart 返回的这段时间里已经被点了一下"停止"，直接收尾不用再开麦
+      window.petAPI.asrStop(sessionId);
+      return;
+    }
+    asrSessionId = sessionId;
+    try {
+      await startRecording((chunk) => window.petAPI.asrSendChunk(sessionId, chunk));
+      voiceState = 'recording';
+    } catch (err) {
+      // 多半是麦克风权限被拒绝
+      window.petAPI.asrStop(sessionId);
+      asrSessionId = null;
+      voiceState = 'idle';
+      setRecordingUI(false);
+      alertError(err);
+    }
+  }
+
+  function stopVoiceInput() {
+    if (voiceState === 'idle') return;
+    if (voiceState === 'starting') {
+      voiceState = 'idle'; // asrStart 还没返回；等它回来后 startVoiceInput 自己会看到状态不对而收尾
+      setRecordingUI(false);
+      return;
+    }
+    voiceState = 'idle';
+    stopRecording();
+    setRecordingUI(false);
+    if (asrSessionId) window.petAPI.asrStop(asrSessionId);
+    chatInput.focus(); // 识别文字已经留在输入框里，把光标还回去方便直接改字/回车发送
+  }
+
+  window.petAPI.onAsrPartial((sessionId, text) => {
+    if (sessionId !== asrSessionId) return;
+    chatInput.value = text; // 实时把中间识别结果显示在输入框里
+  });
+  window.petAPI.onAsrFinal((sessionId, text) => {
+    if (sessionId !== asrSessionId) return;
+    asrSessionId = null;
+    chatInput.value = (text || '').trim(); // 最终识别结果留在输入框里，自己看一眼再按 Enter/点发送
+  });
+  window.petAPI.onAsrError((sessionId, message) => {
+    if (sessionId !== asrSessionId) return;
+    asrSessionId = null;
+    voiceState = 'idle';
+    setRecordingUI(false);
+    window.alert('语音识别出错：' + message);
+  });
+
+  // mousedown 阶段阻止默认的"点击按钮转移焦点"，输入框全程保持聚焦
+  micBtn.addEventListener('mousedown', (e) => e.preventDefault());
+  micBtn.addEventListener('click', () => {
+    if (voiceState === 'idle') startVoiceInput();
+    else stopVoiceInput();
+  });
+
+  // 双向同步：主窗口发起的对话，主进程会推过来实时追加（自己发起的不会推，避免重复）
+  window.petAPI.onChatUpdated((data) => {
+    if (!data || data.character !== characterName) return;
+    const now = Date.now();
+    appendMsg('user', data.user, now, data.image);
+    appendMsg('assistant', data.reply, now);
+  });
+
+  // ---------------- 消息的"⋯"展开 / 编辑 / 删除（事件委托，动态插入的行不用重复绑） ----------------
+  function endEdit(row) {
+    const box = row.querySelector('.msg-edit');
+    if (box) box.remove();
+    const line = row.querySelector('.msg-line');
+    if (line) line.style.display = '';
+  }
+
+  function startEdit(row) {
+    // 一行进入编辑态前，先把别的还在编辑的行收掉
+    list.querySelectorAll('.msg-edit').forEach((b) => endEdit(b.closest('.msg')));
+    row.classList.remove('actions-show');
+
+    const line = row.querySelector('.msg-line');
+    const original = row.dataset.text || '';
+    line.style.display = 'none';
+
+    const box = document.createElement('div');
+    box.className = 'msg-edit';
+    const ta = document.createElement('textarea');
+    ta.className = 'edit-input';
+    // 不设 maxLength：插入的消息可能超过 300 字，编辑时不能被挡住
+    ta.value = original;
+
+    const btns = document.createElement('div');
+    btns.className = 'edit-btns';
+    const cancel = document.createElement('button');
+    cancel.className = 'edit-cancel';
+    cancel.textContent = '取消';
+    const save = document.createElement('button');
+    save.className = 'edit-save';
+    save.textContent = '保存';
+    btns.appendChild(cancel);
+    btns.appendChild(save);
+
+    box.appendChild(ta);
+    box.appendChild(btns);
+    row.insertBefore(box, line);
+    ta.focus();
+
+    cancel.addEventListener('click', () => endEdit(row));
+    save.addEventListener('click', async () => {
+      const text = ta.value.trim();
+      if (!text) {
+        ta.focus();
+        return;
+      }
+      save.disabled = true;
+      try {
+        await window.petAPI.editChatMessage(characterName, +row.dataset.index, text);
+        row.dataset.text = text;
+        row.querySelector('.msg-text').textContent = text;
+        endEdit(row);
+      } catch (err) {
+        alertError(err);
+        save.disabled = false;
+      }
+    });
+    ta.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        save.click();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        endEdit(row);
+      }
+    });
+  }
+
+  list.addEventListener('click', async (e) => {
+    const moreBtn = e.target.closest('.msg-more');
+    if (moreBtn) {
+      const row = moreBtn.closest('.msg');
+      const willShow = !row.classList.contains('actions-show');
+      // 同一时间只展开一行操作
+      list.querySelectorAll('.msg.actions-show').forEach((el) => el.classList.remove('actions-show'));
+      row.classList.toggle('actions-show', willShow);
+      return;
+    }
+
+    const editBtn = e.target.closest('.act-edit');
+    if (editBtn) {
+      startEdit(editBtn.closest('.msg'));
+      return;
+    }
+
+    const delBtn = e.target.closest('.act-del');
+    if (delBtn) {
+      const row = delBtn.closest('.msg');
+      if (!window.confirm('确定要删除这条消息吗？此操作不可撤销。')) return;
+      try {
+        await window.petAPI.deleteChatMessage(characterName, +row.dataset.index);
+        await reload(true);
+      } catch (err) {
+        alertError(err);
+      }
+    }
+  });
+
+  // ---------------- 头部"⋯"更多菜单：插入消息 / 清空对话（参照 plot-assistant 手机私信页） ----------------
+  const menuWrap = document.getElementById('menu-wrap');
+  const menu = document.getElementById('menu');
+  const insertOverlay = document.getElementById('insert-overlay');
+  const insertText = document.getElementById('insert-text');
+  const insertAsUser = document.getElementById('insert-as-user');
+  const insertAsAssistant = document.getElementById('insert-as-assistant');
+
+  function closeMenu() {
+    menu.classList.add('hidden');
+  }
+  document.getElementById('menu-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    menu.classList.toggle('hidden');
+  });
+
+  // 点菜单以外的地方：收起菜单 + 收起展开的消息操作行（不用再点一次"⋯"才能收起）
+  document.addEventListener('click', (e) => {
+    if (!menu.classList.contains('hidden') && !menuWrap.contains(e.target)) closeMenu();
+    list.querySelectorAll('.msg.actions-show').forEach((row) => {
+      if (!e.target.closest('.msg-more') && !row.querySelector('.msg-actions').contains(e.target)) {
+        row.classList.remove('actions-show');
+      }
+    });
+  });
+
+  // ---- 插入消息弹窗 ----
+  function openInsert() {
+    closeMenu();
+    insertText.value = '';
+    insertAsUser.disabled = false;
+    insertAsAssistant.disabled = false;
+    insertOverlay.classList.remove('hidden');
+    setTimeout(() => insertText.focus(), 50);
+  }
+  function closeInsert() {
+    insertOverlay.classList.add('hidden');
+  }
+  document.getElementById('menu-insert').addEventListener('click', openInsert);
+  document.getElementById('insert-close').addEventListener('click', closeInsert);
+  // 点遮罩本身才关（点弹窗内部不关），用 pointerdown/mouseup 都在遮罩上时判定，避免拖选文本误关
+  let overlayDownOnSelf = false;
+  insertOverlay.addEventListener('mousedown', (e) => {
+    overlayDownOnSelf = e.target === insertOverlay;
+  });
+  insertOverlay.addEventListener('mouseup', (e) => {
+    if (overlayDownOnSelf && e.target === insertOverlay) closeInsert();
+    overlayDownOnSelf = false;
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !insertOverlay.classList.contains('hidden')) closeInsert();
+  });
+
+  async function doInsert(role) {
+    const text = insertText.value.trim();
+    if (!text) {
+      insertText.focus();
+      return;
+    }
+    const btn = role === 'user' ? insertAsUser : insertAsAssistant;
+    btn.disabled = true;
+    try {
+      const msg = await window.petAPI.addChatMessage(characterName, role, text);
+      appendMsg(msg.role, msg.content, msg.ts);
+      closeInsert();
+    } catch (err) {
+      alertError(err);
+      btn.disabled = false;
+    }
+  }
+  insertAsUser.addEventListener('click', () => doInsert('user'));
+  insertAsAssistant.addEventListener('click', () => doInsert('assistant'));
+
+  // ---- 清空对话 ----
+  document.getElementById('menu-clear').addEventListener('click', async () => {
+    closeMenu();
+    if (!window.confirm(`确定要清空和「${characterName}」的全部聊天记录吗？此操作不可撤销。`)) return;
+    try {
+      await window.petAPI.clearChatHistory(characterName);
+      list.innerHTML = '';
+      msgCount = 0;
+      emptyEl.style.display = 'block';
+      window.scrollTo(0, 0);
+    } catch (err) {
+      alertError(err);
+    }
+  });
+
+  load();
+</script>
+</body>
+</html>

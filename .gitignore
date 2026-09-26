@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+
+# 本地调试/开发用，不进公开仓库
+CHANGELOG.md
+tools/

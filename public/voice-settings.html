@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>音色设置</title>
+<style>
+  body {
+    font-family: "Microsoft YaHei", sans-serif;
+    margin: 0;
+    padding: 20px;
+    background: #faf7f6;
+    color: #333;
+  }
+  h2 { margin: 0 0 4px; font-size: 16px; color: #a02440; }
+  p.desc { margin: 0 0 16px; font-size: 12px; color: #999; line-height: 1.6; }
+  label { display: block; font-size: 12px; color: #777; margin: 12px 0 4px; }
+  input, select, textarea {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 10px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    font-size: 13px;
+    outline: none;
+    font-family: inherit;
+    background: #fff;
+    color: #333;
+  }
+  input:focus, select:focus, textarea:focus { border-color: #e04060; }
+  textarea { resize: vertical; min-height: 64px; line-height: 1.5; }
+  .section-title { margin: 20px 0 2px; font-size: 13px; color: #a02440; font-weight: bold; }
+  .row3 { display: flex; gap: 10px; }
+  .row3 > div { flex: 1; min-width: 0; }
+  .tip { font-size: 11px; color: #aaa; line-height: 1.6; margin: 4px 0 0; }
+  .panel { display: none; }
+  .panel.show { display: block; }
+  .sub { display: none; }
+  .sub.show { display: block; }
+  .btn-row { display: flex; gap: 10px; margin-top: 20px; }
+  button {
+    padding: 10px;
+    border-radius: 8px;
+    font-size: 14px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  #save-btn { flex: 1; border: none; background: #e04060; color: #fff; }
+  #save-btn:active:not(:disabled) { background: #c93454; }
+  #test-btn { flex: 1; border: 1px solid #e04060; background: #fff; color: #e04060; }
+  #test-btn:active:not(:disabled) { background: #ffe9ee; }
+  .inline-btn {
+    padding: 7px 12px;
+    font-size: 12px;
+    border: 1px solid #e04060;
+    background: #fff;
+    color: #e04060;
+    white-space: nowrap;
+  }
+  .inline-btn:active { background: #ffe9ee; }
+  .clone-row { display: flex; align-items: center; gap: 8px; }
+  .clone-row #clone_name { flex: 1; min-width: 0; font-size: 12px; color: #777; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #status { margin-top: 10px; font-size: 12px; min-height: 16px; line-height: 1.6; word-break: break-all; }
+  #status.ok { color: #2a8f4e; }
+  #status.err { color: #c93454; }
+  #status.busy { color: #999; }
+</style>
+</head>
+<body>
+  <h2>🎙 音色设置（语音功能） <span id="char-name" style="font-weight: normal; color: #999;"></span></h2>
+  <p class="desc">决定这个角色的 AI 聊天回复用什么声音读出来，每个角色单独设置。角色自带的预录台词语音不受影响。</p>
+
+  <label>语音服务商</label>
+  <select id="provider">
+    <option value="off">不朗读</option>
+    <option value="edge">Edge-TTS（微软，免费，无需 Key）</option>
+    <option value="doubao">豆包（火山引擎）</option>
+    <option value="mimo">MiMo（小米）</option>
+  </select>
+
+  <!-- ===== Edge-TTS ===== -->
+  <div class="panel" id="panel-edge">
+    <div class="section-title">Edge-TTS 音色</div>
+    <label>音色</label>
+    <select id="edge_voice"></select>
+    <input id="edge_voice_custom" class="sub" style="margin-top: 6px" placeholder="手动输入音色名，如 zh-CN-XiaoxiaoNeural" />
+    <div class="row3">
+      <div><label>语速（%）</label><input id="edge_rate" type="number" step="5" min="-90" max="200" placeholder="0" /></div>
+      <div><label>音调（Hz）</label><input id="edge_pitch" type="number" step="5" min="-100" max="100" placeholder="0" /></div>
+      <div><label>音量（%）</label><input id="edge_volume" type="number" step="5" min="-90" max="100" placeholder="0" /></div>
+    </div>
+    <p class="tip">语速 / 音调 / 音量留空即默认值，正数加快 / 升高 / 增大，负数相反。Edge-TTS 是非官方接口，无需申请 Key，但微软改协议后可能失效。</p>
+  </div>
+
+  <!-- ===== 豆包 ===== -->
+  <div class="panel" id="panel-doubao">
+    <div class="section-title">豆包 · 服务商密钥 <span style="font-weight: normal; color: #999;">（所有角色共用）</span></div>
+    <label>App ID</label>
+    <input id="doubao_app_id" placeholder="火山引擎语音合成的 App ID" />
+    <label>Access Key</label>
+    <input id="doubao_access_key" type="password" placeholder="Access Token / Access Key" />
+
+    <div class="section-title">豆包 · 语音识别 <span style="font-weight: normal; color: #999;">（🎙语音输入转文字用）</span></div>
+    <label>Resource ID</label>
+    <input id="asr_resource_id" placeholder="如 volc.bigasr.sauc.duration" />
+    <p class="tip">复用上面这套 App ID / Access Key。流式语音识别大模型-小时版 已预填 volc.bigasr.sauc.duration，不需要改动。</p>
+
+    <div class="section-title">豆包 · 此角色的音色</div>
+    <label>音色来源</label>
+    <select id="doubao_source">
+      <option value="custom">自定义 ID 输入</option>
+      <option value="preset">预置音色</option>
+    </select>
+
+    <div class="sub" id="doubao-sub-custom">
+      <label>声音ID</label>
+      <input id="doubao_speaker_id" placeholder="speaker_id" />
+      <label>resource_id</label>
+      <input id="doubao_resource_id" list="doubao_resource_list" placeholder="如 seed-tts-2.0" />
+      <datalist id="doubao_resource_list"></datalist>
+      <p class="tip">豆包语音合成模型2.0的音色填 seed-tts-2.0<br>豆包声音复刻模型2.0的音色填 seed-icl-2.0</p>
+    </div>
+    <div class="sub" id="doubao-sub-preset">
+      <label>预置音色</label>
+      <select id="doubao_preset_voice"></select>
+      <p class="tip" id="doubao_preset_note"></p>
+      <div class="btn-row" style="margin-top: 8px;">
+        <button id="doubao-preset-import" class="inline-btn" type="button">导入…</button>
+        <button id="doubao-preset-export" class="inline-btn" type="button">导出…</button>
+        <button id="doubao-preset-reset" class="inline-btn" type="button">恢复默认</button>
+      </div>
+      <p class="tip">导入的 json 会整体覆盖替换当前预置音色列表（每条含 name / speakerId / resourceId / note）；恢复默认会丢弃导入过的内容，换回程序自带的列表。</p>
+    </div>
+  </div>
+
+  <!-- ===== MiMo ===== -->
+  <div class="panel" id="panel-mimo">
+    <div class="section-title">MiMo · 服务商设置 <span style="font-weight: normal; color: #999;">（所有角色共用）</span></div>
+    <label>API Key</label>
+    <input id="mimo_api_key" type="password" placeholder="MiMo API Key" />
+    <label>Base URL</label>
+    <input id="mimo_base_url" placeholder="https://api.xiaomimimo.com/v1" />
+    <p class="tip">返回的合成音频固定用 mp3（体积小、传输快，语音本来也不落地存储，不用为音质纠结）。</p>
+
+    <div class="section-title">MiMo · 此角色的音色</div>
+    <label>音色来源</label>
+    <select id="mimo_mode">
+      <option value="preset">预置音色</option>
+      <option value="clone">音色复刻</option>
+    </select>
+
+    <div class="sub" id="mimo-sub-preset">
+      <label>预置音色</label>
+      <select id="mimo_preset_voice"></select>
+    </div>
+    <div class="sub" id="mimo-sub-clone">
+      <label>参考音频</label>
+      <div class="clone-row">
+        <span id="clone_name">未选择</span>
+        <button id="clone-pick" class="inline-btn" type="button">选择音频…</button>
+        <button id="clone-clear" class="inline-btn" type="button">清除</button>
+      </div>
+      <p class="tip">选一段清晰、无背景音乐的单人说话录音（仅支持 wav / mp3，不超过 7 MB）。选中后会复制一份到程序数据目录，之后原文件可以移动或删除。</p>
+    </div>
+  </div>
+
+  <div id="test-section" style="display: none;">
+    <label>试听文本</label>
+    <input id="test_text" />
+  </div>
+
+  <div class="btn-row">
+    <button id="test-btn" type="button">🔊 试听</button>
+    <button id="save-btn" type="button">保存</button>
+  </div>
+  <div id="status"></div>
+  <p class="tip" style="margin-top: 14px;">朗读时，只有「」包裹的对话内容会发给所选服务商合成语音；*星号包裹的内心独白* 和没有符号的旁白都不会朗读。密钥保存在本机 config.json 里，和 API 设置一致。</p>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const character = new URLSearchParams(location.search).get('character') || '';
+  const PANELS = ['edge', 'doubao', 'mimo'];
+  const MIMO_MODES = ['preset', 'clone'];
+  const DOUBAO_SOURCES = ['custom', 'preset'];
+  const CUSTOM = '__custom__';
+
+  let cloneAudio = null; // { file, name, mime, size } | null
+  let doubaoVoiceList = []; // 豆包预置音色的当前生效列表：[{ name, speakerId, resourceId, note }]
+  let testAudio = null;
+  let testUrl = null;
+
+  function setStatus(text, cls) {
+    $('status').textContent = text || '';
+    $('status').className = cls || '';
+  }
+  // ipcRenderer.invoke 的异常消息带 "Error invoking remote method 'xxx': Error: " 前缀，去掉只留原因
+  function errText(err) {
+    const m = err && err.message ? err.message : String(err);
+    return m.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '');
+  }
+
+  function fillSelect(select, items) {
+    select.innerHTML = '';
+    for (const it of items) {
+      const opt = document.createElement('option');
+      opt.value = it.value;
+      opt.textContent = it.label;
+      select.appendChild(opt);
+    }
+  }
+
+  function refreshPanels() {
+    const provider = $('provider').value;
+    for (const p of PANELS) $('panel-' + p).classList.toggle('show', provider === p);
+    $('test-section').style.display = provider === 'off' ? 'none' : 'block';
+    $('edge_voice_custom').classList.toggle('show', $('edge_voice').value === CUSTOM);
+    for (const m of MIMO_MODES) $('mimo-sub-' + m).classList.toggle('show', $('mimo_mode').value === m);
+    for (const s of DOUBAO_SOURCES) $('doubao-sub-' + s).classList.toggle('show', $('doubao_source').value === s);
+    renderDoubaoPresetNote();
+  }
+
+  // 豆包预置音色下拉：value 用数组下标（防止音色名重复），选中时把 note 显示成一行小字提示
+  function fillDoubaoPresetSelect() {
+    const select = $('doubao_preset_voice');
+    select.innerHTML = '';
+    doubaoVoiceList.forEach((v, i) => {
+      const opt = document.createElement('option');
+      opt.value = String(i);
+      opt.textContent = v.name;
+      select.appendChild(opt);
+    });
+  }
+
+  function renderDoubaoPresetNote() {
+    if ($('doubao_source').value !== 'preset') return;
+    const i = Number($('doubao_preset_voice').value);
+    const v = doubaoVoiceList[i];
+    $('doubao_preset_note').textContent = v && v.note ? v.note : '（这条音色暂无备注）';
+  }
+
+  // 按 name 找回之前选中的那条预置音色（找不到就退回第一条），返回下标
+  function findDoubaoPresetIndex(name) {
+    const i = doubaoVoiceList.findIndex((v) => v.name === name);
+    return i >= 0 ? i : 0;
+  }
+
+  function renderClone() {
+    $('clone_name').textContent = cloneAudio ? cloneAudio.name : '未选择';
+    $('clone_name').title = cloneAudio ? cloneAudio.name : '';
+  }
+
+  // 保存的数字可能带单位（"+10%" / "-5Hz"），数字输入框里只放数值
+  function toNumberField(v) {
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? String(n) : '';
+  }
+
+  async function load() {
+    $('char-name').textContent = '· ' + character;
+    $('test_text').value = `你好呀，我是${character}，这是语音试听。`;
+    const cfg = await window.petAPI.ttsGetConfig(character);
+    const { providers, voice, presets } = cfg;
+
+    fillSelect($('edge_voice'), [...presets.edge, { value: CUSTOM, label: '其他（手动输入音色名）' }]);
+    fillSelect($('mimo_preset_voice'), presets.mimo);
+    $('doubao_resource_list').innerHTML = presets.doubaoResourceIds.map((v) => `<option value="${v}"></option>`).join('');
+    doubaoVoiceList = presets.doubaoVoices || [];
+    fillDoubaoPresetSelect();
+
+    $('provider').value = voice.provider;
+
+    // Edge
+    const inPresets = presets.edge.some((p) => p.value === voice.edge.voice);
+    $('edge_voice').value = inPresets ? voice.edge.voice : CUSTOM;
+    $('edge_voice_custom').value = inPresets ? '' : voice.edge.voice;
+    $('edge_rate').value = toNumberField(voice.edge.rate);
+    $('edge_pitch').value = toNumberField(voice.edge.pitch);
+    $('edge_volume').value = toNumberField(voice.edge.volume);
+
+    // 豆包
+    $('doubao_app_id').value = providers.doubao.app_id;
+    $('doubao_access_key').value = providers.doubao.access_key;
+    $('doubao_source').value = voice.doubao.source;
+    $('doubao_speaker_id').value = voice.doubao.speaker_id;
+    $('doubao_resource_id').value = voice.doubao.resource_id;
+    $('doubao_preset_voice').value = String(findDoubaoPresetIndex(voice.doubao.preset_name));
+
+    // 豆包 ASR（独立于 ttsConfig 存，所有角色共用，跟音色设置一起在这个窗口里改）
+    try {
+      const asrCfg = await window.petAPI.asrGetConfig();
+      $('asr_resource_id').value = asrCfg.resourceId;
+    } catch { /* 拿不到就留空，不影响其它设置照常用 */ }
+
+    // MiMo
+    $('mimo_api_key').value = providers.mimo.api_key;
+    $('mimo_base_url').value = providers.mimo.base_url;
+    $('mimo_mode').value = voice.mimo.mode;
+    $('mimo_preset_voice').value = voice.mimo.preset_voice;
+    cloneAudio = voice.mimo.clone_audio;
+    renderClone();
+
+    refreshPanels();
+  }
+
+  // 表单 -> 与主进程 ttsConfig 同结构的对象（主进程会再规整一遍）
+  function collect() {
+    const num = (id) => $(id).value.trim();
+    const doubaoSource = $('doubao_source').value;
+    // source=preset 时，speaker_id/resource_id 从选中的预置音色带出，不用手填框里的值
+    const doubaoPreset = doubaoVoiceList[Number($('doubao_preset_voice').value)];
+    return {
+      providers: {
+        doubao: { app_id: $('doubao_app_id').value, access_key: $('doubao_access_key').value },
+        mimo: { api_key: $('mimo_api_key').value, base_url: $('mimo_base_url').value },
+      },
+      voice: {
+        provider: $('provider').value,
+        edge: {
+          voice: $('edge_voice').value === CUSTOM ? $('edge_voice_custom').value : $('edge_voice').value,
+          rate: num('edge_rate'),
+          pitch: num('edge_pitch'),
+          volume: num('edge_volume'),
+        },
+        doubao: {
+          source: doubaoSource,
+          speaker_id: doubaoSource === 'preset' && doubaoPreset ? doubaoPreset.speakerId : $('doubao_speaker_id').value,
+          resource_id: doubaoSource === 'preset' && doubaoPreset ? doubaoPreset.resourceId : $('doubao_resource_id').value,
+          preset_name: doubaoSource === 'preset' && doubaoPreset ? doubaoPreset.name : '',
+        },
+        mimo: {
+          mode: $('mimo_mode').value,
+          preset_voice: $('mimo_preset_voice').value,
+          clone_audio: cloneAudio,
+        },
+      },
+    };
+  }
+
+  function playBytes(bytes, mime) {
+    if (testAudio) testAudio.pause();
+    if (testUrl) URL.revokeObjectURL(testUrl);
+    testUrl = URL.createObjectURL(new Blob([bytes], { type: mime || 'audio/mpeg' }));
+    testAudio = new Audio(testUrl);
+    return testAudio.play();
+  }
+
+  $('provider').addEventListener('change', refreshPanels);
+  $('edge_voice').addEventListener('change', refreshPanels);
+  $('mimo_mode').addEventListener('change', refreshPanels);
+  $('doubao_source').addEventListener('change', refreshPanels);
+  $('doubao_preset_voice').addEventListener('change', renderDoubaoPresetNote);
+
+  $('doubao-preset-import').addEventListener('click', async () => {
+    try {
+      const list = await window.petAPI.ttsDoubaoVoicesImport();
+      if (list) {
+        doubaoVoiceList = list;
+        fillDoubaoPresetSelect();
+        renderDoubaoPresetNote();
+        setStatus(`已导入 ${list.length} 条预置音色，记得点"保存"`, 'ok');
+      }
+    } catch (err) {
+      setStatus('导入失败：' + errText(err), 'err');
+    }
+  });
+  $('doubao-preset-export').addEventListener('click', async () => {
+    try {
+      const filePath = await window.petAPI.ttsDoubaoVoicesExport();
+      if (filePath) setStatus('已导出到 ' + filePath, 'ok');
+    } catch (err) {
+      setStatus('导出失败：' + errText(err), 'err');
+    }
+  });
+  $('doubao-preset-reset').addEventListener('click', async () => {
+    try {
+      doubaoVoiceList = await window.petAPI.ttsDoubaoVoicesReset();
+      fillDoubaoPresetSelect();
+      renderDoubaoPresetNote();
+      setStatus('已恢复默认预置音色，记得点"保存"', 'ok');
+    } catch (err) {
+      setStatus('恢复默认失败：' + errText(err), 'err');
+    }
+  });
+
+  $('clone-pick').addEventListener('click', async () => {
+    try {
+      const r = await window.petAPI.ttsPickCloneAudio(character);
+      if (r) {
+        cloneAudio = r;
+        renderClone();
+        setStatus('参考音频已选择，记得点"保存"', 'ok');
+      }
+    } catch (err) {
+      setStatus('选择参考音频失败：' + errText(err), 'err');
+    }
+  });
+  $('clone-clear').addEventListener('click', () => {
+    cloneAudio = null;
+    renderClone();
+  });
+
+  $('test-btn').addEventListener('click', async () => {
+    const btn = $('test-btn');
+    btn.disabled = true;
+    setStatus('合成中…', 'busy');
+    try {
+      const r = await window.petAPI.ttsTest(character, collect(), $('test_text').value);
+      await playBytes(r.bytes, r.mime);
+      setStatus('合成成功，正在播放', 'ok');
+    } catch (err) {
+      setStatus('试听失败：' + errText(err), 'err');
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  $('save-btn').addEventListener('click', async () => {
+    setStatus('保存中…', 'busy');
+    try {
+      await window.petAPI.ttsSaveConfig(character, collect());
+      await window.petAPI.asrSaveConfig({ resourceId: $('asr_resource_id').value });
+      setStatus('已保存（下一条 AI 回复起生效）', 'ok');
+    } catch (err) {
+      setStatus('保存失败：' + errText(err), 'err');
+    }
+  });
+
+  load().catch((err) => setStatus('加载失败：' + errText(err), 'err'));
+</script>
+</body>
+</html>

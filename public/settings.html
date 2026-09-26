@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>API 设置</title>
+<style>
+  body {
+    font-family: "Microsoft YaHei", sans-serif;
+    margin: 0;
+    padding: 20px;
+    background: #faf7f6;
+    color: #333;
+  }
+  h2 { margin: 0 0 4px; font-size: 16px; color: #a02440; }
+  p.desc { margin: 0 0 16px; font-size: 12px; color: #999; }
+  label { display: block; font-size: 12px; color: #777; margin: 12px 0 4px; }
+  input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 10px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    font-size: 13px;
+    outline: none;
+    font-family: inherit;
+  }
+  select {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 10px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    font-size: 13px;
+    outline: none;
+    font-family: inherit;
+    background: #fff;
+    color: #333;
+  }
+  input:focus { border-color: #e04060; }
+  textarea {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 10px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    font-size: 13px;
+    outline: none;
+    font-family: inherit;
+    resize: vertical;
+    min-height: 72px;
+    line-height: 1.5;
+  }
+  textarea:focus { border-color: #e04060; }
+  .section-title { margin: 22px 0 2px; font-size: 13px; color: #a02440; font-weight: bold; }
+  .row2 { display: flex; gap: 10px; }
+  .row2 > div { flex: 1; }
+  .tip { font-size: 11px; color: #aaa; line-height: 1.6; margin: 4px 0 0; }
+  #save-btn {
+    margin-top: 20px;
+    width: 100%;
+    padding: 10px;
+    border: none;
+    border-radius: 8px;
+    background: #e04060;
+    color: #fff;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  #save-btn:active { background: #c93454; }
+  #status { margin-top: 10px; font-size: 12px; min-height: 16px; }
+  #status.ok { color: #2a8f4e; }
+  #status.err { color: #c93454; }
+  .model-row { display: flex; gap: 8px; }
+  .model-row input { flex: 1; }
+  .model-row button {
+    flex: none;
+    padding: 0 12px;
+    border: 1px solid #e04060;
+    border-radius: 8px;
+    background: #fff;
+    color: #e04060;
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .model-row button:active { background: #ffe9ee; }
+  .model-row button:disabled { opacity: 0.5; cursor: default; }
+  #model_select { margin-top: 6px; display: none; }
+  #model_select.show { display: block; }
+</style>
+</head>
+<body>
+  <h2>⚙ 对话功能 · API 设置</h2>
+  <p class="desc">通用 OpenAI 兼容接口配置，支持任意兼容平台（OpenAI / DeepSeek / 各类中转等）</p>
+
+  <label>API Base URL</label>
+  <input id="api_url" placeholder="例如 https://api.openai.com/v1" />
+  <p class="tip">填到 /v1 为止即可，程序会自动拼接 /chat/completions</p>
+
+  <label>API Key</label>
+  <input id="api_key" type="password" placeholder="sk-..." />
+
+  <label>模型名称</label>
+  <div class="model-row">
+    <input id="model" placeholder="例如 gpt-4o-mini / deepseek-chat" />
+    <button id="load-models-btn" type="button">🔄 加载模型</button>
+  </div>
+  <select id="model_select"></select>
+  <p class="tip">填好 URL / Key 后可以点"加载模型"拉取该平台支持的模型列表，选一个自动填进上面的输入框；也可以不点，直接手动填模型名</p>
+
+  <label style="display: flex; align-items: center; gap: 6px; margin-top: 14px; cursor: pointer; font-size: 13px; color: #555;">
+    <input id="vision" type="checkbox" style="width: auto;" />
+    模型支持图片识别（vision）
+  </label>
+  <p class="tip">开启后聊天发的图片会直接发给模型看；关闭（默认）时图片只显示在聊天窗，实际发送给AI 的是前缀图片+文件名，适合不支持识图的模型</p>
+
+  <div class="row2">
+    <div>
+      <label>Temperature</label>
+      <input id="temperature" type="number" step="0.1" min="0" max="2" />
+    </div>
+    <div>
+      <label>Max Tokens</label>
+      <input id="max_tokens" type="number" step="10" min="1" max="4000" />
+    </div>
+  </div>
+
+  <div class="section-title">🎭 角色资料 <span id="persona-character" style="font-weight: normal; color: #999;"></span></div>
+
+  <label>角色人设（把角色的背景资料发送给 AI）</label>
+  <textarea id="persona_system" style="min-height: 110px" placeholder="写角色的身份、性格、说话风格、和你的关系…&#10;例如：凛是一只傲娇的猫娘，嘴上总嫌弃你其实很黏人，说话简短带刺但会脸红…"></textarea>
+  <p class="tip">保存后 生成/更新 角色的 persona.json 文件。清空后保存 = 不发送角色资料。</p>
+
+  <div class="section-title">📝 Prompt 模板（全局生效，不区分角色）</div>
+
+  <label>用户自定义前置文本</label>
+  <textarea id="prompt_prefix" placeholder="设定AI的前置背景 身份/职务，和 ta 的工作要求。（可用于回复用户发送的元指令，元指令内容需要用括号包裹）"></textarea>
+
+  <label>你的资料</label>
+  <textarea id="prompt_reader_info" placeholder="写你的身份、和角色的关系…&#10;例如：姓名安运，男，21岁，是角色的老板；表面是默契的雇佣关系，实际更有种相互依赖的感觉…"></textarea>
+
+  <button id="save-btn">保存</button>
+  <div id="status"></div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  // 当前角色的人设状态：null = 还没加载到（不该出现）
+  let personaLoaded = null;
+
+  async function load() {
+    const cfg = await window.petAPI.getApiConfig();
+    $('api_url').value = cfg.api_url || '';
+    $('api_key').value = cfg.api_key || '';
+    $('model').value = cfg.model || '';
+    $('temperature').value = cfg.temperature;
+    $('max_tokens').value = cfg.max_tokens;
+    $('vision').checked = !!cfg.vision;
+
+    const promptCfg = await window.petAPI.getPromptConfig();
+    $('prompt_prefix').value = promptCfg.prefix || '';
+    $('prompt_reader_info').value = promptCfg.readerInfo || '';
+
+    const persona = await window.petAPI.getPersona();
+    if (persona) {
+      personaLoaded = persona;
+      $('persona-character').textContent = '· ' + persona.characterName;
+      $('persona_system').value = persona.system || '';
+    }
+  }
+
+  $('save-btn').addEventListener('click', async () => {
+    const status = $('status');
+    status.textContent = '保存中…';
+    status.className = '';
+    try {
+      await window.petAPI.saveApiConfig({
+        api_url: $('api_url').value,
+        api_key: $('api_key').value,
+        model: $('model').value,
+        temperature: parseFloat($('temperature').value),
+        max_tokens: parseInt($('max_tokens').value, 10),
+        vision: $('vision').checked,
+      });
+      await window.petAPI.savePromptConfig({
+        prefix: $('prompt_prefix').value,
+        readerInfo: $('prompt_reader_info').value,
+      });
+      // 角色资料：直接保存——清空 = 删除文件，之后不再发送角色资料
+      if (personaLoaded) {
+        await window.petAPI.savePersona(personaLoaded.characterName, $('persona_system').value);
+      }
+      status.textContent = '已保存';
+      status.className = 'ok';
+    } catch (err) {
+      status.textContent = '保存失败：' + (err && err.message ? err.message : String(err));
+      status.className = 'err';
+    }
+  });
+
+  $('load-models-btn').addEventListener('click', async () => {
+    const btn = $('load-models-btn');
+    const status = $('status');
+    const select = $('model_select');
+    btn.disabled = true;
+    btn.textContent = '加载中…';
+    status.textContent = '';
+    status.className = '';
+    try {
+      // 直接用表单里当前填的值去拉，不强制先保存
+      const list = await window.petAPI.fetchModelList($('api_url').value.trim(), $('api_key').value.trim());
+      select.innerHTML = '';
+      const placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = `共 ${list.length} 个模型，选一个：`;
+      placeholder.disabled = true;
+      placeholder.selected = true;
+      select.appendChild(placeholder);
+      for (const name of list) {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        select.appendChild(opt);
+      }
+      select.classList.add('show');
+      status.textContent = `已获取 ${list.length} 个模型，从下拉框里选一个`;
+      status.className = 'ok';
+    } catch (err) {
+      select.classList.remove('show');
+      status.textContent = '加载模型列表失败：' + (err && err.message ? err.message : String(err));
+      status.className = 'err';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '🔄 加载模型';
+    }
+  });
+
+  $('model_select').addEventListener('change', (e) => {
+    if (e.target.value) $('model').value = e.target.value;
+  });
+
+  load();
+</script>
+</body>
+</html>

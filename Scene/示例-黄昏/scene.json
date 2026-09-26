@@ -1,0 +1,12 @@
+{
+  "displayName": "🌇 示例·黄昏",
+  "background": "linear-gradient(180deg, #f08a2e 0%, #ffc46a 30%, #ffdf8f 48%, #ffdf8f 100%)",
+  "hintColor": "rgba(70, 55, 40, 0.9)",
+  "ground": { "color": "#e4e1dc", "radius": 150 },
+  "fog": { "color": "#ffdf8f", "near": 60, "far": 130 },
+  "lights": {
+    "ambient": { "color": "#fff1dc", "intensity": 0.85 },
+    "key":     { "color": "#ffdcb0", "intensity": 1.4, "position": [-6, 6, 6] },
+    "back":    { "color": "#ffd9a0", "intensity": 0.5, "position": [5, 8, -6] }
+  }
+}

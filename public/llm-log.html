@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>LLM调用记录</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: #1e1e1e;
+    color: #d4d4d4;
+    font-family: "Consolas", "Cascadia Code", "Microsoft YaHei", monospace;
+  }
+  #bar {
+    position: sticky;
+    top: 0;
+    padding: 8px 12px;
+    background: #252526;
+    border-bottom: 1px solid #3a3a3a;
+    font-size: 12px;
+    color: #9d9d9d;
+    display: flex;
+    justify-content: space-between;
+  }
+  #content {
+    padding: 12px 14px 24px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  .empty { color: #6a6a6a; }
+  .section-title {
+    color: #4fc1ff;
+    font-weight: bold;
+    margin: 14px 0 4px;
+  }
+  .section-title:first-of-type { margin-top: 0; }
+  .reply { color: #b5cea8; }
+</style>
+</head>
+<body>
+  <div id="bar">
+    <span id="label">等待第一次 LLM 调用…</span>
+    <span id="time"></span>
+  </div>
+  <div id="content" class="empty">还没有发生过对话，发一条消息之后这里会显示最新的一次请求内容和回复。</div>
+
+<script>
+  const labelEl = document.getElementById('label');
+  const timeEl = document.getElementById('time');
+  const contentEl = document.getElementById('content');
+
+  function pad(n) { return String(n).padStart(2, '0'); }
+
+  function render(call) {
+    if (!call) return;
+    const d = new Date(call.ts);
+    labelEl.textContent = '[' + (call.label || '对话回复') + ']';
+    timeEl.textContent = pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+    contentEl.classList.remove('empty');
+    contentEl.innerHTML =
+      '<div class="section-title">发送内容</div>' +
+      escapeHtml(call.requestText) +
+      '<div class="section-title">LLM回复</div>' +
+      '<span class="reply">' + escapeHtml(call.replyText) + '</span>';
+  }
+
+  function escapeHtml(s) {
+    return String(s || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  window.petAPI.getLlmLog().then(render).catch(() => {});
+  window.petAPI.onLlmLogUpdated(render);
+</script>
+</body>
+</html>
