@@ -164,11 +164,6 @@
     </div>
   </div>
 
-  <div id="test-section" style="display: none;">
-    <label>试听文本</label>
-    <input id="test_text" />
-  </div>
-
   <div class="btn-row">
     <button id="test-btn" type="button">🔊 试听</button>
     <button id="save-btn" type="button">保存</button>
@@ -189,9 +184,18 @@
   let testAudio = null;
   let testUrl = null;
 
+  // 非错误类文案 2 秒后自动清空；err 常驻，等用户下次操作再被覆盖
+  let statusTimer = null;
   function setStatus(text, cls) {
     $('status').textContent = text || '';
     $('status').className = cls || '';
+    if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
+    if (text && cls !== 'err') {
+      statusTimer = setTimeout(() => {
+        $('status').textContent = '';
+        $('status').className = '';
+      }, 2000);
+    }
   }
   // ipcRenderer.invoke 的异常消息带 "Error invoking remote method 'xxx': Error: " 前缀，去掉只留原因
   function errText(err) {
@@ -212,7 +216,6 @@
   function refreshPanels() {
     const provider = $('provider').value;
     for (const p of PANELS) $('panel-' + p).classList.toggle('show', provider === p);
-    $('test-section').style.display = provider === 'off' ? 'none' : 'block';
     $('edge_voice_custom').classList.toggle('show', $('edge_voice').value === CUSTOM);
     for (const m of MIMO_MODES) $('mimo-sub-' + m).classList.toggle('show', $('mimo_mode').value === m);
     for (const s of DOUBAO_SOURCES) $('doubao-sub-' + s).classList.toggle('show', $('doubao_source').value === s);
@@ -255,9 +258,10 @@
     return Number.isFinite(n) ? String(n) : '';
   }
 
+  const TEST_TEXT = '「你好呀，这是语音试听。」';
+
   async function load() {
     $('char-name').textContent = '· ' + character;
-    $('test_text').value = `你好呀，我是${character}，这是语音试听。`;
     const cfg = await window.petAPI.ttsGetConfig(character);
     const { providers, voice, presets } = cfg;
 
@@ -404,7 +408,7 @@
     btn.disabled = true;
     setStatus('合成中…', 'busy');
     try {
-      const r = await window.petAPI.ttsTest(character, collect(), $('test_text').value);
+      const r = await window.petAPI.ttsTest(character, collect(), TEST_TEXT);
       await playBytes(r.bytes, r.mime);
       setStatus('合成成功，正在播放', 'ok');
     } catch (err) {
@@ -419,7 +423,8 @@
     try {
       await window.petAPI.ttsSaveConfig(character, collect());
       await window.petAPI.asrSaveConfig({ resourceId: $('asr_resource_id').value });
-      setStatus('已保存（下一条 AI 回复起生效）', 'ok');
+      // 保存成功：不需要绿色"已保存"文案停留，直接关闭音色设置窗口
+      window.close();
     } catch (err) {
       setStatus('保存失败：' + errText(err), 'err');
     }

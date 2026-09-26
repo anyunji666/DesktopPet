@@ -147,6 +147,21 @@
   // 当前角色的人设状态：null = 还没加载到（不该出现）
   let personaLoaded = null;
 
+  // 状态提示：非错误类文案 2 秒后自动清空；err 常驻，等用户下次操作再被覆盖
+  let statusTimer = null;
+  function setStatus(text, cls) {
+    const status = $('status');
+    status.textContent = text || '';
+    status.className = cls || '';
+    if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
+    if (text && cls !== 'err') {
+      statusTimer = setTimeout(() => {
+        status.textContent = '';
+        status.className = '';
+      }, 2000);
+    }
+  }
+
   async function load() {
     const cfg = await window.petAPI.getApiConfig();
     $('api_url').value = cfg.api_url || '';
@@ -169,9 +184,7 @@
   }
 
   $('save-btn').addEventListener('click', async () => {
-    const status = $('status');
-    status.textContent = '保存中…';
-    status.className = '';
+    setStatus('保存中…', '');
     try {
       await window.petAPI.saveApiConfig({
         api_url: $('api_url').value,
@@ -189,22 +202,19 @@
       if (personaLoaded) {
         await window.petAPI.savePersona(personaLoaded.characterName, $('persona_system').value);
       }
-      status.textContent = '已保存';
-      status.className = 'ok';
+      // 保存成功：不需要绿色"已保存"文案停留，直接关闭设置窗口
+      window.close();
     } catch (err) {
-      status.textContent = '保存失败：' + (err && err.message ? err.message : String(err));
-      status.className = 'err';
+      setStatus('保存失败：' + (err && err.message ? err.message : String(err)), 'err');
     }
   });
 
   $('load-models-btn').addEventListener('click', async () => {
     const btn = $('load-models-btn');
-    const status = $('status');
     const select = $('model_select');
     btn.disabled = true;
     btn.textContent = '加载中…';
-    status.textContent = '';
-    status.className = '';
+    setStatus('', '');
     try {
       // 直接用表单里当前填的值去拉，不强制先保存
       const list = await window.petAPI.fetchModelList($('api_url').value.trim(), $('api_key').value.trim());
@@ -222,12 +232,10 @@
         select.appendChild(opt);
       }
       select.classList.add('show');
-      status.textContent = `已获取 ${list.length} 个模型，从下拉框里选一个`;
-      status.className = 'ok';
+      setStatus(`已获取 ${list.length} 个模型，从下拉框里选一个`, 'ok');
     } catch (err) {
       select.classList.remove('show');
-      status.textContent = '加载模型列表失败：' + (err && err.message ? err.message : String(err));
-      status.className = 'err';
+      setStatus('加载模型列表失败：' + (err && err.message ? err.message : String(err)), 'err');
     } finally {
       btn.disabled = false;
       btn.textContent = '🔄 加载模型';
