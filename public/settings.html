@@ -147,11 +147,15 @@
   <textarea id="llm_relay_keys" placeholder="仅支持能直连上gemini的网络，一行一Key"></textarea>
   <p class="tip" id="relay-status-tip"></p>
 
+  <div class="section-title">🌍 世界背景 <span id="storybg-character" style="font-weight: normal; color: #999;"></span></div>
+
+  <textarea id="story_background" style="min-height: 90px" placeholder="角色所处世界的描述及设定"></textarea>
+
   <div class="section-title">🎭 角色资料 <span id="persona-character" style="font-weight: normal; color: #999;"></span></div>
 
-  <label>角色人设（把角色的背景资料发送给 AI）</label>
+  <label>角色的个人资料</label>
   <textarea id="persona_system" style="min-height: 110px" placeholder="写角色的身份、性格、说话风格、和你的关系…&#10;例如：凛是一只傲娇的猫娘，嘴上总嫌弃你其实很黏人，说话简短带刺但会脸红…"></textarea>
-  <p class="tip">保存后 生成/更新 角色的 persona.json 文件。清空后保存 = 不发送角色资料。</p>
+  <p class="tip">保存后 生成/更新 角色的 persona.json 文件。世界背景和角色资料都清空后保存 = 不发送这两项。</p>
 
   <div class="section-title">📝 Prompt 模板（全局生效，不区分角色）</div>
 
@@ -246,7 +250,9 @@
     if (persona) {
       personaLoaded = persona;
       $('persona-character').textContent = '· ' + persona.characterName;
+      $('storybg-character').textContent = '· ' + persona.characterName;
       $('persona_system').value = persona.system || '';
+      $('story_background').value = persona.storyBackground || '';
     }
   }
 
@@ -265,9 +271,9 @@
         prefix: $('prompt_prefix').value,
         readerInfo: $('prompt_reader_info').value,
       });
-      // 角色资料：直接保存——清空 = 删除文件，之后不再发送角色资料
+      // 角色资料 / 世界背景：直接保存——两项都清空 = 删除文件，之后不再发送
       if (personaLoaded) {
-        await window.petAPI.savePersona(personaLoaded.characterName, $('persona_system').value);
+        await window.petAPI.savePersona(personaLoaded.characterName, $('persona_system').value, $('story_background').value);
       }
       // 保存成功：不需要绿色"已保存"文案停留，直接关闭设置窗口
       window.close();

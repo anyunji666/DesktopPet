@@ -48,11 +48,26 @@ function fullWindowRect() {
 }
 
 // 气泡贴到模型视口正上方、水平居中——效果跟以前"气泡在 #viewport 里 left:50%"一样，
-// 只是气泡现在挂在 body 下面，视口挪动/缩放时改用坐标手动算，而不是靠 CSS 百分比
+// 只是气泡现在挂在 body 下面，视口挪动/缩放时改用坐标手动算，而不是靠 CSS 百分比。
+// 普通模式：只设 top，钉住顶边、内容多了往下长——窗口本身就是角色的显示区域，头顶上方
+// 没有多余空间，只能这么长（长文本会盖到角色身上，但没有更好的选择）。
+// 桌面模式：真实窗口远大于角色可视区域，头顶上方有一大块空白没用上，所以反过来只设
+// bottom，钉住底边（跟气泡下面指向角色的小三角箭头对齐），内容多了往上长，长文本往
+// 桌面空白区域扩，不会压到角色。两种模式互斥设置 top/bottom，用完清空另一个，避免
+// 残留上一次模式的定位属性把气泡钉在两头都动不了。
 function updateBubbleAnchor() {
   if (!viewportRect) return;
   bubbleEl.style.left = viewportRect.x + viewportRect.width / 2 + 'px';
-  bubbleEl.style.top = viewportRect.y + 8 + 'px';
+  if (desktopMode) {
+    // 清空用 'auto' 而不是 ''：CSS 里 #bubble 默认写了 top: 8px，清成空字符串只是去掉内联样式，
+    // 会退回样式表的默认值，导致 top/bottom 同时生效，把气泡从顶边硬拉伸到这里，
+    // 内容再少也会被撑成一个大空盒子（而不是按内容自适应高度）——必须显式设成 auto 才能真正清空
+    bubbleEl.style.top = 'auto';
+    bubbleEl.style.bottom = window.innerHeight - viewportRect.y - 8 + 'px';
+  } else {
+    bubbleEl.style.bottom = 'auto';
+    bubbleEl.style.top = viewportRect.y + 8 + 'px';
+  }
 }
 
 // 应用一份视口几何：更新 #viewport 的实际像素位置/大小，并让 camera/renderer/气泡缩放
@@ -124,14 +139,32 @@ function isOverChatBox(e) {
 // 桌面模式下每次 mousemove 都判断一次"鼠标是否在可交互区域"（模型 / 椭圆按钮 /
 // 对话框，只有鼠标真的落在对话框范围内才算），决定窗口这一刻要不要对鼠标穿透。
 // 拖拽/旋转/调整视口进行中不重新判断，强制保持"不穿透"，避免鼠标划得快时中途漏判、手势被打断
+// mousemove 在鼠标划得快时一帧内可能触发好几次；"强制不穿透"这条分支很便宜（不带射线检测），
+// 同步执行不节流，保证拖拽/旋转过程中穿透状态切换没有延迟。真正开销大的是命中模型那条分支
+// （hitModel 里的射线检测），这部分节流成每帧最多算一次，同一帧内的多次调用只更新坐标、
+// 复用下一帧的一次计算结果——桌面模式跳舞卡顿主要就是这里每次 mousemove 都全量算一遍导致的。
+let pendingHoverEvent = null;
+let hoverRafId = null;
+function scheduleHoverHitCheck(e) {
+  pendingHoverEvent = e;
+  if (hoverRafId !== null) return; // 已经排了一次，本帧内的后续调用不用重复排
+  hoverRafId = requestAnimationFrame(() => {
+    hoverRafId = null;
+    const ev = pendingHoverEvent;
+    // rAF 触发前状态可能已经变了（比如开始拖拽），这种情况交回同步分支处理，这里跳过即可
+    if (!desktopMode || rotating || movingViewport || resizingViewport) return;
+    const over = isOverChatBox(ev) || isOverAnchorButton(ev) || hitModel(ev);
+    setClickThrough(!over);
+  });
+}
+
 function updateClickThroughByHover(e) {
   if (!desktopMode) return;
   if (rotating || movingViewport || resizingViewport) {
-    setClickThrough(false);
+    setClickThrough(false); // 便宜分支，同步执行
     return;
   }
-  const over = isOverChatBox(e) || isOverAnchorButton(e) || hitModel(e);
-  setClickThrough(!over);
+  scheduleHoverHitCheck(e); // 命中检测分支，节流到每帧一次
 }
 
 // ---------------- 交互：拖拽 / 点击 / 右键 ----------------

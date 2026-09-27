@@ -1,6 +1,6 @@
 // ---------- API 配置 / Prompt 模板拼装 / LLM 请求 ----------
 const { loadConfig, updateConfig } = require('./config');
-const { loadPersona, loadDaySummary, loadMemoryIndex, loadOpenedDay, saveOpenedDay } = require('./chat-store');
+const { loadPersona, loadStoryBackground, loadDaySummary, loadMemoryIndex, loadOpenedDay, saveOpenedDay } = require('./chat-store');
 const { TONE_PROMPT, toneEnabled } = require('./tts/tone');
 const { extractMentionedDayKeys } = require('./date-detect');
 
@@ -73,6 +73,7 @@ const PROMPT_FOOTER = `## **必须遵守的强制性输出规则**
 - **内容要求：** 
   - 没有接收到用户的元指令时不以旁白介入，评判角色行为
   - 不预叙后续发生之事：❌他不知道这将是最后一次、❌她浑然不觉将要发生什么
+  - 场景动态推进：每轮的输出要有节奏，如果是无聊的日常故事可以大幅跳过一些天数，加点趣味性的事件。自由切换故事场景，避免故事停滞不前。
 - **语言：** 简体中文
 - **符号规范**（严格区分）：
   - 角色的对话：用「」包裹，例：「这个给你，别嫌弃呀」
@@ -88,13 +89,15 @@ const PROMPT_FOOTER = `## **必须遵守的强制性输出规则**
   - 示例：「你不要过来～」*怎么这样···*「真是服了你了～」小拳拳锤了一下{{user}}的胸口，还是默许了{{user}}的行为。
 - **摘要模块：** 对本轮的正文内容进行一次总结。每次回复必须以摘要块结尾，缺失=不合格
   - 输出格式：
-  [摘要]
-  时间: <本轮 {{user}} 发送消息的时间>
+  <story_overview>
+  故事时间: <本轮场景结束时故事里的时间；会跟着"场景动态推进"跳跃（比如一下跳过几天），不是用户发消息的真实时间>
   概述: <按时间顺序列出本轮正文发生的关键事件及其造成的角色实际改变（关系/处境/认知），平铺直叙，不用比喻/形容词；无实质进展则留空，不超150字>
+  </story_overview>
   - 摘要示例（仅供格式参考，具体内容需按当轮对话实际生成）：
-  [摘要]
-  时间: 2026年9月27日 21:40
-  概述: 女主借口漏水深夜造访男主公寓，实则想拖延离开、试探男主的态度；男主识破了这个借口，却仍配合她演下去，两人关系从单纯的房东房客多了一层暧昧的试探。`;
+  <story_overview>
+  故事时间: 2026年9月27日 21:40
+  概述: 女主借口漏水深夜造访男主公寓，实则想拖延离开、试探男主的态度；男主识破了这个借口，却仍配合她演下去，两人关系从单纯的房东房客多了一层暧昧的试探。
+  </story_overview>`;
 // 约定：元指令 / 元回复用（半角或全角）括号包裹，属于 OOC（出戏）内容，不算"剧情"。
 // 只用于"存历史/回填下一轮 prompt"这条链路，不影响本轮气泡显示、TTS 朗读、IPC 返回值。
 // 简单起见按"非嵌套括号对"整体删除；不处理嵌套括号（约定用法下不会出现嵌套）。
@@ -105,15 +108,33 @@ function stripMetaForHistory(content) {
   return content.replace(META_BRACKETS, '').replace(/[ \t]{2,}/g, ' ').trim();
 }
 
-// 从 AI 回复原文里提取本轮自带的摘要块（PROMPT_FOOTER 要求的 "[摘要]\n时间: ...\n概述: ..."）。
-// 找到就把从 [摘要] 标记开始到结尾整段原样取出（含标记本身，发回给模型时自带"这是摘要"的语境）；
+// PROMPT_FOOTER 要求模型在回复末尾输出的摘要块标签（<story_overview>故事时间/概述</story_overview>）。
+// 用带闭合标签的正则匹配，而不是简单地"从某个标记切到字符串末尾"——这样即使标签前后顺序有变化
+// （比如语气【】插在摘要块前面）也能准确截出摘要块本身，不会把语气或别的内容也一起吞进去。
+const STORY_OVERVIEW_RE = /<story_overview>[\s\S]*?<\/story_overview>/;
+
+// 把 LLM 原始回复拆成 { body, summaryBlock }：summaryBlock 是摘要块原文（含标签，未找到则为空串），
+// body 是去掉摘要块之后剩下的部分（可能还带着语气【…】，留给 splitTone 继续拆）。
+// main.js 生成回复时用这个把"摘要块"和"正文/语气"分开处理：正文/语气才进气泡和聊天记录展示，
+// 摘要块只重新拼回持久化历史（喂给下一轮 LLM 用），三者互不干扰。
+function splitTurnSummary(rawReply) {
+  const raw = typeof rawReply === 'string' ? rawReply : '';
+  const m = STORY_OVERVIEW_RE.exec(raw);
+  if (!m) return { body: raw.trim(), summaryBlock: '' };
+  return { body: raw.slice(0, m.index).trim(), summaryBlock: m[0].trim() };
+}
+
+// 从"已经存进聊天记录"的 assistant 内容里提取摘要块，供 flattenChatHistory 做轮次压缩用。
 // 找不到（老数据/模型没遵守格式）返回 null，调用方据此决定要不要退回发原文兜底。
+// 返回值剥掉了首尾的 <story_overview>/</story_overview> 标签，只留"故事时间/概述"正文——
+// 发给 LLM 的历史里不需要带这层标签，标签只是本地解析摘要块用的边界标记。
 function extractTurnSummary(content) {
-  if (typeof content !== 'string') return null;
-  const idx = content.indexOf('[摘要]');
-  if (idx === -1) return null;
-  const block = content.slice(idx).trim();
-  return block || null;
+  const { summaryBlock } = splitTurnSummary(content);
+  if (!summaryBlock) return null;
+  return summaryBlock
+    .replace(/^<story_overview>\s*/, '')
+    .replace(/\s*<\/story_overview>$/, '')
+    .trim();
 }
 
 // 把 epoch 毫秒格式化成 "YYYY-MM-DD HH:mm"（精确到分钟，本地时区）
@@ -156,7 +177,7 @@ function flattenDayLines(characterName, history, dayKey) {
     if (typeof h.ts !== 'number' || dayKeyOf(h.ts) !== dayKey) continue;
     const imageTag = h.image ? `[图片:${h.image}]` : '';
     const content = imageTag ? (h.content ? `${imageTag} ${h.content}` : imageTag) : h.content;
-    const speaker = h.role === 'user' ? '用户' : characterName;
+    const speaker = h.role === 'user' ? '用户' : '你';
     lines.push(`${speaker}: ${content}`);
   }
   return lines;
@@ -232,7 +253,8 @@ function resolveOpenedDayKey(characterName, currentInputText, todayKey, lastPast
 // 一天内聊多少都不压缩，真正需要管的是"聊了多少天"，不是"某一天聊了多少"。
 const SEALED_SUMMARY_BUDGET_CHARS = 2000;
 
-// 把聊天记录摊平成文本：用户说的话标"用户"，AI 说的话标角色名（characterName）
+// 把聊天记录摊平成文本：用户说的话标"用户"，AI 说的话标"你"（不用角色名——发给 LLM 的历史里，
+// AI 自己的发言统一用"你"指代，因为 AI 实际扮演的身份可能被角色资料/世界背景改写，不一定等于角色名本身）
 // 图片消息在文字侧降级成 "[图片:文件名]" 标记：不支持识图的模型看文字标记也能知道"这里发过一张叫xxx的图"；
 // 图片本身只在 vision 开启时对"本轮"消息以视觉格式直发，历史图片不重发（省 token）
 //
@@ -347,7 +369,11 @@ function flattenChatHistory(characterName, history, currentInputText) {
   }
 
   // 第三遍：按原来的时间顺序拼最终文本
+  // sawCompact/sepInserted：压缩摘要行 和 保留原文的最近轮次 之间插一条 "——" 分隔线，只插一次——
+  // 在第一条"原文"行前面、且前面确实出现过压缩摘要时插入，让模型一眼分清"这段是概述，这段是原话"。
   const lines = [];
+  let sawCompact = false;
+  let sepInserted = false;
   for (const block of dayBlocks) {
     if (!block.sealed) {
       // 今天 / 上一个封印包 / 本轮提到的日期：按上面标好的 renderMode 输出（原文 / 压缩摘要 / 跳过）
@@ -356,11 +382,19 @@ function flattenChatHistory(characterName, history, currentInputText) {
         if (item.renderMode === 'skip') continue;
         if (item.renderMode === 'compact') {
           lines.push(item.compactText);
+          sawCompact = true;
           continue;
         }
+        if (sawCompact && !sepInserted) {
+          lines.push('——');
+          sepInserted = true;
+        }
+        // assistant 存档内容末尾拼着 <story_overview> 摘要块（给轮次压缩当数据源用），
+        // 这里是"发原文"的分支，只要正文，摘要块不发（避免最近两轮也带一份摘要块，显得重复）
+        const rawContent = h.role === 'assistant' ? splitTurnSummary(h.content).body : h.content;
         const imageTag = h.image ? `[图片:${h.image}]` : '';
-        const content = imageTag ? (h.content ? `${imageTag} ${h.content}` : imageTag) : h.content;
-        const speaker = h.role === 'user' ? '用户' : characterName;
+        const content = imageTag ? (rawContent ? `${imageTag} ${rawContent}` : imageTag) : rawContent;
+        const speaker = h.role === 'user' ? '用户' : '你';
         lines.push(`${prefix}${speaker}: ${content}`);
       }
     } else {
@@ -378,15 +412,20 @@ function flattenChatHistory(characterName, history, currentInputText) {
 // --- 尾部固定说明（用户输入说明 + 必须遵守的强制性输出规则，两段都紧跟在最新内容后面，强化权重）
 function buildPromptText(characterName, history, text) {
   const { prefix, readerInfo } = getPromptConfig();
+  const storyBackground = loadStoryBackground(characterName);
   const characterCard = loadPersona(characterName);
   const chatHistoryText = flattenChatHistory(characterName, history, text);
   const nowText = formatMinuteTime(Date.now());
 
-  // 固定内容（前缀/角色卡/用户设定/输出说明）全部前置且逐字节不变，聊天历史/本轮输入这些每次都在变的内容后置，
+  // 固定内容（前缀/世界背景/角色卡/用户设定/输出说明）全部前置且逐字节不变，聊天历史/本轮输入这些每次都在变的内容后置，
   // 这样发给 DeepSeek / Gemini 这类"自动前缀缓存"的 API 时，前面这一大段固定前缀才能被复用命中、省 token。
   const parts = [];
   if (prefix.trim()) parts.push(prefix.trim());
   parts.push('---');
+  // 世界背景拼在角色资料前面，没填就不发这一段
+  if (storyBackground.trim()) {
+    parts.push(`<story_background>\n<!-- 故事的世界背景以及设定 -->\n${storyBackground.trim()}\n</story_background>`);
+  }
   // 用户没填角色资料就不发这一段
   if (characterCard.trim()) {
     parts.push(`<character_card>\n<!-- 角色的设定资料。设计/扮演 该角色的行为对话时，要符合该角色的个性。 -->\n${characterCard}\n</character_card>`);
@@ -541,6 +580,7 @@ module.exports = {
   savePromptConfig,
   buildPromptText,
   stripMetaForHistory,
+  splitTurnSummary,
   callLLM,
   fetchModelList,
   dayKeyOf,

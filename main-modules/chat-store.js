@@ -13,31 +13,40 @@ function getChatDir() {
   return chatDirCache;
 }
 
-// 读取角色人设文件（Character/<角色名>/persona.json，可选，格式为 { "system": "……" }）
-// 返回 string（有人设）或 null（没配置/格式不对）
+// 读取角色人设文件（Character/<角色名>/persona.json，可选，格式为 { "system": "……", "storyBackground": "……" }）
+// system = 角色的个人资料，storyBackground = 角色所处的世界背景，两者都跟随角色存档、非全局。
+// 返回 { system, storyBackground }，缺失/解析失败时两个字段都是空字符串。
 function readPersonaFile(characterName) {
   const p = path.join(CHARACTER_ROOT, characterName, 'persona.json');
   try {
     const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
-    if (data && typeof data.system === 'string' && data.system.trim()) return data.system.trim();
-    console.warn(`[pet] 角色 "${characterName}" 的 persona.json 格式不对（应为 { "system": "..." }），已忽略`);
+    const system = data && typeof data.system === 'string' ? data.system.trim() : '';
+    const storyBackground = data && typeof data.storyBackground === 'string' ? data.storyBackground.trim() : '';
+    return { system, storyBackground };
   } catch (err) {
     if (err.code !== 'ENOENT') {
       console.warn(`[pet] 角色 "${characterName}" 的 persona.json 解析失败: ${err.message}`);
     }
+    return { system: '', storyBackground: '' };
   }
-  return null;
 }
 
-// 读取拼进 prompt 的角色资料：没填（没有 persona.json）就返回空字符串，调用方据此不发送角色资料
+// 读取拼进 prompt 的角色资料（<character_card>）：没填就返回空字符串，调用方据此不发送
 function loadPersona(characterName) {
-  return readPersonaFile(characterName) || '';
+  return readPersonaFile(characterName).system;
 }
 
-// 保存角色人设：空文本时删除 persona.json（之后不再发送角色资料）
-function savePersonaFile(characterName, system) {
+// 读取拼进 prompt 的世界背景（<story_background>）：没填就返回空字符串，调用方据此不发送
+function loadStoryBackground(characterName) {
+  return readPersonaFile(characterName).storyBackground;
+}
+
+// 保存角色人设 / 世界背景：两者都空时删除 persona.json（之后不再发送角色资料/世界背景）
+function savePersonaFile(characterName, { system, storyBackground } = {}) {
   const p = path.join(CHARACTER_ROOT, characterName, 'persona.json');
-  if (!system) {
+  const sys = typeof system === 'string' ? system.trim() : '';
+  const bg = typeof storyBackground === 'string' ? storyBackground.trim() : '';
+  if (!sys && !bg) {
     try {
       fs.unlinkSync(p);
     } catch (err) {
@@ -45,7 +54,7 @@ function savePersonaFile(characterName, system) {
     }
     return;
   }
-  fs.writeFileSync(p, JSON.stringify({ system }, null, 2), 'utf-8');
+  fs.writeFileSync(p, JSON.stringify({ system: sys, storyBackground: bg }, null, 2), 'utf-8');
 }
 
 function chatHistoryPath(characterName) {
@@ -286,6 +295,7 @@ module.exports = {
   getChatDir,
   readPersonaFile,
   loadPersona,
+  loadStoryBackground,
   savePersonaFile,
   chatHistoryPath,
   loadChatHistory,

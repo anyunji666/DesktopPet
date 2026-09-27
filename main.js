@@ -45,6 +45,7 @@ const {
   savePromptConfig,
   buildPromptText,
   stripMetaForHistory,
+  splitTurnSummary,
   callLLM,
   fetchModelList,
   dayKeyOf,
@@ -398,19 +399,27 @@ ipcMain.handle('chat-send', async (e, characterName, message, imageDataURL) => {
     ];
   }
 
-  // 回复末尾可能带一句【配音语气】：拆出来只给 TTS 用，气泡 / 聊天记录 / 返回值里都是不含它的正文
-  const { text: reply, tone } = splitTone(characterName, await callLLM(messages, `对话回复 - ${characterName}`));
+  // 回复末尾会带一个 <story_overview> 摘要块（给历史轮次压缩用），摘要块前面可能还有一句【配音语气】。
+  // 必须先摘掉摘要块，剩下的部分再拆语气——如果先拆语气，摘要块跟在语气后面，语气就不是字符串真正的
+  // 末尾了，splitTone 那个"只匹配末尾"的正则会直接匹配失败，语气解析会静默失效。
+  const rawReply = await callLLM(messages, `对话回复 - ${characterName}`);
+  const { body: replyBody, summaryBlock } = splitTurnSummary(rawReply);
+  // 摘要块 / 语气都不该进气泡、聊天记录、IPC 返回值：拆完之后 reply 就是干净正文，气泡 / TTS / 返回值都用它
+  const { text: reply, tone } = splitTone(characterName, replyBody);
 
   // 只过滤"落档/回填给模型下一轮"这份记录：括号包裹的元指令/元回复属于 OOC 内容，不算剧情，
   // 不应该沉淀进长期聊天记录、也不该在后续轮次里当成故事历史又发回模型。
   // 本轮气泡显示（下面的 reply）、TTS 朗读、这次 IPC 的返回值都仍然用未过滤的原文，用户照常能看到。
   const userContentForHistory = stripMetaForHistory(text);
-  const replyContentForHistory = stripMetaForHistory(reply);
+  const replyTextForHistory = stripMetaForHistory(reply);
+  // 摘要块重新拼回存档内容末尾——flattenChatHistory 做轮次压缩要靠它才能把老轮次换成摘要；
+  // 语气【】不拼回去，跟现在的设计一致：语气只给 TTS 用，不落档、也不发回模型
+  const replyContentForHistory = summaryBlock ? `${replyTextForHistory}\n${summaryBlock}` : replyTextForHistory;
   // 过滤后文字和图片都没有了，说明这一条整个是纯元指令/元回复的 OOC 对话，不值得占历史一条，直接跳过不存
   if (userContentForHistory || imageFile) {
     history.push({ role: 'user', content: userContentForHistory, image: imageFile, ts: Date.now() });
   }
-  if (replyContentForHistory) {
+  if (replyTextForHistory) {
     history.push({ role: 'assistant', content: replyContentForHistory, ts: Date.now() });
   }
   saveChatHistory(characterName, history);
@@ -464,14 +473,19 @@ ipcMain.handle('save-prompt-config', (_e, patch) => savePromptConfig(patch && ty
 ipcMain.handle('get-persona', () => {
   const c = state.characters[state.currentIndex];
   if (!c) return null;
+  const { system, storyBackground } = readPersonaFile(c.name);
   return {
     characterName: c.name,
-    system: readPersonaFile(c.name) || '',
+    system,
+    storyBackground,
   };
 });
-ipcMain.handle('save-persona', (_e, characterName, system) => {
+ipcMain.handle('save-persona', (_e, characterName, system, storyBackground) => {
   if (!validCharacter(characterName)) throw new Error('未知角色');
-  savePersonaFile(characterName, typeof system === 'string' ? system.trim() : '');
+  savePersonaFile(characterName, {
+    system: typeof system === 'string' ? system.trim() : '',
+    storyBackground: typeof storyBackground === 'string' ? storyBackground.trim() : '',
+  });
   return true;
 });
 ipcMain.handle('fetch-model-list', (_e, apiUrl, apiKey) => fetchModelList(apiUrl, apiKey));
@@ -479,6 +493,9 @@ ipcMain.handle('get-chat-history', (_e, characterName) => {
   if (typeof characterName !== 'string') return [];
   return loadChatHistory(characterName).map((m) => ({
     ...m,
+    // assistant 消息存盘时末尾拼了 <story_overview> 摘要块（给轮次压缩用），聊天记录窗口只是给人看的，
+    // 这个标签用户不需要看到——只处理这个接口的返回值，磁盘上的历史文件本身不受影响
+    content: m.role === 'assistant' ? splitTurnSummary(m.content).body : m.content,
     // 图片消息附带 dataURL 供记录窗口直接渲染缩略图；文件丢了就当纯文字消息
     imageDataURL: m.image ? readChatImageDataURL(characterName, m.image) : undefined,
   }));
@@ -652,12 +669,14 @@ app.on('window-all-closed', () => app.quit());
 // 退出前记住主窗口位置，下次启动原样恢复；随后强制销毁窗口，防止渲染进程卡住
 // （WebGL 资源释放慢）拖着整个进程退不干净。注意：任务管理器强杀/断电这类非正常退出不会走到这里，
 // 那种情况下位置就不会更新，这是可以接受的取舍。
+// 桌面模式下真实窗口的位置/大小是被临时放大的那一份（纵向铺满屏幕工作区），不是用户认知里
+// "普通模式窗口"该在的地方——这时候不能存窗口当前的实际 bounds，要存 state.normalWinBounds
+// （切换进桌面模式前记下的那份快照），不然下次启动或者切回普通模式时就会用错位置。
 app.on('before-quit', () => {
   geminiRelay.stopRelay();
   if (state.win && !state.win.isDestroyed()) {
-    const [x, y] = state.win.getPosition();
-    const { width, height } = state.win.getBounds();
-    updateConfig({ winPosition: { x, y }, winSize: { width, height } });
+    const bounds = state.bgMouseInteraction ? state.win.getBounds() : state.normalWinBounds || state.win.getBounds();
+    updateConfig({ winPosition: { x: bounds.x, y: bounds.y }, winSize: { width: bounds.width, height: bounds.height } });
     state.win.destroy();
   }
 });

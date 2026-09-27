@@ -39,9 +39,10 @@ contextBridge.exposeInMainWorld('petAPI', {
   saveApiConfig: (cfg) => ipcRenderer.invoke('save-api-config', cfg),
   getPromptConfig: () => ipcRenderer.invoke('get-prompt-config'),
   savePromptConfig: (cfg) => ipcRenderer.invoke('save-prompt-config', cfg),
-  // 当前角色的人设（persona.json）读取 / 保存（设置窗口用）
+  // 当前角色的人设 + 世界背景（persona.json）读取 / 保存（设置窗口用）
   getPersona: () => ipcRenderer.invoke('get-persona'),
-  savePersona: (characterName, system) => ipcRenderer.invoke('save-persona', characterName, system),
+  savePersona: (characterName, system, storyBackground) =>
+    ipcRenderer.invoke('save-persona', characterName, system, storyBackground),
   fetchModelList: (apiUrl, apiKey) => ipcRenderer.invoke('fetch-model-list', apiUrl, apiKey),
   // Gemini 多 Key 轮询中转当前状态（是否在跑 / 端口），设置窗口打开时用来回显提示行
   getRelayStatus: () => ipcRenderer.invoke('get-relay-status'),

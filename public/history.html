@@ -542,7 +542,12 @@
       const reply = await window.petAPI.chatSend(characterName, text, sendingImage);
       appendMsg('assistant', reply, Date.now());
     } catch (err) {
-      appendMsg('assistant', '出错了：' + (err && err.message ? err.message : String(err)), Date.now());
+      // 生成失败：这轮消息（用户输入 + 回复）都没有落盘，但上面已经乐观 append 了一条用户气泡——
+      // 它的 dataset.index 是本地计数器算的，跟磁盘真实记录对不上，编辑/删除会操作错位置。
+      // 改成整页刷新（从磁盘重读），让这条没落盘的气泡直接消失，页面状态和磁盘保持一致；
+      // 错误原因改用弹窗告知，不再塞进气泡列表里显示。
+      await reload();
+      alertError(err);
       // 失败时把图片放回预览，方便直接重发
       if (sendingImage) setPendingImage(sendingImage);
     } finally {

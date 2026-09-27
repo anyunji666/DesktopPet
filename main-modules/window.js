@@ -407,8 +407,24 @@ function reloadScenes() {
   if (before || state.currentSceneName) send('switch-scene', currentScene());
 }
 
+// 保存的虚拟视口是不同历史版本、不同窗口尺寸下存下来的，可能跟当前这次的窗口大小完全对不上
+// （比如以前窗口是"铺满整个屏幕"那么宽，现在窗口变窄了，存的 x 坐标可能落在新窗口外面）。
+// 这里不管视口数据来自哪个版本，进桌面模式时一律夹到当前窗口的实际范围内，保证角色和气泡
+// 永远落在窗口可见区域里，不会因为读到旧坐标就跑到窗口外面找不到
+function clampViewportToWindow(v, winW, winH) {
+  const width = Math.min(Math.max(v.width, 1), winW);
+  const height = Math.min(Math.max(v.height, 1), winH);
+  const x = Math.min(Math.max(v.x, 0), Math.max(0, winW - width));
+  const y = Math.min(Math.max(v.y, 0), Math.max(0, winH - height));
+  return { x, y, width, height };
+}
+
 // ---------- 背景鼠标互动开关（桌面模式）----------
-// 关闭：真实窗口铺满"当前宠物所在那块屏幕"的工作区（不含任务栏），并对鼠标点击穿透，
+// 关闭：真实窗口宽度保持不变（跟模型视口原本的宽度一致，不做任何缩放），只把高度铺满
+// "当前宠物所在那块屏幕"的工作区高度——目的是在角色上下留出纵向空间给对话气泡用
+// （气泡按真实窗口尺寸换算可用空间，见 app.js 顶部注释），不是要整个窗口等比放大。
+// 宽度不变意味着窗口的水平范围和切换前完全一样，必然还在屏幕内，不会有"数值算飞了
+// 导致窗口跑到屏幕外"的问题。
 // 渲染进程那边用一个本地的虚拟视口 div 模拟"窗口"，拖拽/缩放都在本地完成，
 // 只在松手时把结果同步回 config.json（见 main.js 的 save-desktop-viewport）。
 // 开启：真实窗口恢复关闭前记下的位置/大小，点击穿透关闭，一切照旧。
@@ -419,18 +435,24 @@ function enterDesktopMode() {
   const display = screen.getDisplayMatching(bounds);
   const wa = display.workArea;
 
+  // 宽度沿用切换前的窗口宽度（不缩放），水平位置也不变；只把高度和纵向位置换成
+  // 这块屏幕工作区的高度和顶部，纵向铺满
+  const desktopBounds = { x: bounds.x, y: wa.y, width: bounds.width, height: wa.height };
+
   const saved = loadConfig().desktopViewport;
-  // 有上次调整过的虚拟视口就直接用；否则用切换前窗口的位置/大小当初始值，视觉上不跳变
-  const viewport = isDesktopViewportValid(saved)
+  // 有上次调整过的虚拟视口就直接用；否则用切换前窗口的位置/大小当初始值，视觉上不跳变。
+  // 不管走哪条分支，都要再夹一遍到当前窗口范围内（见 clampViewportToWindow 上面的注释）
+  const rawViewport = isDesktopViewportValid(saved)
     ? saved
-    : { x: bounds.x - wa.x, y: bounds.y - wa.y, width: bounds.width, height: bounds.height };
+    : { x: bounds.x - desktopBounds.x, y: bounds.y - desktopBounds.y, width: bounds.width, height: bounds.height };
+  const viewport = clampViewportToWindow(rawViewport, desktopBounds.width, desktopBounds.height);
 
   state.bgMouseInteraction = false;
   updateConfig({ bgMouseInteraction: false });
-  state.win.setBounds(wa);
+  state.win.setBounds(desktopBounds);
   state.win.setIgnoreMouseEvents(true, { forward: true });
   state.menu = buildMenu();
-  send('enter-desktop-mode', { viewport, workArea: { width: wa.width, height: wa.height } });
+  send('enter-desktop-mode', { viewport, workArea: { width: desktopBounds.width, height: desktopBounds.height } });
 }
 
 function exitDesktopMode() {
