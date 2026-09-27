@@ -70,11 +70,14 @@ const INPUT_NOTE = `## **用户的输入说明**
 // 固定拼在模板末尾的说明段落（不受用户配置影响，硬编码）
 const PROMPT_FOOTER = `## **必须遵守的强制性输出规则**
 
+- **内容要求：** 
+  - 没有接收到用户的元指令时不以旁白介入，评判角色行为
+  - 不预叙后续发生之事：❌他不知道这将是最后一次、❌她浑然不觉将要发生什么
 - **语言：** 简体中文
 - **符号规范**（严格区分）：
   - 角色的对话：用「」包裹，例：「这个给你，别嫌弃呀」
   - 角色的内心独白：用*星号*包裹，例：*其实等你好久了*
-  - 没有符号的正文是旁白：描述环境、角色的动作神态
+  - 没有符号的是正文：描述环境、角色的动作神态等
   - 对用户的元指令的回答用括号包裹
   - 正文内容不要使用【】符号
 - 「对话」内容灵活使用标点符号：
@@ -82,8 +85,16 @@ const PROMPT_FOOTER = `## **必须遵守的强制性输出规则**
   - 句末重音：「什么！」
   - 疑问/质疑：「是这样吗？」
 - **正文字数：** 正文总字数不超过1200字，角色回复的对话内容的字数每段控制在 1~20 字。正文可以是单个字的简短对话回复，也可以是场景描绘里穿插着对话回复。
-  - 示例：「你不要过来～」*怎么这样···*「真是服了你了～」小拳拳锤了一下{{user}}的胸口，还是默许了{{user}}的行为。`;
-
+  - 示例：「你不要过来～」*怎么这样···*「真是服了你了～」小拳拳锤了一下{{user}}的胸口，还是默许了{{user}}的行为。
+- **摘要模块：** 对本轮的正文内容进行一次总结。每次回复必须以摘要块结尾，缺失=不合格
+  - 输出格式：
+  [摘要]
+  时间: <本轮 {{user}} 发送消息的时间>
+  概述: <按时间顺序列出本轮正文发生的关键事件及其造成的角色实际改变（关系/处境/认知），平铺直叙，不用比喻/形容词；无实质进展则留空，不超150字>
+  - 摘要示例（仅供格式参考，具体内容需按当轮对话实际生成）：
+  [摘要]
+  时间: 2026年9月27日 21:40
+  概述: 女主借口漏水深夜造访男主公寓，实则想拖延离开、试探男主的态度；男主识破了这个借口，却仍配合她演下去，两人关系从单纯的房东房客多了一层暧昧的试探。`;
 // 约定：元指令 / 元回复用（半角或全角）括号包裹，属于 OOC（出戏）内容，不算"剧情"。
 // 只用于"存历史/回填下一轮 prompt"这条链路，不影响本轮气泡显示、TTS 朗读、IPC 返回值。
 // 简单起见按"非嵌套括号对"整体删除；不处理嵌套括号（约定用法下不会出现嵌套）。
@@ -92,6 +103,17 @@ const META_BRACKETS = /[（(][^（）()]*[）)]/g;
 function stripMetaForHistory(content) {
   if (typeof content !== 'string') return content;
   return content.replace(META_BRACKETS, '').replace(/[ \t]{2,}/g, ' ').trim();
+}
+
+// 从 AI 回复原文里提取本轮自带的摘要块（PROMPT_FOOTER 要求的 "[摘要]\n时间: ...\n概述: ..."）。
+// 找到就把从 [摘要] 标记开始到结尾整段原样取出（含标记本身，发回给模型时自带"这是摘要"的语境）；
+// 找不到（老数据/模型没遵守格式）返回 null，调用方据此决定要不要退回发原文兜底。
+function extractTurnSummary(content) {
+  if (typeof content !== 'string') return null;
+  const idx = content.indexOf('[摘要]');
+  if (idx === -1) return null;
+  const block = content.slice(idx).trim();
+  return block || null;
 }
 
 // 把 epoch 毫秒格式化成 "YYYY-MM-DD HH:mm"（精确到分钟，本地时区）
@@ -283,12 +305,59 @@ function flattenChatHistory(characterName, history, currentInputText) {
     budget -= summary.length;
   }
 
+  // 第二点五遍：未封存天（今天/上一个封印包/打开的封印包）内部再按"轮次"压缩一层——
+  // 这些天不管聊多少条，之前是无脑全量展开原文，天数一多同样会把 prompt 撑爆。
+  // 做法：把所有未封存天的消息摊平成一条时间线（不看日期边界），按 user→assistant 配对切成"轮"，
+  // 落单的消息（没配对上）自己算一轮；最近 RECENT_RAW_ROUNDS 轮保留原文，
+  // 更早的轮尝试用该轮 assistant 回复自带的 [摘要] 块替换原文——找不到就整轮退回原文兜底，不丢内容。
+  // 在 { h, prefix } 这些包装对象上直接标 renderMode，不动 h 本身，也不落盘，只影响这次拼 prompt。
+  const RECENT_RAW_ROUNDS = 2;
+  const unsealedItems = [];
+  for (const block of dayBlocks) {
+    if (block.sealed) continue;
+    for (const item of block.msgs) unsealedItems.push(item);
+  }
+  const rounds = [];
+  for (let i = 0; i < unsealedItems.length; i++) {
+    const item = unsealedItems[i];
+    const next = unsealedItems[i + 1];
+    if (item.h.role === 'user' && next && next.h.role === 'assistant') {
+      rounds.push([item, next]);
+      i++; // next 已配进这一轮，跳过
+    } else {
+      rounds.push([item]);
+    }
+  }
+  const recentStart = Math.max(0, rounds.length - RECENT_RAW_ROUNDS);
+  for (let r = 0; r < rounds.length; r++) {
+    const round = rounds[r];
+    if (r >= recentStart) {
+      for (const item of round) item.renderMode = 'raw';
+      continue;
+    }
+    const assistantItem = round.find((it) => it.h.role === 'assistant');
+    const summary = assistantItem ? extractTurnSummary(assistantItem.h.content) : null;
+    if (!summary) {
+      for (const item of round) item.renderMode = 'raw'; // 没有可用摘要：兜底保留原文
+      continue;
+    }
+    for (const item of round) item.renderMode = 'skip';
+    round[round.length - 1].renderMode = 'compact'; // 压缩行挂在这轮最后一条消息的位置，保持时间顺序
+    round[round.length - 1].compactText = summary;
+  }
+
   // 第三遍：按原来的时间顺序拼最终文本
   const lines = [];
   for (const block of dayBlocks) {
     if (!block.sealed) {
-      // 今天 / 上一个封印包 / 本轮提到的日期：不管聊了多少条、多少字，永远全量展开原文
-      for (const { h, prefix } of block.msgs) {
+      // 今天 / 上一个封印包 / 本轮提到的日期：按上面标好的 renderMode 输出（原文 / 压缩摘要 / 跳过）
+      for (const item of block.msgs) {
+        const { h, prefix } = item;
+        if (item.renderMode === 'skip') continue;
+        if (item.renderMode === 'compact') {
+          lines.push(item.compactText);
+          continue;
+        }
         const imageTag = h.image ? `[图片:${h.image}]` : '';
         const content = imageTag ? (h.content ? `${imageTag} ${h.content}` : imageTag) : h.content;
         const speaker = h.role === 'user' ? '用户' : characterName;
