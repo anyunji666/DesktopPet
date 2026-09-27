@@ -56,24 +56,34 @@ function savePromptConfig(patch) {
 // 让模型读完最新输入马上看到"怎么解读它"，比隔着一大段固定说明再回头看更不容易漏看/记混
 const INPUT_NOTE = `## **用户的输入说明**
 
-- 带括号的内容是用户对 你 说的话，亲爱的无所不能的 你 会动用所有能力满足用户——（元指令）
-- 不带括号的内容就是用户在扮演他所设置的角色说话`;
+- 带括号的内容是用户对 你 说的话——（元指令），亲爱的无所不能的 你 会动用所有能力满足用户
+- 不带括号的内容就是用户在扮演他所设置的角色和 你 所扮演的角色互动`;
 
-// 固定拼在模板前面的说明段落（不受用户配置影响，硬编码）
-const PROMPT_FOOTER = `## **输出控制**
+// 固定拼在模板末尾的说明段落（不受用户配置影响，硬编码）
+const PROMPT_FOOTER = `## **必须遵守的强制性输出规则**
 
 - **语言：** 简体中文
 - **符号规范**（严格区分）：
   - 角色的对话：用「」包裹，例：「这个给你，别嫌弃呀」
   - 角色的内心独白：用*星号*包裹，例：*其实等你好久了*
-  - 没有符号的正文是旁白：描述环境、角色的动作神态，或者是对用户元指令的回答
+  - 没有符号的正文是旁白：描述环境、角色的动作神态
+  - 对用户的元指令的回答用括号包裹
   - 正文内容不要使用【】，详见语气描述
-- 「对话」/ *内心独白* 灵活使用 标点/表情 符号：
+- 「对话」内容灵活使用标点符号：
   - 句末拖长音：「不要嘛～」
   - 句末重音：「什么！」、「真的吗！？」
-  - 内心表示无语：*怎么这样···*
-- **正文字数：** 角色回复的对话的内容字数每段控制在 1~200 字，也就是「」包裹的内容，可以分好几段。
+- **正文字数：** 正文总字数不超过200字，角色回复的对话内容的字数每段控制在 1~20 字。正文可以是单个字的简短对话回复，也可以是场景描绘里穿插着对话回复。
   - 示例：「你不要过来～」*怎么这样···*「真是服了你了～」小拳拳锤了一下{{user}}的胸口，还是默许了{{user}}的行为。`;
+
+// 约定：元指令 / 元回复用（半角或全角）括号包裹，属于 OOC（出戏）内容，不算"剧情"。
+// 只用于"存历史/回填下一轮 prompt"这条链路，不影响本轮气泡显示、TTS 朗读、IPC 返回值。
+// 简单起见按"非嵌套括号对"整体删除；不处理嵌套括号（约定用法下不会出现嵌套）。
+const META_BRACKETS = /[（(][^（）()]*[）)]/g;
+
+function stripMetaForHistory(content) {
+  if (typeof content !== 'string') return content;
+  return content.replace(META_BRACKETS, '').replace(/[ \t]{2,}/g, ' ').trim();
+}
 
 // 把 epoch 毫秒格式化成 "YYYY-MM-DD HH:mm"（精确到分钟，本地时区）
 function formatMinuteTime(ts) {
@@ -285,8 +295,9 @@ function flattenChatHistory(characterName, history, currentInputText) {
 }
 
 // 按“酒馆式”单块模板拼装整份 prompt：
-// 固定前缀（用户自定义前置文本 + <character_card> + <user_persona> + <memory_index> + 输出控制说明）
-// --- 可变部分（<chat_history> + <user_input> + 用户输入说明，输入说明紧跟在 user_input 后面）
+// 固定前缀（用户自定义前置文本 + <character_card> + <user_persona> + <memory_index>）
+// --- 可变部分（<chat_history> + <user_input>）
+// --- 尾部固定说明（用户输入说明 + 必须遵守的强制性输出规则，两段都紧跟在最新内容后面，强化权重）
 function buildPromptText(characterName, history, text) {
   const { prefix, readerInfo } = getPromptConfig();
   const characterCard = loadPersona(characterName);
@@ -311,8 +322,6 @@ function buildPromptText(characterName, history, text) {
   if (memoryIndex.trim()) {
     parts.push(`<memory_index>\n<!-- 关于用户的长期记忆：偏好、重要设定等，需要一直记住并遵守 -->\n${memoryIndex.trim()}\n</memory_index>`);
   }
-  // 当前角色的语音服务商支持语气指令（豆包 / MiMo）时，才要求 LLM 在对话内容后面写一句配音语气
-  parts.push(toneEnabled(characterName) ? `${PROMPT_FOOTER}\n${TONE_PROMPT}` : PROMPT_FOOTER);
   parts.push('---');
   // ---- 以上是固定前缀，以下是每轮都会变化的内容 ----
   if (chatHistoryText.trim()) {
@@ -321,6 +330,12 @@ function buildPromptText(characterName, history, text) {
   parts.push(`<user_input>\n<!-- 用户本轮最新输入，当前系统时间：${nowText} -->\n[${nowText}] ${text}\n</user_input>`);
   parts.push('---');
   parts.push(INPUT_NOTE);
+  parts.push('---');
+  // 输出规则挪到全篇末尾、紧跟在输入说明后面，让模型读完"这轮要看什么、怎么解读"之后
+  // 立刻看到"必须怎么写"，强化权重；代价是这段固定内容不再享受前缀缓存（见上面 parts 顺序的注释），
+  // 换来的是更贴近生成位置、更不容易被中间的长历史冲淡。
+  // 当前角色的语音服务商支持语气指令（豆包 / MiMo）时，才要求 LLM 在对话内容后面写一句配音语气
+  parts.push(toneEnabled(characterName) ? `${PROMPT_FOOTER}\n${TONE_PROMPT}` : PROMPT_FOOTER);
 
   return parts.join('\n\n');
 }
@@ -447,6 +462,7 @@ module.exports = {
   getPromptConfig,
   savePromptConfig,
   buildPromptText,
+  stripMetaForHistory,
   callLLM,
   fetchModelList,
   dayKeyOf,

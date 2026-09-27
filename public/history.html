@@ -166,6 +166,22 @@
   #insert-as-user { background: #4caf50; }
   #insert-as-assistant { background: #5b9cf6; }
 
+  /* 通用确认弹窗：替代原生 window.confirm——原生对话框关闭后 Electron 渲染进程焦点容易跑丢，
+     导致关掉对话框后不能直接点输入框出光标，要先点窗口外面再点回来才行；换成页面内弹窗从根上避免这个问题。
+     结构和样式跟上面"插入消息"弹窗保持一致，共用 .overlay。 */
+  #confirm-dialog {
+    width: min(320px, calc(100vw - 32px));
+    background: #fff;
+    border-radius: 12px;
+    padding: 16px 18px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+    box-sizing: border-box;
+  }
+  #confirm-msg { font-size: 13px; line-height: 1.6; color: #333; margin-bottom: 14px; }
+  #confirm-dialog .dialog-btns { justify-content: flex-end; }
+  #confirm-cancel { background: #f0f0f0; color: #888; }
+  #confirm-ok { background: #d33; }
+
   /* 每条消息的"⋯"：hover 才显示，点开在气泡下方露出 编辑/删除 */
   .msg-more {
     flex: none;
@@ -353,6 +369,16 @@
       <div class="dialog-btns">
         <button id="insert-as-user">作为我说的插入</button>
         <button id="insert-as-assistant">作为TA说的插入</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="confirm-overlay" class="overlay hidden">
+    <div id="confirm-dialog">
+      <div id="confirm-msg"></div>
+      <div class="dialog-btns">
+        <button id="confirm-cancel">取消</button>
+        <button id="confirm-ok">确定</button>
       </div>
     </div>
   </div>
@@ -714,7 +740,7 @@
     const delBtn = e.target.closest('.act-del');
     if (delBtn) {
       const row = delBtn.closest('.msg');
-      if (!window.confirm('确定要删除这条消息吗？此操作不可撤销。')) return;
+      if (!(await confirmDialog('确定要删除这条消息吗？此操作不可撤销。'))) return;
       try {
         await window.petAPI.deleteChatMessage(characterName, +row.dataset.index);
         await reload(true);
@@ -774,7 +800,44 @@
     overlayDownOnSelf = false;
   });
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !insertOverlay.classList.contains('hidden')) closeInsert();
+    if (e.key !== 'Escape') return;
+    if (!insertOverlay.classList.contains('hidden')) closeInsert();
+    if (!confirmOverlay.classList.contains('hidden')) closeConfirm(false);
+  });
+
+  // ---- 通用确认弹窗（替代 window.confirm，见上面 CSS 注释里的原因） ----
+  const confirmOverlay = document.getElementById('confirm-overlay');
+  const confirmMsg = document.getElementById('confirm-msg');
+  const confirmOk = document.getElementById('confirm-ok');
+  const confirmCancel = document.getElementById('confirm-cancel');
+  let confirmResolve = null;
+
+  function confirmDialog(message) {
+    return new Promise((resolve) => {
+      confirmResolve = resolve;
+      confirmMsg.textContent = message;
+      confirmOverlay.classList.remove('hidden');
+      setTimeout(() => confirmOk.focus(), 50);
+    });
+  }
+  function closeConfirm(result) {
+    confirmOverlay.classList.add('hidden');
+    if (confirmResolve) {
+      const resolve = confirmResolve;
+      confirmResolve = null;
+      resolve(result);
+    }
+  }
+  confirmOk.addEventListener('click', () => closeConfirm(true));
+  confirmCancel.addEventListener('click', () => closeConfirm(false));
+  // 点遮罩本身才算取消（点弹窗内部不算），mousedown/mouseup 都落在遮罩上才判定，避免拖选文字误关——跟插入弹窗一致
+  let confirmOverlayDownOnSelf = false;
+  confirmOverlay.addEventListener('mousedown', (e) => {
+    confirmOverlayDownOnSelf = e.target === confirmOverlay;
+  });
+  confirmOverlay.addEventListener('mouseup', (e) => {
+    if (confirmOverlayDownOnSelf && e.target === confirmOverlay) closeConfirm(false);
+    confirmOverlayDownOnSelf = false;
   });
 
   async function doInsert(role) {
@@ -800,7 +863,7 @@
   // ---- 清空对话 ----
   document.getElementById('menu-clear').addEventListener('click', async () => {
     closeMenu();
-    if (!window.confirm(`确定要清空和「${characterName}」的全部聊天记录吗？此操作不可撤销。`)) return;
+    if (!(await confirmDialog(`确定要清空和「${characterName}」的全部聊天记录吗？此操作不可撤销。`))) return;
     try {
       await window.petAPI.clearChatHistory(characterName);
       list.innerHTML = '';
@@ -812,7 +875,12 @@
     }
   });
 
-  load();
+  // 等历史消息真正渲染上屏后再上报，主进程据此恢复宠物窗口渲染，
+  // 避免过早恢复导致气泡内容被抢资源卡住、非要点一下窗口才显示；
+  // 万一取历史记录失败也照样上报，不靠主进程 5 秒兜底才恢复渲染
+  load()
+    .catch((err) => alertError(err))
+    .finally(() => window.petAPI.notifyHistoryContentReady());
 </script>
 </body>
 </html>

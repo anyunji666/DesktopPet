@@ -1,6 +1,6 @@
 // ---------------- UI：加载提示 / 气泡 / 台词语音 / 点击命中 ----------------
 import * as THREE from 'three';
-import { state, camera, audio, voiceAudio } from './state.js';
+import { state, camera, renderer, audio, voiceAudio } from './state.js';
 
 export function showLoading(text) {
   document.getElementById('loading-text').textContent = text;
@@ -83,8 +83,12 @@ const raycaster = new THREE.Raycaster();
 const ndc = new THREE.Vector2();
 
 export function hitModel(e) {
-  ndc.x = (e.clientX / window.innerWidth) * 2 - 1;
-  ndc.y = -(e.clientY / window.innerHeight) * 2 + 1;
+  // 用 canvas 自身的包围盒而不是 window.innerWidth/innerHeight：
+  // 普通模式下 canvas 铺满整个窗口，两者等价；桌面模式下 canvas 只占虚拟视口那一块，
+  // 用窗口尺寸算出来的 NDC 会偏，模型点不中。
+  const rect = renderer.domElement.getBoundingClientRect();
+  ndc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  ndc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(ndc, camera);
   return state.mesh ? raycaster.intersectObject(state.mesh, true).length > 0 : false;
 }

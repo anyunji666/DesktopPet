@@ -43,6 +43,7 @@ const {
   getPromptConfig,
   savePromptConfig,
   buildPromptText,
+  stripMetaForHistory,
   callLLM,
   fetchModelList,
   dayKeyOf,
@@ -58,6 +59,7 @@ const {
   WIN_H,
   WIN_MIN_W,
   WIN_MAX_W,
+  isDesktopViewportValid,
   openSettingsWindow,
   openHistoryWindow,
   send,
@@ -162,10 +164,38 @@ async function createWindow() {
   const initW = useSavedSize ? Math.round(savedSize.width) : WIN_W;
   const initH = useSavedSize ? Math.round((initW * WIN_H) / WIN_W) : WIN_H;
 
-  state.win = new BrowserWindow({
+  // "正常模式"下窗口该在的位置/大小——不管这次是不是以桌面模式启动，都先算出来存好，
+  // 退出桌面模式时要用它恢复
+  const normalBounds = {
+    ...(useSavedPos ? { x: Math.round(savedPos.x), y: Math.round(savedPos.y) } : {}),
     width: initW,
     height: initH,
-    ...(useSavedPos ? { x: Math.round(savedPos.x), y: Math.round(savedPos.y) } : {}),
+  };
+  state.normalWinBounds = normalBounds;
+
+  // 背景鼠标互动：上次关闭时是什么状态，这次就从什么状态开始
+  state.bgMouseInteraction = cfg.bgMouseInteraction !== false;
+
+  // 桌面模式下直接按目标屏幕的工作区创建窗口（而不是先建正常小窗口再跳变到全屏），
+  // 避免启动瞬间闪一下；虚拟视口的初始位置/大小随 init 一起下发给渲染进程
+  let createBounds = normalBounds;
+  let initialDesktopViewport = null;
+  if (!state.bgMouseInteraction) {
+    const anchor = useSavedPos ? { x: savedPos.x, y: savedPos.y } : { x: 0, y: 0 };
+    const wa = screen.getDisplayNearestPoint(anchor).workArea;
+    createBounds = { x: wa.x, y: wa.y, width: wa.width, height: wa.height };
+    initialDesktopViewport = isDesktopViewportValid(cfg.desktopViewport)
+      ? cfg.desktopViewport
+      : {
+          x: (normalBounds.x ?? wa.x) - wa.x,
+          y: (normalBounds.y ?? wa.y) - wa.y,
+          width: normalBounds.width,
+          height: normalBounds.height,
+        };
+  }
+
+  state.win = new BrowserWindow({
+    ...createBounds,
     transparent: true,
     frame: false,
     resizable: false,
@@ -179,6 +209,7 @@ async function createWindow() {
   // 用 'screen-saver' 层级而不是构造参数里的普通 alwaysOnTop:true——层级越高，
   // 越不容易在系统状态切换时被压到后面（见下面 reassertAlwaysOnTop 的注释）
   state.win.setAlwaysOnTop(true, 'screen-saver');
+  if (!state.bgMouseInteraction) state.win.setIgnoreMouseEvents(true, { forward: true });
 
   state.menu = buildMenu();
 
@@ -189,7 +220,12 @@ async function createWindow() {
 
   state.win.loadURL(`http://127.0.0.1:${port}/public/index.html`);
   state.win.webContents.on('did-finish-load', () => {
-    send('init', { ...currentCharacterPayload(), scene: currentScene() });
+    send('init', {
+      ...currentCharacterPayload(),
+      scene: currentScene(),
+      bgMouseInteraction: state.bgMouseInteraction,
+      desktopViewport: initialDesktopViewport,
+    });
   });
 }
 
@@ -247,22 +283,38 @@ ipcMain.on('model-ready', async () => {
 });
 
 ipcMain.on('window-move', (_e, dx, dy) => {
-  if (!state.win) return;
+  if (!state.win || state.bgMouseInteraction === false) return;
   const [x, y] = state.win.getPosition();
   state.win.setPosition(x + Math.round(dx), y + Math.round(dy));
 });
 
 // 缩放：渲染进程只上报"鼠标相对按下时的水平位移"，尺寸和宽高比全部在这里算
 ipcMain.on('window-resize-begin', () => {
-  if (!state.win) return;
+  if (!state.win || state.bgMouseInteraction === false) return;
   state.resizeStartW = state.win.getBounds().width;
 });
 
 ipcMain.on('window-resize-by', (_e, dx) => {
-  if (!state.win || !Number.isFinite(dx)) return;
+  if (!state.win || state.bgMouseInteraction === false || !Number.isFinite(dx)) return;
   const w = Math.max(WIN_MIN_W, Math.min(WIN_MAX_W, Math.round(state.resizeStartW + dx)));
   const h = Math.round((w * WIN_H) / WIN_W);
   state.win.setBounds({ width: w, height: h });
+});
+
+// 桌面模式下，渲染进程每次"是否悬停在模型/椭圆按钮/展开的对话框上"这个判定结果变化时上报一次
+// （不是每帧都发，见 app.js 里的防抖），据此切换窗口是否穿透鼠标事件。
+// 非桌面模式下这个开关本来就没打开，忽略即可，不需要额外判断。
+ipcMain.on('set-click-through', (_e, ignore) => {
+  if (!state.win || state.win.isDestroyed() || state.bgMouseInteraction) return;
+  state.win.setIgnoreMouseEvents(!!ignore, { forward: true });
+});
+
+// 桌面模式下拖拽/缩放虚拟视口，松手后把结果存下来，下次进入桌面模式/下次启动都还原成这个样子
+ipcMain.on('save-desktop-viewport', (_e, viewport) => {
+  if (!viewport || typeof viewport !== 'object') return;
+  const { x, y, width, height } = viewport;
+  if (![x, y, width, height].every(Number.isFinite)) return;
+  updateConfig({ desktopViewport: { x, y, width, height } });
 });
 
 ipcMain.on('scene-adjust-save', (_e, name, adj) => {
@@ -334,8 +386,18 @@ ipcMain.handle('chat-send', async (e, characterName, message, imageDataURL) => {
   // 回复末尾可能带一句【配音语气】：拆出来只给 TTS 用，气泡 / 聊天记录 / 返回值里都是不含它的正文
   const { text: reply, tone } = splitTone(characterName, await callLLM(messages, `对话回复 - ${characterName}`));
 
-  history.push({ role: 'user', content: text, image: imageFile, ts: Date.now() });
-  history.push({ role: 'assistant', content: reply, ts: Date.now() });
+  // 只过滤"落档/回填给模型下一轮"这份记录：括号包裹的元指令/元回复属于 OOC 内容，不算剧情，
+  // 不应该沉淀进长期聊天记录、也不该在后续轮次里当成故事历史又发回模型。
+  // 本轮气泡显示（下面的 reply）、TTS 朗读、这次 IPC 的返回值都仍然用未过滤的原文，用户照常能看到。
+  const userContentForHistory = stripMetaForHistory(text);
+  const replyContentForHistory = stripMetaForHistory(reply);
+  // 过滤后文字和图片都没有了，说明这一条整个是纯元指令/元回复的 OOC 对话，不值得占历史一条，直接跳过不存
+  if (userContentForHistory || imageFile) {
+    history.push({ role: 'user', content: userContentForHistory, image: imageFile, ts: Date.now() });
+  }
+  if (replyContentForHistory) {
+    history.push({ role: 'assistant', content: replyContentForHistory, ts: Date.now() });
+  }
   saveChatHistory(characterName, history);
 
   // 朗读 AI 回复：不 await——文字气泡照常立即显示，语音合成好了再通过 'play-tts' 推给宠物窗口。

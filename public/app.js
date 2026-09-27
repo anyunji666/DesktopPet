@@ -12,17 +12,142 @@ import { initTtsPlayback } from './modules/tts.js';
 const app = document.getElementById('app');
 app.appendChild(renderer.domElement);
 
+// ---------------- 虚拟视口 ----------------
+// 背景鼠标互动"开"（现状）：#viewport 铺满真实窗口，跟以前完全等价。
+// "关"（桌面模式）：真实窗口铺满整个屏幕、对鼠标穿透，#viewport 变成一个本地模拟的
+// 小窗口，camera/renderer 的尺寸、气泡/聊天框的相对缩放都以它为准，不用区分模式。
+const viewportEl = document.getElementById('viewport');
+const anchorEl = document.getElementById('desktop-anchor');
+const anchorMoveEl = document.getElementById('desktop-anchor-move');
+const anchorResizeEl = document.getElementById('desktop-anchor-resize');
+const chatBoxEl = document.getElementById('chat-box');
+const hintMainEl = document.getElementById('hint-main');
+// 对话气泡不再放在 #viewport 里面：桌面模式下 #viewport 是被人为缩小的模型小窗口，
+// 气泡放在里面就只能按小窗口的尺寸换算，装不下多少字。挪到 body 下直接按真实窗口
+// （桌面模式=铺满的整个屏幕，普通模式=当前窗口，二者一致）定位/换算，位置再用
+// updateBubbleAnchor() 手动贴到模型视口的正上方，视觉效果不变，只是可用空间变大了。
+const bubbleEl = document.getElementById('bubble');
+
+const HINT_NORMAL = '点击模型互动 双击对话 长按滑动旋转 · 背景处拖拽移动 · 右键打开菜单 · 右下角缩放界面';
+const HINT_DESKTOP = '点击模型互动 双击对话 长按滑动旋转 · 椭圆按钮：左移动 / 右缩放 · 右键菜单';
+
+// 跟 main-modules/window.js 里的同名常量保持一致——虚拟视口的缩放需要同一套宽高比
+// 和上下限，但渲染进程拿不到主进程的模块，只能各自维护一份，改的时候记得两边一起改
+const WIN_W = 720;
+const WIN_H = 540;
+const WIN_MIN_W = 320;
+const WIN_MAX_W = 1800;
+
+let desktopMode = false; // 背景鼠标互动是否关闭（桌面模式）
+let viewportRect = null; // 当前虚拟视口；null 只在第一次 applyViewportRect 调用前短暂存在
+let deskWorkArea = { width: window.innerWidth, height: window.innerHeight }; // 桌面模式下真实窗口（=屏幕工作区）大小，拖拽视口时用来夹住范围
+let lastIgnoreMouse = null; // 上一次发给主进程的"是否穿透"状态，只在变化时才发 IPC
+
+function fullWindowRect() {
+  return { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight };
+}
+
+// 气泡贴到模型视口正上方、水平居中——效果跟以前"气泡在 #viewport 里 left:50%"一样，
+// 只是气泡现在挂在 body 下面，视口挪动/缩放时改用坐标手动算，而不是靠 CSS 百分比
+function updateBubbleAnchor() {
+  if (!viewportRect) return;
+  bubbleEl.style.left = viewportRect.x + viewportRect.width / 2 + 'px';
+  bubbleEl.style.top = viewportRect.y + 8 + 'px';
+}
+
+// 应用一份视口几何：更新 #viewport 的实际像素位置/大小，并让 camera/renderer/气泡缩放
+// 变量跟着走。普通模式和桌面模式共用这一个函数，不用各写一套
+function applyViewportRect(rect) {
+  const sizeChanged = !viewportRect || rect.width !== viewportRect.width || rect.height !== viewportRect.height;
+  viewportRect = rect;
+  viewportEl.style.left = rect.x + 'px';
+  viewportEl.style.top = rect.y + 'px';
+  updateBubbleAnchor(); // 纯移动视口（拖拽椭圆按钮左半）也要跟着贴过去，不等宽高变化
+  if (!sizeChanged) return; // 纯移动位置：宽高没变，不用重设 camera/renderer（省一次 canvas 重建）
+  viewportEl.style.width = rect.width + 'px';
+  viewportEl.style.height = rect.height + 'px';
+  camera.aspect = rect.width / rect.height;
+  camera.updateProjectionMatrix();
+  renderer.setSize(rect.width, rect.height);
+  // --vp-w：供 CSS 把气泡等 UI 的字号/内边距按视口宽度换算，而不是写死像素
+  // （气泡的 max-width/max-height 不用这个变量，已经改成按真实窗口尺寸的百分比算，
+  // 详见 index.html 里 #bubble 的注释）
+  document.documentElement.style.setProperty('--vp-w', rect.width);
+}
+applyViewportRect(fullWindowRect());
+
+function enterDesktopModeUI(viewport, workArea) {
+  desktopMode = true;
+  deskWorkArea = workArea || { width: window.innerWidth, height: window.innerHeight };
+  document.body.classList.add('desktop-mode');
+  hintMainEl.textContent = HINT_DESKTOP;
+  applyViewportRect(viewport);
+  lastIgnoreMouse = true; // 主进程那边进入桌面模式时已经开了穿透，这里对齐一下缓存，避免重复发送
+}
+
+function exitDesktopModeUI() {
+  desktopMode = false;
+  document.body.classList.remove('desktop-mode');
+  hintMainEl.textContent = HINT_NORMAL;
+  applyViewportRect(fullWindowRect());
+  lastIgnoreMouse = false;
+}
+
+window.petAPI.onEnterDesktopMode((data) => enterDesktopModeUI(data.viewport, data.workArea));
+window.petAPI.onExitDesktopMode(() => exitDesktopModeUI());
+
+// 桌面模式下新开子窗口（聊天记录/设置等）时，主进程会通知这边暂停渲染循环，
+// 让出 GPU/合成资源给新窗口的首次绘制，加载完/超时兜底后主进程会再通知恢复
+let animPaused = false;
+window.petAPI.onPauseRender(() => { animPaused = true; });
+window.petAPI.onResumeRender(() => { animPaused = false; });
+
+// 悬停检测结果变化时才通知主进程切换点击穿透，不用每帧都发 IPC
+function setClickThrough(ignore) {
+  if (lastIgnoreMouse === ignore) return;
+  lastIgnoreMouse = ignore;
+  window.petAPI.setClickThrough(ignore);
+}
+
+function isOverAnchorButton(e) {
+  if (anchorEl.style.display === 'none' || getComputedStyle(anchorEl).display === 'none') return false;
+  const r = anchorEl.getBoundingClientRect();
+  return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+}
+
+function isOverChatBox(e) {
+  if (!chatBoxEl.classList.contains('show')) return false;
+  const r = chatBoxEl.getBoundingClientRect();
+  return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+}
+
+// 桌面模式下每次 mousemove 都判断一次"鼠标是否在可交互区域"（模型 / 椭圆按钮 /
+// 对话框，只有鼠标真的落在对话框范围内才算），决定窗口这一刻要不要对鼠标穿透。
+// 拖拽/旋转/调整视口进行中不重新判断，强制保持"不穿透"，避免鼠标划得快时中途漏判、手势被打断
+function updateClickThroughByHover(e) {
+  if (!desktopMode) return;
+  if (rotating || movingViewport || resizingViewport) {
+    setClickThrough(false);
+    return;
+  }
+  const over = isOverChatBox(e) || isOverAnchorButton(e) || hitModel(e);
+  setClickThrough(!over);
+}
+
 // ---------------- 交互：拖拽 / 点击 / 右键 ----------------
-let dragging = false; // 拖拽空白处：移动窗口
+let dragging = false; // 拖拽空白处：移动窗口（仅普通模式）
 let rotating = false; // 拖拽模型：左右滑动旋转
-let resizing = false; // 拖拽右下角手柄：等比缩放窗口
-let panning = false; // Shift + 拖拽：移动场景背景
-let orbiting = false; // Ctrl + 拖拽：绕角色旋转场景背景
+let resizing = false; // 拖拽右下角手柄：等比缩放窗口（仅普通模式）
+let panning = false; // Shift + 拖拽：移动场景背景（仅普通模式）
+let orbiting = false; // Ctrl + 拖拽：绕角色旋转场景背景（仅普通模式）
+let movingViewport = false; // 桌面模式：拖拽椭圆按钮左半，移动虚拟视口
+let resizingViewport = false; // 桌面模式：拖拽椭圆按钮右半，缩放虚拟视口
 let moved = 0;
 let lastX = 0;
 let lastY = 0;
 let downOnModel = false;
 let resizeStartX = 0;
+let viewportDragStart = { clientX: 0, clientY: 0, x: 0, y: 0, width: 0 }; // movingViewport/resizingViewport 共用的起始快照
 
 // 模型左右旋转每帧最多转动的弧度（约 3°）。拖拽和程序化重置（右键菜单/回待机）共用同一限速，
 // 避免瞬间跳变把头发/裙摆的物理甩飞、错位——原理见 physics.js 里骨骼姿态瞬间跳变的那段注释，
@@ -40,11 +165,35 @@ document.getElementById('resize-handle').addEventListener('mousedown', (e) => {
 // 手柄上禁用右键菜单，避免误触
 document.getElementById('resize-handle').addEventListener('contextmenu', (e) => e.stopPropagation());
 
+// 椭圆按钮（仅桌面模式）：左半拖拽移动虚拟视口，右半拖拽缩放。
+// stopPropagation 避免这次按下又被 document 上的通用 mousedown 监听器当成模型旋转/背景拖拽处理。
+// 右键不拦截（不 stopPropagation），冒泡上去正常弹出右键菜单
+anchorMoveEl.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return;
+  e.stopPropagation();
+  movingViewport = true;
+  viewportDragStart = { clientX: e.clientX, clientY: e.clientY, x: viewportRect.x, y: viewportRect.y, width: viewportRect.width };
+});
+anchorResizeEl.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return;
+  e.stopPropagation();
+  resizingViewport = true;
+  viewportDragStart = { clientX: e.clientX, clientY: e.clientY, x: viewportRect.x, y: viewportRect.y, width: viewportRect.width };
+});
+
 document.addEventListener('mousedown', (e) => {
   if (e.button !== 0) return;
   moved = 0;
   lastX = e.screenX;
   lastY = e.screenY;
+  if (desktopMode) {
+    // 桌面模式下背景本身对鼠标穿透，正常情况下这里只会收到模型上的按下事件
+    // （椭圆按钮有自己独立的监听器并 stopPropagation，走不到这里）；
+    // 空白拖窗口、Shift/Ctrl 背景手势在桌面模式下整体失效
+    downOnModel = hitModel(e);
+    if (downOnModel) rotating = true;
+    return;
+  }
   if (e.shiftKey && state.sceneGroup) {
     // 按住 Shift：不管点在哪里都是拖背景，不会移动窗口或旋转模型
     panning = true;
@@ -66,17 +215,42 @@ document.addEventListener('mousedown', (e) => {
 });
 
 document.addEventListener('mousemove', (e) => {
+  // 悬停检测独立于下面这堆拖拽状态机，任何时候都要跑一遍（非桌面模式下直接空转返回）
+  updateClickThroughByHover(e);
+
   // 窗口很小且透明无边框，拖得快时鼠标很容易滑出窗口边界，
   // 这种情况下 document 收不到后续的 mousemove/mouseup，下面几个状态位会一直卡在 true。
   // 用 e.buttons 兜底：左键其实已经松开了，就当成漏掉的 mouseup 处理掉，
   // 不然等鼠标再挪回窗口（哪怕只是悬停，没按键）还会拿旧坐标继续转/拖，
   // 表现为服饰头发突然被甩飞、或者"重置模型朝向"刚点完又被莫名转歪。
-  if ((dragging || rotating || panning || orbiting || resizing) && !(e.buttons & 1)) {
+  if ((dragging || rotating || panning || orbiting || resizing || movingViewport || resizingViewport) && !(e.buttons & 1)) {
     dragging = false;
     rotating = false;
     panning = false;
     orbiting = false;
     resizing = false;
+    movingViewport = false;
+    resizingViewport = false;
+    return;
+  }
+  if (movingViewport) {
+    // 拖拽椭圆按钮左半：移动虚拟视口，本地直接改 #viewport 的位置，不走 IPC；
+    // 夹在屏幕工作区范围内，避免被拖到看不见的地方找不回来
+    const dx = e.clientX - viewportDragStart.clientX;
+    const dy = e.clientY - viewportDragStart.clientY;
+    const maxX = Math.max(0, deskWorkArea.width - viewportRect.width);
+    const maxY = Math.max(0, deskWorkArea.height - viewportRect.height);
+    const x = Math.max(0, Math.min(maxX, viewportDragStart.x + dx));
+    const y = Math.max(0, Math.min(maxY, viewportDragStart.y + dy));
+    applyViewportRect({ x, y, width: viewportRect.width, height: viewportRect.height });
+    return;
+  }
+  if (resizingViewport) {
+    // 拖拽椭圆按钮右半：缩放虚拟视口，左上角不动，宽高比固定，跟右下角手柄的算法一致
+    const dx = e.clientX - viewportDragStart.clientX;
+    const w = Math.max(WIN_MIN_W, Math.min(WIN_MAX_W, viewportDragStart.width + dx));
+    const h = Math.round((w * WIN_H) / WIN_W);
+    applyViewportRect({ x: viewportRect.x, y: viewportRect.y, width: w, height: h });
     return;
   }
   if (resizing) {
@@ -118,6 +292,16 @@ document.addEventListener('mousemove', (e) => {
 });
 
 document.addEventListener('mouseup', (e) => {
+  if (movingViewport) {
+    movingViewport = false;
+    window.petAPI.saveDesktopViewport(viewportRect);
+    return;
+  }
+  if (resizingViewport) {
+    resizingViewport = false;
+    window.petAPI.saveDesktopViewport(viewportRect);
+    return;
+  }
   if (resizing) {
     resizing = false;
     return;
@@ -171,6 +355,7 @@ document.addEventListener(
   'wheel',
   (e) => {
     if (e.ctrlKey) e.preventDefault(); // 阻止 Chromium 自带的 Ctrl+滚轮页面缩放
+    if (desktopMode) return; // 桌面模式下背景手势整体失效
     if (!state.sceneGroup || !(e.shiftKey || e.ctrlKey)) return;
     e.preventDefault();
     // Shift+滚轮在 Windows / Linux 上会被换算成水平滚动，增量落在 deltaX 里
@@ -220,6 +405,9 @@ window.petAPI.onInit((data) => {
   state.ignoreBones = new Set(data.ignoreBones || []);
   state.materialFixes = data.materialFixes || null;
   applyScene(data.scene || null);
+  if (data.bgMouseInteraction === false) {
+    enterDesktopModeUI(data.desktopViewport || fullWindowRect());
+  }
   loadModel(data.model, { playEntrance: false, onReady: () => window.petAPI.notifyModelReady() });
 });
 
@@ -253,12 +441,19 @@ window.petAPI.onSceneAdjust((adj) => {
 
 // ---------------- 渲染循环 ----------------
 window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  // 桌面模式下真实窗口铺满屏幕、之后基本不会再变，虚拟视口的尺寸变化都是拖拽椭圆按钮
+  // 触发的本地 applyViewportRect，不需要也不应该跟着真实窗口的 resize 事件走
+  if (desktopMode) return;
+  applyViewportRect(fullWindowRect());
 });
 
 function animate() {
+  if (animPaused) {
+    // 暂停期间不再 requestAnimationFrame（那样 GPU 渲染工作并没有真的让出去），
+    // 改用低频轮询等恢复信号，占用可以忽略不计
+    setTimeout(animate, 200);
+    return;
+  }
   requestAnimationFrame(animate);
   const dt = clock.getDelta();
   const t = clock.elapsedTime;

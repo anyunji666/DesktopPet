@@ -1,5 +1,5 @@
 // ---------- 窗口管理：主窗口消息下发 / 设置窗口 & 聊天记录窗口 / 右键菜单 / 角色与场景切换 ----------
-const { app, BrowserWindow, Menu, dialog, shell } = require('electron');
+const { app, BrowserWindow, Menu, dialog, shell, screen, ipcMain } = require('electron');
 const path = require('path');
 const { state } = require('./state');
 const { loadConfig, updateConfig } = require('./config');
@@ -41,48 +41,121 @@ const WIN_H = 540;
 const WIN_MIN_W = 320;
 const WIN_MAX_W = 1800;
 
+// 桌面模式下，模型显示区域（虚拟视口）在渲染进程本地拖拽/缩放，只在松手时把结果存进
+// config.json 的 desktopViewport 字段；下次进桌面模式/下次启动时用这个校验能不能直接沿用
+// （分辨率变了、或者数据损坏，就退回"用切换前的真实窗口位置/大小"当初始值）
+function isDesktopViewportValid(v) {
+  return (
+    v &&
+    typeof v === 'object' &&
+    Number.isFinite(v.x) &&
+    Number.isFinite(v.y) &&
+    Number.isFinite(v.width) &&
+    Number.isFinite(v.height) &&
+    v.width >= WIN_MIN_W &&
+    v.width <= WIN_MAX_W
+  );
+}
+
 // ---------- API 设置窗口 / 聊天记录窗口（独立普通窗口，跟"开发者工具"一样 detach） ----------
+// 桌面模式下宠物窗口铺满整个屏幕、又是持续渲染的透明覆盖层，新开一个子窗口时
+// 会跟它的首次绘制抢 GPU/合成资源，表现为"窗口本身出来了，但里面内容半天不出来"。
+// 开子窗口前先通知宠物暂停渲染，子窗口内容加载完（或超时兜底，防止事件没触发导致渲染永久暂停）
+// 之后再恢复；普通模式下宠物窗口本来就很小，没有这个问题，直接跳过不影响
+//
+// resumeOn 控制"内容加载完"具体怎么判断：
+// - 'load'（默认）：页面 did-finish-load 就算完，适合设置/音色/LLM记录这类内容同步渲染的页面。
+// - 'content-ready'：等渲染进程自己在真正画完内容后，通过 signalChannel 上报，
+//   再恢复宠物渲染。聊天记录窗口是先加载页面骨架、再异步取历史消息渲染气泡的，
+//   如果按 did-finish-load 恢复，宠物那个铺满全屏的覆盖层会在气泡真正显示到屏幕前
+//   就抢回合成资源，导致气泡内容要等用户点击窗口或最小化还原才被"逼"出来。
+function withRenderPause(createFn, { resumeOn = 'load', signalChannel } = {}) {
+  if (state.bgMouseInteraction !== false) return createFn();
+  send('pause-render');
+  let resumed = false;
+  let offSignal = null;
+  const resume = () => {
+    if (resumed) return;
+    resumed = true;
+    if (offSignal) offSignal();
+    // 双保险：即使时机刚好没掐准、内容其实已经画完但还没被系统真正呈现出来，
+    // 也主动强制系统重绘一帧，等效于用户手动点一下 / 最小化还原触发的效果，
+    // 不用非得靠用户自己动手才能看到内容。
+    if (win && win.webContents && !win.isDestroyed()) {
+      try {
+        win.webContents.invalidate();
+      } catch {}
+    }
+    send('resume-render');
+  };
+  const win = createFn();
+  if (win && win.webContents) {
+    if (resumeOn === 'content-ready' && signalChannel) {
+      const wcId = win.webContents.id;
+      const onSignal = (event) => {
+        if (event.sender.id === wcId) resume();
+      };
+      ipcMain.on(signalChannel, onSignal);
+      offSignal = () => ipcMain.removeListener(signalChannel, onSignal);
+    } else {
+      win.webContents.once('did-finish-load', resume);
+    }
+    win.once('closed', resume);
+  }
+  setTimeout(resume, 5000);
+  return win;
+}
+
 function openSettingsWindow() {
   if (state.settingsWin && !state.settingsWin.isDestroyed()) {
     state.settingsWin.show();
     state.settingsWin.focus();
     return;
   }
-  state.settingsWin = new BrowserWindow({
-    width: 420,
-    height: 540,
-    resizable: false,
-    title: 'API 设置',
-    webPreferences: { preload: path.join(ROOT, 'preload.js'), contextIsolation: true },
+  withRenderPause(() => {
+    state.settingsWin = new BrowserWindow({
+      width: 420,
+      height: 540,
+      resizable: false,
+      title: 'API 设置',
+      webPreferences: { preload: path.join(ROOT, 'preload.js'), contextIsolation: true },
+    });
+    state.settingsWin.setMenu(null);
+    state.settingsWin.loadURL(`http://127.0.0.1:${state.serverPort}/public/settings.html`);
+    return state.settingsWin;
   });
-  state.settingsWin.setMenu(null);
-  state.settingsWin.loadURL(`http://127.0.0.1:${state.serverPort}/public/settings.html`);
 }
 
 function openHistoryWindow(characterName) {
   if (state.historyWin && !state.historyWin.isDestroyed()) state.historyWin.close();
   state.historyWinCharacter = characterName;
-  state.historyWin = new BrowserWindow({
-    width: 420,
-    height: 560,
-    title: '聊天记录 - ' + characterName,
-    webPreferences: { preload: path.join(ROOT, 'preload.js'), contextIsolation: true },
-  });
-  state.historyWin.setMenu(null);
-  state.historyWin.loadURL(`http://127.0.0.1:${state.serverPort}/public/history.html?character=${encodeURIComponent(characterName)}`);
+  withRenderPause(() => {
+    state.historyWin = new BrowserWindow({
+      width: 420,
+      height: 560,
+      title: '聊天记录 - ' + characterName,
+      webPreferences: { preload: path.join(ROOT, 'preload.js'), contextIsolation: true },
+    });
+    state.historyWin.setMenu(null);
+    state.historyWin.loadURL(`http://127.0.0.1:${state.serverPort}/public/history.html?character=${encodeURIComponent(characterName)}`);
+    return state.historyWin;
+  }, { resumeOn: 'content-ready', signalChannel: 'history-content-ready' });
 }
 
 // 音色设置窗口：每次只开一个，点另一个角色就换成那个角色的
 function openVoiceWindow(characterName) {
   if (state.voiceWin && !state.voiceWin.isDestroyed()) state.voiceWin.close();
-  state.voiceWin = new BrowserWindow({
-    width: 440,
-    height: 700,
-    title: '音色设置 - ' + characterName,
-    webPreferences: { preload: path.join(ROOT, 'preload.js'), contextIsolation: true },
+  withRenderPause(() => {
+    state.voiceWin = new BrowserWindow({
+      width: 440,
+      height: 700,
+      title: '音色设置 - ' + characterName,
+      webPreferences: { preload: path.join(ROOT, 'preload.js'), contextIsolation: true },
+    });
+    state.voiceWin.setMenu(null);
+    state.voiceWin.loadURL(`http://127.0.0.1:${state.serverPort}/public/voice-settings.html?character=${encodeURIComponent(characterName)}`);
+    return state.voiceWin;
   });
-  state.voiceWin.setMenu(null);
-  state.voiceWin.loadURL(`http://127.0.0.1:${state.serverPort}/public/voice-settings.html?character=${encodeURIComponent(characterName)}`);
 }
 
 // ---------- LLM 调用记录窗口（审查用，替代原来在 cmd 窗口里打印的方式） ----------
@@ -97,24 +170,27 @@ function openLlmLogWindow() {
     return;
   }
   const saved = loadConfig().llmLogWinBounds;
-  state.llmLogWin = new BrowserWindow({
-    width: (saved && saved.width) || LLM_LOG_WIN_DEFAULT.width,
-    height: (saved && saved.height) || LLM_LOG_WIN_DEFAULT.height,
-    x: saved && Number.isFinite(saved.x) ? saved.x : undefined,
-    y: saved && Number.isFinite(saved.y) ? saved.y : undefined,
-    title: 'LLM调用记录',
-    webPreferences: { preload: path.join(ROOT, 'preload.js'), contextIsolation: true },
-  });
-  state.llmLogWin.setMenu(null);
-  state.llmLogWin.loadURL(`http://127.0.0.1:${state.serverPort}/public/llm-log.html`);
+  withRenderPause(() => {
+    state.llmLogWin = new BrowserWindow({
+      width: (saved && saved.width) || LLM_LOG_WIN_DEFAULT.width,
+      height: (saved && saved.height) || LLM_LOG_WIN_DEFAULT.height,
+      x: saved && Number.isFinite(saved.x) ? saved.x : undefined,
+      y: saved && Number.isFinite(saved.y) ? saved.y : undefined,
+      title: 'LLM调用记录',
+      webPreferences: { preload: path.join(ROOT, 'preload.js'), contextIsolation: true },
+    });
+    state.llmLogWin.setMenu(null);
+    state.llmLogWin.loadURL(`http://127.0.0.1:${state.serverPort}/public/llm-log.html`);
 
-  // 拖动 / 缩放之后各自都会触发一次保存，不用等关闭窗口那一下（万一异常退出没保存上）
-  const persistBounds = () => {
-    if (!state.llmLogWin || state.llmLogWin.isDestroyed()) return;
-    updateConfig({ llmLogWinBounds: state.llmLogWin.getBounds() });
-  };
-  state.llmLogWin.on('moved', persistBounds);
-  state.llmLogWin.on('resized', persistBounds);
+    // 拖动 / 缩放之后各自都会触发一次保存，不用等关闭窗口那一下（万一异常退出没保存上）
+    const persistBounds = () => {
+      if (!state.llmLogWin || state.llmLogWin.isDestroyed()) return;
+      updateConfig({ llmLogWinBounds: state.llmLogWin.getBounds() });
+    };
+    state.llmLogWin.on('moved', persistBounds);
+    state.llmLogWin.on('resized', persistBounds);
+    return state.llmLogWin;
+  });
 }
 
 function send(channel, payload) {
@@ -217,6 +293,15 @@ function buildMenu() {
       })),
     },
     { type: 'separator' },
+    {
+      label: '🖱 背景鼠标互动',
+      type: 'checkbox',
+      checked: state.bgMouseInteraction,
+      // 关闭后进入"桌面模式"：窗口铺满整个屏幕，场景/背景对鼠标点击穿透，
+      // 只有角色模型本体和椭圆按钮能截获点击；重新勾选即恢复现状
+      click: () => toggleBgMouseInteraction(),
+    },
+    { type: 'separator' },
     { label: '🔄 重置模型朝向', click: () => send('menu-action', { type: 'resetYaw' }) },
     { label: '⏸ 待机（停止跳舞）', click: () => send('menu-action', { type: 'idle' }) },
     { type: 'separator' },
@@ -314,11 +399,56 @@ function reloadScenes() {
   if (before || state.currentSceneName) send('switch-scene', currentScene());
 }
 
+// ---------- 背景鼠标互动开关（桌面模式）----------
+// 关闭：真实窗口铺满"当前宠物所在那块屏幕"的工作区（不含任务栏），并对鼠标点击穿透，
+// 渲染进程那边用一个本地的虚拟视口 div 模拟"窗口"，拖拽/缩放都在本地完成，
+// 只在松手时把结果同步回 config.json（见 main.js 的 save-desktop-viewport）。
+// 开启：真实窗口恢复关闭前记下的位置/大小，点击穿透关闭，一切照旧。
+function enterDesktopMode() {
+  if (!state.win || state.win.isDestroyed() || !state.bgMouseInteraction) return;
+  const bounds = state.win.getBounds();
+  state.normalWinBounds = bounds; // 记住切换前的真实窗口位置/大小，供退出时恢复
+  const display = screen.getDisplayMatching(bounds);
+  const wa = display.workArea;
+
+  const saved = loadConfig().desktopViewport;
+  // 有上次调整过的虚拟视口就直接用；否则用切换前窗口的位置/大小当初始值，视觉上不跳变
+  const viewport = isDesktopViewportValid(saved)
+    ? saved
+    : { x: bounds.x - wa.x, y: bounds.y - wa.y, width: bounds.width, height: bounds.height };
+
+  state.bgMouseInteraction = false;
+  updateConfig({ bgMouseInteraction: false });
+  state.win.setBounds(wa);
+  state.win.setIgnoreMouseEvents(true, { forward: true });
+  state.menu = buildMenu();
+  send('enter-desktop-mode', { viewport, workArea: { width: wa.width, height: wa.height } });
+}
+
+function exitDesktopMode() {
+  if (!state.win || state.win.isDestroyed() || state.bgMouseInteraction) return;
+  state.bgMouseInteraction = true;
+  updateConfig({ bgMouseInteraction: true });
+  state.win.setIgnoreMouseEvents(false);
+  state.win.setBounds(state.normalWinBounds || { width: WIN_W, height: WIN_H });
+  state.menu = buildMenu();
+  send('exit-desktop-mode', {});
+}
+
+function toggleBgMouseInteraction() {
+  if (state.bgMouseInteraction) enterDesktopMode();
+  else exitDesktopMode();
+}
+
 module.exports = {
   WIN_W,
   WIN_H,
   WIN_MIN_W,
   WIN_MAX_W,
+  isDesktopViewportValid,
+  enterDesktopMode,
+  exitDesktopMode,
+  toggleBgMouseInteraction,
   openSettingsWindow,
   openHistoryWindow,
   openVoiceWindow,

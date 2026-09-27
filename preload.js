@@ -12,6 +12,19 @@ contextBridge.exposeInMainWorld('petAPI', {
   onAction: (cb) => ipcRenderer.on('menu-action', (_e, action) => cb(action)),
   // 主进程推送初始化数据（模型路径 + 舞蹈列表）
   onInit: (cb) => ipcRenderer.on('init', (_e, data) => cb(data)),
+
+  // ---- 背景鼠标互动开关（桌面模式）----
+  // 悬停检测结果变化时上报，切换窗口是否对鼠标点击穿透
+  setClickThrough: (ignore) => ipcRenderer.send('set-click-through', ignore),
+  // 虚拟视口拖拽/缩放松手后持久化
+  saveDesktopViewport: (viewport) => ipcRenderer.send('save-desktop-viewport', viewport),
+  // 主进程推送：右键菜单切换背景鼠标互动时，进入/退出桌面模式
+  onEnterDesktopMode: (cb) => ipcRenderer.on('enter-desktop-mode', (_e, data) => cb(data)),
+  onExitDesktopMode: (cb) => ipcRenderer.on('exit-desktop-mode', () => cb()),
+  // 桌面模式下新开子窗口（聊天记录/设置等）前后，主进程通知暂停/恢复渲染循环，
+  // 避免宠物那个铺满全屏的透明覆盖层跟子窗口的首次绘制抢 GPU/合成资源
+  onPauseRender: (cb) => ipcRenderer.on('pause-render', () => cb()),
+  onResumeRender: (cb) => ipcRenderer.on('resume-render', () => cb()),
   // 主进程推送角色切换数据（新模型路径 + 新角色专属舞蹈列表）
   onSwitchCharacter: (cb) => ipcRenderer.on('switch-character', (_e, data) => cb(data)),
   // 主进程推送场景切换数据（场景描述对象；null 表示回到"无场景"）
@@ -32,6 +45,10 @@ contextBridge.exposeInMainWorld('petAPI', {
   fetchModelList: (apiUrl, apiKey) => ipcRenderer.invoke('fetch-model-list', apiUrl, apiKey),
   getChatHistory: (characterName) => ipcRenderer.invoke('get-chat-history', characterName),
   openHistoryWindow: (characterName) => ipcRenderer.send('open-history-window', characterName),
+  // 桌面模式下打开聊天记录窗口时，主进程会先暂停宠物渲染；这里在历史消息真正
+  // 渲染上屏后上报一下，主进程据此再恢复渲染，而不是页面骨架一加载完就恢复
+  // （避免气泡内容被宠物那个全屏覆盖层抢资源，卡到要点一下窗口才显示出来）
+  notifyHistoryContentReady: () => ipcRenderer.send('history-content-ready'),
   // 主进程推送：别的窗口（如聊天记录窗口）发起的对话有了回复，主宠物窗口据此显示头顶气泡
   onShowBubble: (cb) => ipcRenderer.on('show-bubble', (_e, text) => cb(text)),
   // 初次启动：模型刚出现在屏幕上这一刻通知主进程，仅用于开机自启动计时
