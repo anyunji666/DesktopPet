@@ -15,6 +15,10 @@ function getApiConfig() {
     max_tokens: Number.isFinite(cfg && cfg.max_tokens) ? cfg.max_tokens : 300,
     // 当前模型是否支持识图（vision）：开=图片按 OpenAI 视觉格式直发；关=图片只以文字说明进 prompt
     vision: !!(cfg && cfg.vision),
+    // Gemini 多 Key 轮询中转要用的 Key 列表；非空时 main.js 会自动起本地中转服务
+    llmRelayKeys: Array.isArray(cfg && cfg.llmRelayKeys) ? cfg.llmRelayKeys : [],
+    // 上次中转服务实际分配到的端口：记住它，下次优先复用，不用每次都变
+    llmRelayPort: Number.isInteger(cfg && cfg.llmRelayPort) ? cfg.llmRelayPort : null,
   };
 }
 
@@ -27,6 +31,10 @@ function saveApiConfig(patch) {
     temperature: Number.isFinite(patch.temperature) ? patch.temperature : cur.temperature,
     max_tokens: Number.isFinite(patch.max_tokens) ? patch.max_tokens : cur.max_tokens,
     vision: typeof patch.vision === 'boolean' ? patch.vision : cur.vision,
+    llmRelayKeys: Array.isArray(patch.llmRelayKeys)
+      ? patch.llmRelayKeys.map((k) => (typeof k === 'string' ? k.trim() : '')).filter(Boolean)
+      : cur.llmRelayKeys,
+    llmRelayPort: Number.isInteger(patch.llmRelayPort) ? patch.llmRelayPort : cur.llmRelayPort,
   };
   updateConfig({ apiConfig: next });
   return next;
@@ -68,11 +76,12 @@ const PROMPT_FOOTER = `## **必须遵守的强制性输出规则**
   - 角色的内心独白：用*星号*包裹，例：*其实等你好久了*
   - 没有符号的正文是旁白：描述环境、角色的动作神态
   - 对用户的元指令的回答用括号包裹
-  - 正文内容不要使用【】，详见语气描述
+  - 正文内容不要使用【】符号
 - 「对话」内容灵活使用标点符号：
   - 句末拖长音：「不要嘛～」
-  - 句末重音：「什么！」、「真的吗！？」
-- **正文字数：** 正文总字数不超过200字，角色回复的对话内容的字数每段控制在 1~20 字。正文可以是单个字的简短对话回复，也可以是场景描绘里穿插着对话回复。
+  - 句末重音：「什么！」
+  - 疑问/质疑：「是这样吗？」
+- **正文字数：** 正文总字数不超过1200字，角色回复的对话内容的字数每段控制在 1~20 字。正文可以是单个字的简短对话回复，也可以是场景描绘里穿插着对话回复。
   - 示例：「你不要过来～」*怎么这样···*「真是服了你了～」小拳拳锤了一下{{user}}的胸口，还是默许了{{user}}的行为。`;
 
 // 约定：元指令 / 元回复用（半角或全角）括号包裹，属于 OOC（出戏）内容，不算"剧情"。

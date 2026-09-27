@@ -120,6 +120,9 @@ function openSettingsWindow() {
       title: 'API 设置',
       webPreferences: { preload: path.join(ROOT, 'preload.js'), contextIsolation: true },
     });
+    // 桌面模式下宠物主窗口铺满全屏且常驻置顶，会让新开的子窗口被 Chromium 判定为遮挡/后台，
+    // 首帧渲染被节流，导致内容要等用户点一下（真正的输入事件）才画出来；关掉节流从根源避免
+    state.settingsWin.webContents.setBackgroundThrottling(false);
     state.settingsWin.setMenu(null);
     state.settingsWin.loadURL(`http://127.0.0.1:${state.serverPort}/public/settings.html`);
     return state.settingsWin;
@@ -136,6 +139,8 @@ function openHistoryWindow(characterName) {
       title: '聊天记录 - ' + characterName,
       webPreferences: { preload: path.join(ROOT, 'preload.js'), contextIsolation: true },
     });
+    // 见 openSettingsWindow 里的同名调用注释
+    state.historyWin.webContents.setBackgroundThrottling(false);
     state.historyWin.setMenu(null);
     state.historyWin.loadURL(`http://127.0.0.1:${state.serverPort}/public/history.html?character=${encodeURIComponent(characterName)}`);
     return state.historyWin;
@@ -152,6 +157,8 @@ function openVoiceWindow(characterName) {
       title: '音色设置 - ' + characterName,
       webPreferences: { preload: path.join(ROOT, 'preload.js'), contextIsolation: true },
     });
+    // 见 openSettingsWindow 里的同名调用注释
+    state.voiceWin.webContents.setBackgroundThrottling(false);
     state.voiceWin.setMenu(null);
     state.voiceWin.loadURL(`http://127.0.0.1:${state.serverPort}/public/voice-settings.html?character=${encodeURIComponent(characterName)}`);
     return state.voiceWin;
@@ -179,6 +186,8 @@ function openLlmLogWindow() {
       title: 'LLM调用记录',
       webPreferences: { preload: path.join(ROOT, 'preload.js'), contextIsolation: true },
     });
+    // 见 openSettingsWindow 里的同名调用注释
+    state.llmLogWin.webContents.setBackgroundThrottling(false);
     state.llmLogWin.setMenu(null);
     state.llmLogWin.loadURL(`http://127.0.0.1:${state.serverPort}/public/llm-log.html`);
 
@@ -294,11 +303,10 @@ function buildMenu() {
     },
     { type: 'separator' },
     {
-      label: '🖱 背景鼠标互动',
-      type: 'checkbox',
-      checked: state.bgMouseInteraction,
-      // 关闭后进入"桌面模式"：窗口铺满整个屏幕，场景/背景对鼠标点击穿透，
-      // 只有角色模型本体和椭圆按钮能截获点击；重新勾选即恢复现状
+      // 勾选样式跟"开机自启动"保持一致：不用原生 checkbox，靠 label 后缀 ✅ 表示当前状态。
+      // 勾选＝桌面模式已开启：窗口铺满整个屏幕，场景/背景对鼠标点击穿透，
+      // 只有角色模型本体和椭圆按钮能截获点击；再点一下即退出桌面模式、恢复原样
+      label: '🖥️ 桌面模式' + (!state.bgMouseInteraction ? '  ✅' : ''),
       click: () => toggleBgMouseInteraction(),
     },
     { type: 'separator' },

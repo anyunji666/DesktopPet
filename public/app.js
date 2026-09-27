@@ -465,6 +465,15 @@ function animate() {
     else playIdle(); // 普通舞播完 → 回待机动画
   }
   if (state.danceMode && state.helper) {
+    // 开场那一小段（见 dance.js 的 PHYSICS_ENGAGE_DELAY）播完了，物理该接管裙摆了：
+    // 先按"这段时间里骨骼已经转到的姿态"重新 resettle 一次物理（清零虚假速度），
+    // 再重新打开物理模拟，让它顺势接上，而不是从转向一开始就被拽着硬转
+    if (state.physicsEnableAt !== null && t >= state.physicsEnableAt) {
+      state.physicsEnableAt = null;
+      const physicsObj = state.mesh ? state.helper.objects.get(state.mesh).physics : null;
+      resettlePhysics(physicsObj);
+      state.helper.enable('physics', true);
+    }
     // 循环动作（开场舞/待机）在这一帧会不会跨过循环点，先记一下当前时间
     const la = state.loopingAction;
     const prevT = la ? la.time : null;

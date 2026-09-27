@@ -52,6 +52,20 @@
   }
   textarea:focus { border-color: #e04060; }
   .section-title { margin: 22px 0 2px; font-size: 13px; color: #a02440; font-weight: bold; }
+  .section-title.with-btn { display: flex; align-items: center; justify-content: space-between; }
+  .section-title.with-btn button {
+    font-weight: normal;
+    padding: 4px 14px;
+    border: 1px solid #e04060;
+    border-radius: 8px;
+    background: #fff;
+    color: #e04060;
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .section-title.with-btn button:active { background: #ffe9ee; }
+  .section-title.with-btn button:disabled { opacity: 0.5; cursor: default; }
   .row2 { display: flex; gap: 10px; }
   .row2 > div { flex: 1; }
   .tip { font-size: 11px; color: #aaa; line-height: 1.6; margin: 4px 0 0; }
@@ -125,6 +139,14 @@
     </div>
   </div>
 
+  <div class="section-title with-btn">
+    <span>gemini轮询代理</span>
+    <button id="relay-toggle-btn" type="button">启动</button>
+  </div>
+  <label>个人 Gemini API Key（AI Studio 申请的那种，格式 AIzaSy...）</label>
+  <textarea id="llm_relay_keys" placeholder="仅支持能直连上gemini的网络，一行一Key"></textarea>
+  <p class="tip" id="relay-status-tip"></p>
+
   <div class="section-title">🎭 角色资料 <span id="persona-character" style="font-weight: normal; color: #999;"></span></div>
 
   <label>角色人设（把角色的背景资料发送给 AI）</label>
@@ -162,6 +184,49 @@
     }
   }
 
+  // 中转当前是否真的在跑（来自后端状态，不是 textarea 里有没有字）
+  let relayRunning = false;
+
+  function textareaHasKeys() {
+    return $('llm_relay_keys').value.trim().length > 0;
+  }
+
+  // 按钮文字只在"真的在跑 且 textarea 里还有内容"时显示「停止」，
+  // 这样哪怕后台还没来得及停，只要把 textarea 清空，按钮也会立刻跳回「启动」
+  function updateRelayButton() {
+    $('relay-toggle-btn').textContent = relayRunning && textareaHasKeys() ? '停止' : '启动';
+  }
+
+  function applyRelayStatus(status) {
+    relayRunning = !!(status && status.running);
+    $('relay-status-tip').textContent = relayRunning
+      ? `已启动。API Base URL 可输入 http://127.0.0.1:${status.port}/v1 测试`
+      : '';
+    updateRelayButton();
+  }
+
+  $('llm_relay_keys').addEventListener('input', updateRelayButton);
+
+  $('relay-toggle-btn').addEventListener('click', async () => {
+    const btn = $('relay-toggle-btn');
+    const wantStop = btn.textContent === '停止';
+    const keysList = $('llm_relay_keys').value.split('\n').map((s) => s.trim()).filter(Boolean);
+    // 没填内容时点「启动」什么也不做，不发请求也不切换按钮
+    if (!wantStop && keysList.length === 0) return;
+
+    btn.disabled = true;
+    try {
+      // 只保存 llmRelayKeys 这一个字段，不影响 API Base URL / Key / 模型名等其它设置
+      const result = await window.petAPI.saveApiConfig({ llmRelayKeys: wantStop ? [] : keysList });
+      applyRelayStatus(result.relayStatus);
+      setStatus(relayRunning ? '中转已启动' : '中转已停止', 'ok');
+    } catch (err) {
+      setStatus('操作失败：' + (err && err.message ? err.message : String(err)), 'err');
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
   async function load() {
     const cfg = await window.petAPI.getApiConfig();
     $('api_url').value = cfg.api_url || '';
@@ -170,6 +235,8 @@
     $('temperature').value = cfg.temperature;
     $('max_tokens').value = cfg.max_tokens;
     $('vision').checked = !!cfg.vision;
+    $('llm_relay_keys').value = (cfg.llmRelayKeys || []).join('\n');
+    applyRelayStatus(await window.petAPI.getRelayStatus());
 
     const promptCfg = await window.petAPI.getPromptConfig();
     $('prompt_prefix').value = promptCfg.prefix || '';

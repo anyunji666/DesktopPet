@@ -96,6 +96,7 @@ export const state = {
   entranceMode: false, // 开场舞循环播放中
   exitInProgress: false, // 退场舞播放中
   loopingAction: null, // 当前循环播放（开场舞/待机）的 AnimationAction，供 animate() 检测循环衔接点
+  physicsEnableAt: null, // 到这个时间点，animate() 里重新 resettlePhysics 并让物理接管裙摆；见 dance.js playDance 里的说明
 
   // 场景
   sceneGroup: null,

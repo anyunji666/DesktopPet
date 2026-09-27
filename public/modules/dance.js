@@ -11,6 +11,12 @@ import { showBubble, showLoading, hideLoading } from './ui.js';
 // 设为 null = 用默认的绑定姿态+摆动待机
 const IDLE_DANCE = { name: '生气了亲一下就哄好了' }; // 生气抱臂站姿 + 头颈微动（14 秒整段循环）
 
+// 动作开场常常一上来就是个大转向；如果物理从第 0 帧就跟着一起模拟，会硬扛这记转向，
+// 表现为裙摆瞬间绷紧甩动，很不自然。这里让开场这一小段先关掉物理（物理骨骼暂时不受
+// 模拟、跟着当前姿态不动），等这段时间播完、转向基本到位了，再在 app.js 的 animate()
+// 里 resettlePhysics + 重新开物理，让它从"已经转好的姿态"顺势接管，而不是从一开始就被拽着硬转。
+const PHYSICS_ENGAGE_DELAY = 0.6;
+
 // 特殊动作：不出现在右键菜单里，由程序自动使用
 // 开场舞：打开软件/切换角色后自动循环播放，点"待机"才回待机姿态
 // 退场舞：切换角色时给旧角色播一次，播完才卸载旧模型
@@ -22,6 +28,7 @@ export function stopDance() {
   state.danceEndAt = Infinity;
   state.danceEndCallback = null;
   state.entranceMode = false;
+  state.physicsEnableAt = null; // 换动作了，之前那次"延迟接管物理"的计时作废，helper 也会被下面整个重建
   audio.pause();
   audio.currentTime = 0;
   document.getElementById('hint').style.display = 'block'; // 回待机时恢复说明文字
@@ -149,6 +156,14 @@ export function playDance(index, opts = {}) {
           // 骨骼从绑定姿态瞬间跳到第 0 帧姿态会产生虚假初速度，见 resettlePhysics 注释
           const physicsAfterPose = state.helper.objects.get(state.mesh).physics;
           resettlePhysics(physicsAfterPose);
+          // 见顶部 PHYSICS_ENGAGE_DELAY 的注释：开场这一小段先不让物理插手，
+          // 等 app.js 的 animate() 检测到时间到了，再重新 resettlePhysics + 开物理接管
+          if (physicsAfterPose) {
+            state.helper.enable('physics', false);
+            state.physicsEnableAt = clock.elapsedTime + PHYSICS_ENGAGE_DELAY;
+          } else {
+            state.physicsEnableAt = null;
+          }
           hideLoading(); // 挪到复位/预热之后：把这段过程盖在加载遮罩下，用户看不到抖动
           // 从候选根骨骼里选 XZ 位移幅度最大的做镜头跟随（位移轨道可能是本地坐标，幅度比较不受影响）
           state.danceFollow = null;

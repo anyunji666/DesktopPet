@@ -11,6 +11,7 @@ const APP_PROCESS_START_MS = Date.now();
 const ROOT = __dirname;
 
 const { startServer } = require('./main-modules/server');
+const geminiRelay = require('./main-modules/gemini-relay');
 const { state } = require('./main-modules/state');
 const { loadConfig, updateConfig } = require('./main-modules/config');
 const { scanCharacters } = require('./main-modules/character');
@@ -145,6 +146,20 @@ async function createWindow() {
   const server = await startServer();
   const port = server.address().port;
   state.serverPort = port;
+
+  // 如果之前保存过 Gemini 轮询代理的 Key，启动时自动把本地中转服务起起来（只监听 127.0.0.1）
+  // 优先复用上次记住的端口，避免每次开机 Base URL 都要重新填
+  (() => {
+    const cfgApi = getApiConfig();
+    geminiRelay
+      .setKeys(cfgApi.llmRelayKeys, cfgApi.llmRelayPort)
+      .then((status) => {
+        if (status.port && status.port !== cfgApi.llmRelayPort) saveApiConfig({ llmRelayPort: status.port });
+      })
+      .catch((err) => {
+        console.error('[pet] Gemini 轮询中转启动失败:', err);
+      });
+  })();
 
   state.characters = scanCharacters();
   const cfg = loadConfig();
@@ -428,7 +443,19 @@ ipcMain.handle('chat-send', async (e, characterName, message, imageDataURL) => {
 });
 
 ipcMain.handle('get-api-config', () => getApiConfig());
-ipcMain.handle('save-api-config', (_e, patch) => saveApiConfig(patch && typeof patch === 'object' ? patch : {}));
+ipcMain.handle('save-api-config', async (_e, patch) => {
+  const next = saveApiConfig(patch && typeof patch === 'object' ? patch : {});
+  const relayStatus = await geminiRelay.setKeys(next.llmRelayKeys, next.llmRelayPort).catch((err) => {
+    console.error('[pet] Gemini 轮询中转启动失败:', err);
+    return geminiRelay.getStatus();
+  });
+  // 实际分配到的端口和记的不一样时（第一次生成 / 原端口被占用被迫换新的），更新记录，下次继续沿用
+  if (relayStatus.port && relayStatus.port !== next.llmRelayPort) {
+    saveApiConfig({ llmRelayPort: relayStatus.port });
+  }
+  return { ...next, relayStatus };
+});
+ipcMain.handle('get-relay-status', () => geminiRelay.getStatus());
 ipcMain.handle('get-prompt-config', () => getPromptConfig());
 ipcMain.handle('save-prompt-config', (_e, patch) => savePromptConfig(patch && typeof patch === 'object' ? patch : {}));
 
@@ -626,6 +653,7 @@ app.on('window-all-closed', () => app.quit());
 // （WebGL 资源释放慢）拖着整个进程退不干净。注意：任务管理器强杀/断电这类非正常退出不会走到这里，
 // 那种情况下位置就不会更新，这是可以接受的取舍。
 app.on('before-quit', () => {
+  geminiRelay.stopRelay();
   if (state.win && !state.win.isDestroyed()) {
     const [x, y] = state.win.getPosition();
     const { width, height } = state.win.getBounds();

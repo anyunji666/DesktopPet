@@ -43,6 +43,8 @@ contextBridge.exposeInMainWorld('petAPI', {
   getPersona: () => ipcRenderer.invoke('get-persona'),
   savePersona: (characterName, system) => ipcRenderer.invoke('save-persona', characterName, system),
   fetchModelList: (apiUrl, apiKey) => ipcRenderer.invoke('fetch-model-list', apiUrl, apiKey),
+  // Gemini 多 Key 轮询中转当前状态（是否在跑 / 端口），设置窗口打开时用来回显提示行
+  getRelayStatus: () => ipcRenderer.invoke('get-relay-status'),
   getChatHistory: (characterName) => ipcRenderer.invoke('get-chat-history', characterName),
   openHistoryWindow: (characterName) => ipcRenderer.send('open-history-window', characterName),
   // 桌面模式下打开聊天记录窗口时，主进程会先暂停宠物渲染；这里在历史消息真正
