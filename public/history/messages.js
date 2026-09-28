@@ -44,7 +44,7 @@ function buildMsgEl(role, content, ts, imageDataURL, temp) {
   if (!temp) {
     const more = document.createElement('button');
     more.className = 'msg-more';
-    more.title = '编辑/删除';
+    more.title = role === 'user' ? '编辑/删除' : '编辑/重新生成/删除';
     more.textContent = '⋯';
     foot.appendChild(more);
   }
@@ -60,6 +60,13 @@ function buildMsgEl(role, content, ts, imageDataURL, temp) {
     delBtn.className = 'act-del';
     delBtn.textContent = '删除';
     actions.appendChild(editBtn);
+    // 只有 AI 回复才有"重新生成"：删掉它前面最近一条用户输入及之后的所有消息，再把那条输入重发一遍
+    if (role !== 'user') {
+      const regenBtn = document.createElement('button');
+      regenBtn.className = 'act-regen';
+      regenBtn.textContent = '重新生成';
+      actions.appendChild(regenBtn);
+    }
     actions.appendChild(delBtn);
     div.appendChild(actions);
   }

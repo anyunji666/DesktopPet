@@ -4,6 +4,8 @@ import { editLocked, notifyEditLocked, onPendingChange } from './pending.js';
 import { alertError } from './toast.js';
 import { reload } from './messages.js';
 import { confirmDialog } from './confirm-dialog.js';
+import { resendMessage } from './composer.js';
+import { showToast } from './toast.js';
 
 function endEdit(row) {
   const box = row.querySelector('.msg-edit');
@@ -76,6 +78,46 @@ function startEdit(row) {
   });
 }
 
+// 重新生成：找到这条 AI 回复前面最近的一条用户输入，删掉它和它后面的所有消息（含这条），
+// 再把这条输入（文字 + 图片）放进输入框重新发送，时间用重发时的最新时间
+async function regenerate(row) {
+  row.classList.remove('actions-show');
+  if (editLocked()) return notifyEditLocked();
+
+  // 往上找最近的用户消息（DOM 顺序 = 记录数组顺序，data-index 就是数组下标）
+  let userRow = row.previousElementSibling;
+  while (userRow && !userRow.classList.contains('user')) userRow = userRow.previousElementSibling;
+  if (!userRow) return showToast('这条回复前面没有用户输入，无法重新生成', 'info');
+  const userIdx = +userRow.dataset.index;
+
+  try {
+    // 先取一份完整记录：拿用户输入的文字和图片（删除会连图片文件一起删掉）
+    const history = await window.petAPI.getChatHistory(characterName);
+    const src = history[userIdx];
+    if (!src || src.role !== 'user') throw new Error('记录已变化，请刷新后重试');
+    const text = src.content || '';
+    const image = src.imageDataURL;
+    if (!text && !image) throw new Error('找不到可重发的用户输入');
+
+    // 要删的比"最新一轮"（一条用户输入 + 一条回复）还多时，先用页内确认框问一下
+    if (history.length - userIdx > 2) {
+      const ok = await confirmDialog('重新生成会清除这条消息后的所有消息（包括这条回复）。此操作不可撤销，确定吗？');
+      if (!ok) return;
+      if (editLocked()) return notifyEditLocked(); // 确认期间刚好发出了新消息
+    }
+
+    // 主进程一次性删掉 userIdx 起到末尾的所有消息（含图片文件）
+    await window.petAPI.truncateChatHistory(characterName, userIdx);
+    await reload();
+    window.scrollTo(0, document.body.scrollHeight);
+
+    await resendMessage(text, image);
+  } catch (err) {
+    alertError(err);
+    await reload(true).catch(() => {}); // 出错时按磁盘现状重绘
+  }
+}
+
 list.addEventListener('click', async (e) => {
   const moreBtn = e.target.closest('.msg-more');
   if (moreBtn) {
@@ -90,6 +132,12 @@ list.addEventListener('click', async (e) => {
   const editBtn = e.target.closest('.act-edit');
   if (editBtn) {
     startEdit(editBtn.closest('.msg'));
+    return;
+  }
+
+  const regenBtn = e.target.closest('.act-regen');
+  if (regenBtn) {
+    await regenerate(regenBtn.closest('.msg'));
     return;
   }
 

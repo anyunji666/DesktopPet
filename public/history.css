@@ -34,6 +34,9 @@ h2 { margin: 0 0 12px; font-size: 15px; color: #a02440; }
 /* 气泡底部一行：时间戳 + "⋯"，紧接着下面展开 编辑/删除，消息再长也不用往上翻找 */
 .msg-foot { display: flex; align-items: center; gap: 4px; margin-top: 3px; }
 .msg.user .msg-foot { justify-content: flex-end; }
+/* AI 气泡：时间标在左、"⋯"在右，两端对齐 */
+.msg.assistant .msg-foot { justify-content: space-between; }
+.msg.assistant .msg-more { margin-left: auto; }
 /* 已发出、还在等回复的临时气泡：半透明，没有"⋯"，落盘后会被正式消息替换 */
 .msg.sending { opacity: 0.65; }
 /* 等回复期间不允许改记录：藏掉每条消息的"⋯"和已展开的 编辑/删除 */
@@ -216,6 +219,7 @@ body.edit-locked .msg-more, body.edit-locked .msg-actions { display: none !impor
 .msg.assistant .msg-actions { align-self: flex-start; }
 .msg.user .msg-actions { align-self: flex-end; }
 .msg-actions .act-del { color: #d33; }
+.msg.assistant .msg-actions .act-regen { color: #2a7; }
 
 /* 原地编辑态：气泡文本位置换成 textarea + 取消/保存 */
 .msg-edit { display: flex; flex-direction: column; gap: 6px; }

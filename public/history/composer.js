@@ -93,6 +93,14 @@ async function sendMessage() {
   }
 }
 
+// 重新生成用：把一条旧的用户输入（文字 + 图片）放进输入框/预览区，再按正常发送流程发出去。
+// 走 sendMessage 的好处：发送失败时文字和图片会自动放回输入框，不会丢
+export function resendMessage(text, imageDataURL) {
+  chatInput.value = text || '';
+  setPendingImage(imageDataURL || null);
+  return sendMessage();
+}
+
 sendBtn.addEventListener('click', sendMessage);
 chatInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {

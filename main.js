@@ -592,6 +592,21 @@ ipcMain.handle('delete-chat-message', (_e, characterName, index) => {
   return true;
 });
 
+// 批量删除：删掉 fromIndex 起（含）到末尾的所有消息，一次读盘、一次落盘（"重新生成"用）。
+// 图片文件跟着删；校验放在删除之前，出错不会删一半。
+ipcMain.handle('truncate-chat-history', (_e, characterName, fromIndex) => {
+  if (!validCharacter(characterName)) throw new Error('未知角色');
+  assertHistoryEditable(characterName); // 正在等这个角色的回复时不允许改记录
+  if (!Number.isInteger(fromIndex) || fromIndex < 0) throw new Error('无效的消息索引');
+
+  const history = loadChatHistory(characterName);
+  if (fromIndex >= history.length) throw new Error('无效的消息索引');
+  const removed = history.splice(fromIndex);
+  saveChatHistory(characterName, history); // 先落盘，成功后再删图片文件，避免记录还在图片却没了
+  for (const m of removed) if (m && m.image) deleteChatImage(characterName, m.image);
+  return removed.length;
+});
+
 ipcMain.handle('clear-chat-history', (_e, characterName) => {
   if (!validCharacter(characterName)) throw new Error('未知角色');
   assertHistoryEditable(characterName); // 正在等这个角色的回复时不允许改记录
