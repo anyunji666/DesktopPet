@@ -5,6 +5,7 @@ const { loadConfig, updateConfig } = require('./config');
 const { loadPersona, loadStoryBackground, loadMemoryIndex } = require('./chat-store');
 const { TONE_PROMPT, toneEnabled } = require('./tts/tone');
 const { flattenChatHistory, formatMinuteTime, formatDayCN } = require('./history-flatten');
+const { buildFestivalBlock } = require('./holiday');
 
 // ---------- API 配置（存进 config.json 的 apiConfig 字段，和角色/场景选择共用同一份配置文件） ----------
 function getApiConfig() {
@@ -92,7 +93,7 @@ const PROMPT_FOOTER = `## **必须遵守的强制性输出规则**
 - **摘要模块：** 对本轮的正文内容进行一次总结。每次回复必须以摘要块结尾，缺失=不合格
   - 输出格式：
   <story_overview>
-  故事时间: <本轮场景结束时故事里的时间；会跟着"场景动态推进"跳跃（比如一下跳过几天），不是用户发消息的真实时间>
+  故事时间: <本轮场景结束时故事里的时间，日期部分请写成"YYYY年M月D日"格式，后面可接具体时刻；会跟着"场景动态推进"跳跃（比如一下跳过几天），不是用户发消息的真实时间>
   概述: <按时间顺序列出本轮正文发生的关键事件及其造成的角色实际改变（关系/处境/认知），平铺直叙，不用比喻/形容词；无实质进展则留空，不超150字>
   </story_overview>
   - 摘要示例（仅供格式参考，具体内容需按当轮对话实际生成）：
@@ -157,6 +158,10 @@ function buildPromptText(characterName, history, text) {
   if (chatHistoryText.trim()) {
     parts.push(`<chat_history>\n<!-- 对话记录，按时间顺序排列；"某年某月某日 旧对话封印包"表示当天聊过，但内容已收起并未发送给你 -->\n${chatHistoryText}\n</chat_history>`);
   }
+  // 故事时间的星期 + 国际/中国节日（取自上一轮摘要的"故事时间"，解析不出日期就不发这一段）。
+  // 每轮都会变，所以放在固定前缀之后、紧贴 user_input，不破坏前缀缓存
+  const festivalBlock = buildFestivalBlock(history);
+  if (festivalBlock) parts.push(festivalBlock);
   parts.push(`<user_input>\n<!-- 用户本轮最新输入，当前系统时间：${nowText} -->\n[${nowText}] ${text}\n</user_input>`);
   parts.push('---');
   parts.push(INPUT_NOTE);
