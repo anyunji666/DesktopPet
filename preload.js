@@ -66,6 +66,12 @@ contextBridge.exposeInMainWorld('petAPI', {
 
   // ---- LLM 调用记录窗口（审查用）----
   getLlmLog: () => ipcRenderer.invoke('get-llm-log'),
+
+  // ---- 关于窗口 ----
+  getAboutInfo: () => ipcRenderer.invoke('get-about-info'),
+  aboutOpenRepo: () => ipcRenderer.send('about-open-repo'),
+  // 连续点版本号触发：切换右键菜单里 LLM记录/开发者工具 的显示，返回切换后的状态（true = 显示）
+  aboutToggleDevEntries: () => ipcRenderer.invoke('about-toggle-dev-entries'),
   onLlmLogUpdated: (cb) => ipcRenderer.on('llm-log-updated', (_e, data) => cb(data)),
 
   // ---- 语音合成（TTS）----

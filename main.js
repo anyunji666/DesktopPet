@@ -63,6 +63,9 @@ const {
   WIN_MIN_W,
   WIN_MAX_W,
   computeDesktopLayout,
+  getAboutInfo,
+  openRepoUrl,
+  toggleDevEntries,
   openSettingsWindow,
   openHistoryWindow,
   send,
@@ -192,6 +195,9 @@ async function createWindow() {
   // 背景鼠标互动：上次关闭时是什么状态，这次就从什么状态开始
   state.bgMouseInteraction = cfg.bgMouseInteraction !== false;
 
+  // "LLM记录"/"开发者工具"菜单项：默认隐藏，上次在关于窗口里打开过才显示
+  state.showDevEntries = cfg.showDevEntries === true;
+
   // 桌面模式下直接按桌面布局创建窗口（而不是先建正常小窗口再跳变），避免启动瞬间闪一下。
   // 布局算法跟运行中切换进入桌面模式共用 computeDesktopLayout：模型视口 = 普通窗口的位置/大小，
   // 窗口只在纵向展开。没有保存过位置时，普通窗口原本是交给系统居中的，但桌面布局需要确切坐标，
@@ -303,6 +309,15 @@ ipcMain.on('model-ready', async () => {
 function getWorkAreas() {
   return screen.getAllDisplays().map((d) => d.workArea);
 }
+
+// ---- 关于窗口：读取信息 / 打开 GitHub / 连续点版本号切换开发者菜单项 ----
+// 只响应关于窗口自己发来的请求（别的子窗口共用同一个 preload，不该能调用这些）
+const fromAboutWin = (e) => state.aboutWin && !state.aboutWin.isDestroyed() && e.sender === state.aboutWin.webContents;
+ipcMain.handle('get-about-info', (e) => (fromAboutWin(e) ? getAboutInfo() : null));
+ipcMain.on('about-open-repo', (e) => {
+  if (fromAboutWin(e)) openRepoUrl();
+});
+ipcMain.handle('about-toggle-dev-entries', (e) => (fromAboutWin(e) ? toggleDevEntries() : state.showDevEntries));
 
 ipcMain.on('window-move', (_e, dx, dy) => {
   if (!state.win || state.bgMouseInteraction === false) return;

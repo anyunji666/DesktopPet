@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>关于</title>
+<style>
+  body {
+    font-family: "Microsoft YaHei", sans-serif;
+    margin: 0;
+    padding: 22px 24px 18px;
+    background: #faf7f6;
+    color: #333;
+    user-select: none; /* 版本号要连续点很多下，不能让文字被选中高亮 */
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    box-sizing: border-box;
+  }
+  h2 { margin: 0 0 14px; font-size: 16px; color: #a02440; }
+  /* 标签和内容分成两列：内容太长换行时对齐在内容列下面（悬挂缩进），不会缩回标签下方。
+     换行只在必要时才发生（窗口够宽，地址一行放得下），真要换也优先在 / 之类的位置断开 */
+  .line { display: flex; font-size: 13px; line-height: 1.9; }
+  .line .k { flex: none; width: 58px; color: #999; }
+  .line .v { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  /* 隐蔽入口：光标和样式都跟普通文字一样，不做任何可点击的暗示 */
+  #hint { margin-top: 8px; min-height: 16px; font-size: 11px; color: #bbb; opacity: 0; transition: opacity 0.3s; }
+  #hint.show { opacity: 1; }
+  .btn-row { display: flex; gap: 10px; margin-top: auto; padding-top: 16px; }
+  button {
+    flex: 1;
+    padding: 9px;
+    border-radius: 8px;
+    font-size: 13px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  #repo-btn { border: 1px solid #e04060; background: #fff; color: #e04060; }
+  #repo-btn:active { background: #ffe9ee; }
+  #ok-btn { border: none; background: #e04060; color: #fff; }
+  #ok-btn:active { background: #c93454; }
+</style>
+</head>
+<body>
+  <h2 id="title">关于</h2>
+  <div class="line"><span class="k">作者：</span><span class="v" id="author"></span></div>
+  <div class="line"><span class="k">版本：</span><span class="v"><span id="version"></span></span></div>
+  <div class="line" id="repo-line" style="display: none;"><span class="k">GitHub：</span><span class="v" id="repo"></span></div>
+  <div id="hint"></div>
+  <div class="btn-row">
+    <button id="repo-btn" type="button" style="display: none;">打开 GitHub</button>
+    <button id="ok-btn" type="button">确定</button>
+  </div>
+
+<script>
+  // 连续点击版本号 CLICKS_NEEDED 次（相邻两次间隔不超过 CLICK_GAP_MS）切换"LLM记录 / 开发者工具"菜单项的显示
+  const CLICKS_NEEDED = 6;
+  const CLICK_GAP_MS = 1500;
+
+  const $ = (id) => document.getElementById(id);
+  let clicks = 0;
+  let clickTimer = null;
+  let hintTimer = null;
+
+  function showHint(text) {
+    const el = $('hint');
+    el.textContent = text;
+    el.classList.add('show');
+    clearTimeout(hintTimer);
+    hintTimer = setTimeout(() => el.classList.remove('show'), 2000);
+  }
+
+  $('version').addEventListener('click', async () => {
+    clicks++;
+    clearTimeout(clickTimer);
+    clickTimer = setTimeout(() => (clicks = 0), CLICK_GAP_MS);
+    if (clicks < CLICKS_NEEDED) return;
+    clicks = 0;
+    clearTimeout(clickTimer);
+    try {
+      const shown = await window.petAPI.aboutToggleDevEntries();
+      showHint(shown ? '开发者选项已开启' : '开发者选项已隐藏');
+    } catch (err) {
+      console.error(err);
+    }
+  });
+
+  $('ok-btn').addEventListener('click', () => window.close());
+  $('repo-btn').addEventListener('click', () => window.petAPI.aboutOpenRepo());
+
+  window.petAPI.getAboutInfo().then((info) => {
+    $('title').textContent = info.description || '关于';
+    $('author').textContent = info.author;
+    $('version').textContent = info.version;
+    if (info.repoUrl) {
+      $('repo').textContent = info.repoUrl;
+      $('repo-line').style.display = '';
+      $('repo-btn').style.display = '';
+    }
+  });
+</script>
+</body>
+</html>

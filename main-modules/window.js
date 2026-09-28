@@ -15,23 +15,18 @@ const ROOT = path.join(__dirname, '..');
 const APP_VERSION_LABEL = pkg.version;
 const APP_REPO_URL = pkg.homepage || '';
 
-function showAboutDialog() {
-  dialog
-    .showMessageBox(state.win, {
-      type: 'info',
-      title: '关于',
-      message: pkg.description || pkg.name,
-      detail: [`作者：${pkg.author || '未知'}`, `版本：${APP_VERSION_LABEL}`, APP_REPO_URL ? `GitHub：${APP_REPO_URL}` : null]
-        .filter(Boolean)
-        .join('\n'),
-      buttons: APP_REPO_URL ? ['打开 GitHub', '确定'] : ['确定'],
-      defaultId: APP_REPO_URL ? 1 : 0,
-      cancelId: APP_REPO_URL ? 1 : 0,
-      noLink: true,
-    })
-    .then(({ response }) => {
-      if (APP_REPO_URL && response === 0) shell.openExternal(APP_REPO_URL);
-    });
+function getAboutInfo() {
+  return {
+    description: pkg.description || pkg.name,
+    author: pkg.author || '未知',
+    version: APP_VERSION_LABEL,
+    repoUrl: APP_REPO_URL,
+  };
+}
+
+// 只打开 package.json 里配置的那个地址，不接受渲染进程传来的任意 URL
+function openRepoUrl() {
+  if (APP_REPO_URL) shell.openExternal(APP_REPO_URL);
 }
 
 // 窗口初始尺寸；右下角缩放手柄始终按这个宽高比缩放（由主进程计算，
@@ -147,6 +142,49 @@ function openVoiceWindow(characterName) {
     state.voiceWin.loadURL(`http://127.0.0.1:${state.serverPort}/public/voice-settings.html?character=${encodeURIComponent(characterName)}`);
     return state.voiceWin;
   });
+}
+
+// ---------- 关于窗口 ----------
+// 用自己的窗口而不是系统原生弹窗，因为要监听版本号的连续点击（隐藏入口：切换 LLM记录/开发者工具 菜单项）
+function openAboutWindow() {
+  if (state.aboutWin && !state.aboutWin.isDestroyed()) {
+    state.aboutWin.show();
+    state.aboutWin.focus();
+    return;
+  }
+  withRenderPause(() => {
+    state.aboutWin = new BrowserWindow({
+      width: 440,
+      height: 260,
+      useContentSize: true, // 宽高指内容区，不含标题栏/边框，避免不同系统边框粗细不同把内容挤出滚动条
+      resizable: false,
+      minimizable: false,
+      maximizable: false,
+      title: '关于',
+      webPreferences: { preload: path.join(ROOT, 'preload.js'), contextIsolation: true },
+    });
+    // 见 openSettingsWindow 里的同名调用注释
+    state.aboutWin.webContents.setBackgroundThrottling(false);
+    state.aboutWin.setMenu(null);
+    state.aboutWin.loadURL(`http://127.0.0.1:${state.serverPort}/public/about.html`);
+    return state.aboutWin;
+  });
+}
+
+// 切换右键菜单里"LLM记录"/"开发者工具"的显示，状态写进 config.json（默认隐藏）。
+// 隐藏时顺手把已经开着的 LLM 记录窗口和开发者工具关掉，这样"隐藏"就是真的隐藏。
+// 返回切换后的状态（true = 显示）。
+function toggleDevEntries() {
+  state.showDevEntries = !state.showDevEntries;
+  updateConfig({ showDevEntries: state.showDevEntries });
+  if (!state.showDevEntries) {
+    if (state.llmLogWin && !state.llmLogWin.isDestroyed()) state.llmLogWin.close();
+    if (state.win && !state.win.isDestroyed() && state.win.webContents.isDevToolsOpened()) {
+      state.win.webContents.closeDevTools();
+    }
+  }
+  state.menu = buildMenu();
+  return state.showDevEntries;
 }
 
 // ---------- LLM 调用记录窗口（审查用，替代原来在 cmd 窗口里打印的方式） ----------
@@ -335,20 +373,25 @@ function buildMenu() {
           { type: 'separator' },
         ]
       : []),
-    { label: 'ℹ️ 关于', click: () => showAboutDialog() },
+    { label: 'ℹ️ 关于', click: () => openAboutWindow() },
     { type: 'separator' },
     { label: '❌ 退出', click: () => app.quit() },
-    { type: 'separator' },
-    { label: '🗂 LLM记录', click: () => openLlmLogWindow() },
-    {
-      label: '🔧 开发者工具',
-      click: () => {
-        // 必须独立成单独窗口：停靠在宠物窗口里会把页面区域挤成一条窄带，导致缩放/取景全部错乱
-        const wc = state.win.webContents;
-        if (wc.isDevToolsOpened()) wc.closeDevTools();
-        else wc.openDevTools({ mode: 'detach' });
-      },
-    },
+    // "LLM记录"/"开发者工具"默认隐藏，在关于窗口里连续点版本号 6 次切换显示
+    ...(state.showDevEntries
+      ? [
+          { type: 'separator' },
+          { label: '🗂 LLM记录', click: () => openLlmLogWindow() },
+          {
+            label: '🔧 开发者工具',
+            click: () => {
+              // 必须独立成单独窗口：停靠在宠物窗口里会把页面区域挤成一条窄带，导致缩放/取景全部错乱
+              const wc = state.win.webContents;
+              if (wc.isDevToolsOpened()) wc.closeDevTools();
+              else wc.openDevTools({ mode: 'detach' });
+            },
+          },
+        ]
+      : []),
   ];
   return Menu.buildFromTemplate(template);
 }
@@ -456,6 +499,10 @@ module.exports = {
   openHistoryWindow,
   openVoiceWindow,
   openLlmLogWindow,
+  openAboutWindow,
+  getAboutInfo,
+  openRepoUrl,
+  toggleDevEntries,
   send,
   currentCharacterPayload,
   currentScene,

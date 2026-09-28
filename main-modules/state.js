@@ -14,6 +14,8 @@ const state = {
   historyWinCharacter: null, // 聊天记录窗口当前打开的角色名
   voiceWin: null, // 音色设置（语音功能）窗口
   llmLogWin: null, // LLM 调用记录窗口（审查用，替代原来 cmd 窗口里打印的方式）
+  aboutWin: null, // 关于窗口（连续点版本号 6 次可切换下面的 showDevEntries）
+  showDevEntries: false, // 右键菜单里是否显示"LLM记录"/"开发者工具"；默认隐藏，启动时从 config.json 恢复
   resizeStartW: 0, // 缩放手柄按下时的窗口宽度（window-resize-begin/by 之间传递）
 
   // ---- 背景鼠标互动开关（桌面模式）----
