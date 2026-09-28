@@ -41,24 +41,8 @@ const WIN_H = 540;
 const WIN_MIN_W = 320;
 const WIN_MAX_W = 1800;
 
-// 桌面模式下，模型显示区域（虚拟视口）在渲染进程本地拖拽/缩放，只在松手时把结果存进
-// config.json 的 desktopViewport 字段；下次进桌面模式/下次启动时用这个校验能不能直接沿用
-// （分辨率变了、或者数据损坏，就退回"用切换前的真实窗口位置/大小"当初始值）
-function isDesktopViewportValid(v) {
-  return (
-    v &&
-    typeof v === 'object' &&
-    Number.isFinite(v.x) &&
-    Number.isFinite(v.y) &&
-    Number.isFinite(v.width) &&
-    Number.isFinite(v.height) &&
-    v.width >= WIN_MIN_W &&
-    v.width <= WIN_MAX_W
-  );
-}
-
 // ---------- API 设置窗口 / 聊天记录窗口（独立普通窗口，跟"开发者工具"一样 detach） ----------
-// 桌面模式下宠物窗口铺满整个屏幕、又是持续渲染的透明覆盖层，新开一个子窗口时
+// 桌面模式下宠物窗口纵向展开（通常接近整个屏幕高度）、又是持续渲染的透明覆盖层，新开一个子窗口时
 // 会跟它的首次绘制抢 GPU/合成资源，表现为"窗口本身出来了，但里面内容半天不出来"。
 // 开子窗口前先通知宠物暂停渲染，子窗口内容加载完（或超时兜底，防止事件没触发导致渲染永久暂停）
 // 之后再恢复；普通模式下宠物窗口本来就很小，没有这个问题，直接跳过不影响
@@ -67,7 +51,7 @@ function isDesktopViewportValid(v) {
 // - 'load'（默认）：页面 did-finish-load 就算完，适合设置/音色/LLM记录这类内容同步渲染的页面。
 // - 'content-ready'：等渲染进程自己在真正画完内容后，通过 signalChannel 上报，
 //   再恢复宠物渲染。聊天记录窗口是先加载页面骨架、再异步取历史消息渲染气泡的，
-//   如果按 did-finish-load 恢复，宠物那个铺满全屏的覆盖层会在气泡真正显示到屏幕前
+//   如果按 did-finish-load 恢复，宠物那个纵向展开的覆盖层会在气泡真正显示到屏幕前
 //   就抢回合成资源，导致气泡内容要等用户点击窗口或最小化还原才被"逼"出来。
 function withRenderPause(createFn, { resumeOn = 'load', signalChannel } = {}) {
   if (state.bgMouseInteraction !== false) return createFn();
@@ -120,7 +104,7 @@ function openSettingsWindow() {
       title: 'API 设置',
       webPreferences: { preload: path.join(ROOT, 'preload.js'), contextIsolation: true },
     });
-    // 桌面模式下宠物主窗口铺满全屏且常驻置顶，会让新开的子窗口被 Chromium 判定为遮挡/后台，
+    // 桌面模式下宠物主窗口纵向展开且常驻置顶，会让新开的子窗口被 Chromium 判定为遮挡/后台，
     // 首帧渲染被节流，导致内容要等用户点一下（真正的输入事件）才画出来；关掉节流从根源避免
     state.settingsWin.webContents.setBackgroundThrottling(false);
     state.settingsWin.setMenu(null);
@@ -304,8 +288,8 @@ function buildMenu() {
     { type: 'separator' },
     {
       // 勾选样式跟"开机自启动"保持一致：不用原生 checkbox，靠 label 后缀 ✅ 表示当前状态。
-      // 勾选＝桌面模式已开启：窗口铺满整个屏幕，场景/背景对鼠标点击穿透，
-      // 只有角色模型本体和椭圆按钮能截获点击；再点一下即退出桌面模式、恢复原样
+      // 勾选＝桌面模式已开启：窗口在纵向上展开（给气泡留空间），场景/背景对鼠标点击穿透，
+      // 只有角色模型本体和展开的对话框能截获点击；再点一下即退出桌面模式、恢复原样
       label: '🖥️ 桌面模式' + (!state.bgMouseInteraction ? '  ✅' : ''),
       click: () => toggleBgMouseInteraction(),
     },
@@ -407,52 +391,41 @@ function reloadScenes() {
   if (before || state.currentSceneName) send('switch-scene', currentScene());
 }
 
-// 保存的虚拟视口是不同历史版本、不同窗口尺寸下存下来的，可能跟当前这次的窗口大小完全对不上
-// （比如以前窗口是"铺满整个屏幕"那么宽，现在窗口变窄了，存的 x 坐标可能落在新窗口外面）。
-// 这里不管视口数据来自哪个版本，进桌面模式时一律夹到当前窗口的实际范围内，保证角色和气泡
-// 永远落在窗口可见区域里，不会因为读到旧坐标就跑到窗口外面找不到
-function clampViewportToWindow(v, winW, winH) {
-  const width = Math.min(Math.max(v.width, 1), winW);
-  const height = Math.min(Math.max(v.height, 1), winH);
-  const x = Math.min(Math.max(v.x, 0), Math.max(0, winW - width));
-  const y = Math.min(Math.max(v.y, 0), Math.max(0, winH - height));
-  return { x, y, width, height };
+// ---------- 背景鼠标互动开关（桌面模式）----------
+// 桌面模式 = 普通模式的界面 + 纵向多出的一圈空白（供气泡显示）+ 背景点击穿透。
+// 模型显示区域（渲染进程里的 #viewport，下称"视口"）的位置/大小永远等于普通模式下
+// 真实窗口的位置/大小，不单独保存、不单独调整；想改位置/大小就先退出桌面模式，
+// 在普通模式里拖动/缩放，再进入桌面模式即自动同步。
+//
+// 真实窗口只在纵向展开：宽度和水平位置与普通窗口完全一致（气泡的换行宽度因此跟普通模式
+// 一样），纵向范围取"屏幕工作区"与"普通窗口"的并集——并集保证普通窗口哪怕有一部分
+// 拖到了工作区外面（或比工作区还高），视口也不会被桌面窗口裁掉。
+// 视口 = 普通窗口相对桌面窗口左上角的坐标。
+//
+// 主窗口创建（启动即桌面模式）和运行中切换进入共用这一个函数，保证两条路径算出的布局一致。
+// normalBounds 必须带 x/y/width/height。
+function computeDesktopLayout(normalBounds) {
+  const wa = screen.getDisplayMatching(normalBounds).workArea;
+  const top = Math.min(wa.y, normalBounds.y);
+  const bottom = Math.max(wa.y + wa.height, normalBounds.y + normalBounds.height);
+  return {
+    bounds: { x: normalBounds.x, y: top, width: normalBounds.width, height: bottom - top },
+    viewport: { x: 0, y: normalBounds.y - top, width: normalBounds.width, height: normalBounds.height },
+  };
 }
 
-// ---------- 背景鼠标互动开关（桌面模式）----------
-// 关闭：真实窗口宽度保持不变（跟模型视口原本的宽度一致，不做任何缩放），只把高度铺满
-// "当前宠物所在那块屏幕"的工作区高度——目的是在角色上下留出纵向空间给对话气泡用
-// （气泡按真实窗口尺寸换算可用空间，见 app.js 顶部注释），不是要整个窗口等比放大。
-// 宽度不变意味着窗口的水平范围和切换前完全一样，必然还在屏幕内，不会有"数值算飞了
-// 导致窗口跑到屏幕外"的问题。
-// 渲染进程那边用一个本地的虚拟视口 div 模拟"窗口"，拖拽/缩放都在本地完成，
-// 只在松手时把结果同步回 config.json（见 main.js 的 save-desktop-viewport）。
-// 开启：真实窗口恢复关闭前记下的位置/大小，点击穿透关闭，一切照旧。
 function enterDesktopMode() {
   if (!state.win || state.win.isDestroyed() || !state.bgMouseInteraction) return;
   const bounds = state.win.getBounds();
   state.normalWinBounds = bounds; // 记住切换前的真实窗口位置/大小，供退出时恢复
-  const display = screen.getDisplayMatching(bounds);
-  const wa = display.workArea;
-
-  // 宽度沿用切换前的窗口宽度（不缩放），水平位置也不变；只把高度和纵向位置换成
-  // 这块屏幕工作区的高度和顶部，纵向铺满
-  const desktopBounds = { x: bounds.x, y: wa.y, width: bounds.width, height: wa.height };
-
-  const saved = loadConfig().desktopViewport;
-  // 有上次调整过的虚拟视口就直接用；否则用切换前窗口的位置/大小当初始值，视觉上不跳变。
-  // 不管走哪条分支，都要再夹一遍到当前窗口范围内（见 clampViewportToWindow 上面的注释）
-  const rawViewport = isDesktopViewportValid(saved)
-    ? saved
-    : { x: bounds.x - desktopBounds.x, y: bounds.y - desktopBounds.y, width: bounds.width, height: bounds.height };
-  const viewport = clampViewportToWindow(rawViewport, desktopBounds.width, desktopBounds.height);
+  const layout = computeDesktopLayout(bounds);
 
   state.bgMouseInteraction = false;
   updateConfig({ bgMouseInteraction: false });
-  state.win.setBounds(desktopBounds);
+  state.win.setBounds(layout.bounds);
   state.win.setIgnoreMouseEvents(true, { forward: true });
   state.menu = buildMenu();
-  send('enter-desktop-mode', { viewport, workArea: { width: desktopBounds.width, height: desktopBounds.height } });
+  send('enter-desktop-mode', { viewport: layout.viewport });
 }
 
 function exitDesktopMode() {
@@ -475,7 +448,7 @@ module.exports = {
   WIN_H,
   WIN_MIN_W,
   WIN_MAX_W,
-  isDesktopViewportValid,
+  computeDesktopLayout,
   enterDesktopMode,
   exitDesktopMode,
   toggleBgMouseInteraction,

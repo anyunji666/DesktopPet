@@ -16,13 +16,11 @@ contextBridge.exposeInMainWorld('petAPI', {
   // ---- 背景鼠标互动开关（桌面模式）----
   // 悬停检测结果变化时上报，切换窗口是否对鼠标点击穿透
   setClickThrough: (ignore) => ipcRenderer.send('set-click-through', ignore),
-  // 虚拟视口拖拽/缩放松手后持久化
-  saveDesktopViewport: (viewport) => ipcRenderer.send('save-desktop-viewport', viewport),
-  // 主进程推送：右键菜单切换背景鼠标互动时，进入/退出桌面模式
+  // 主进程推送：右键菜单切换背景鼠标互动时，进入/退出桌面模式（进入时带上视口 = 普通窗口的位置/大小）
   onEnterDesktopMode: (cb) => ipcRenderer.on('enter-desktop-mode', (_e, data) => cb(data)),
   onExitDesktopMode: (cb) => ipcRenderer.on('exit-desktop-mode', () => cb()),
   // 桌面模式下新开子窗口（聊天记录/设置等）前后，主进程通知暂停/恢复渲染循环，
-  // 避免宠物那个铺满全屏的透明覆盖层跟子窗口的首次绘制抢 GPU/合成资源
+  // 避免宠物那个纵向展开的透明覆盖层跟子窗口的首次绘制抢 GPU/合成资源
   onPauseRender: (cb) => ipcRenderer.on('pause-render', () => cb()),
   onResumeRender: (cb) => ipcRenderer.on('resume-render', () => cb()),
   // 主进程推送角色切换数据（新模型路径 + 新角色专属舞蹈列表）

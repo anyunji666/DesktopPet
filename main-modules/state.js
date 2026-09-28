@@ -17,7 +17,7 @@ const state = {
   resizeStartW: 0, // 缩放手柄按下时的窗口宽度（window-resize-begin/by 之间传递）
 
   // ---- 背景鼠标互动开关（桌面模式）----
-  bgMouseInteraction: true, // true=现状（背景可拖拽/手势）；false=桌面模式（点击穿透，只有模型和椭圆按钮可交互）
+  bgMouseInteraction: true, // true=现状（背景可拖拽/手势）；false=桌面模式（点击穿透，只有模型和展开的对话框可交互）
   normalWinBounds: null, // 进入桌面模式前，真实窗口的位置/大小，退出时原样恢复
 };
 

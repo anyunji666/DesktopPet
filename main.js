@@ -13,6 +13,7 @@ const ROOT = __dirname;
 const { startServer } = require('./main-modules/server');
 const geminiRelay = require('./main-modules/gemini-relay');
 const { state } = require('./main-modules/state');
+const { constrainMove, constrainResize } = require('./main-modules/win-limit');
 const { loadConfig, updateConfig } = require('./main-modules/config');
 const { scanCharacters } = require('./main-modules/character');
 const { scanScenes, setAdjust, normAdjust } = require('./main-modules/scene');
@@ -61,7 +62,7 @@ const {
   WIN_H,
   WIN_MIN_W,
   WIN_MAX_W,
-  isDesktopViewportValid,
+  computeDesktopLayout,
   openSettingsWindow,
   openHistoryWindow,
   send,
@@ -187,27 +188,27 @@ async function createWindow() {
     width: initW,
     height: initH,
   };
-  state.normalWinBounds = normalBounds;
 
   // 背景鼠标互动：上次关闭时是什么状态，这次就从什么状态开始
   state.bgMouseInteraction = cfg.bgMouseInteraction !== false;
 
-  // 桌面模式下直接按目标屏幕的工作区创建窗口（而不是先建正常小窗口再跳变到全屏），
-  // 避免启动瞬间闪一下；虚拟视口的初始位置/大小随 init 一起下发给渲染进程
+  // 桌面模式下直接按桌面布局创建窗口（而不是先建正常小窗口再跳变），避免启动瞬间闪一下。
+  // 布局算法跟运行中切换进入桌面模式共用 computeDesktopLayout：模型视口 = 普通窗口的位置/大小，
+  // 窗口只在纵向展开。没有保存过位置时，普通窗口原本是交给系统居中的，但桌面布局需要确切坐标，
+  // 这里按主屏工作区手动居中，效果一致，退出桌面模式时也恢复到这个位置
+  if (!state.bgMouseInteraction && normalBounds.x === undefined) {
+    const wa = screen.getPrimaryDisplay().workArea;
+    normalBounds.x = Math.round(wa.x + (wa.width - normalBounds.width) / 2);
+    normalBounds.y = Math.round(wa.y + (wa.height - normalBounds.height) / 2);
+  }
+  state.normalWinBounds = normalBounds;
+
   let createBounds = normalBounds;
   let initialDesktopViewport = null;
   if (!state.bgMouseInteraction) {
-    const anchor = useSavedPos ? { x: savedPos.x, y: savedPos.y } : { x: 0, y: 0 };
-    const wa = screen.getDisplayNearestPoint(anchor).workArea;
-    createBounds = { x: wa.x, y: wa.y, width: wa.width, height: wa.height };
-    initialDesktopViewport = isDesktopViewportValid(cfg.desktopViewport)
-      ? cfg.desktopViewport
-      : {
-          x: (normalBounds.x ?? wa.x) - wa.x,
-          y: (normalBounds.y ?? wa.y) - wa.y,
-          width: normalBounds.width,
-          height: normalBounds.height,
-        };
+    const layout = computeDesktopLayout(normalBounds);
+    createBounds = layout.bounds;
+    initialDesktopViewport = layout.viewport;
   }
 
   state.win = new BrowserWindow({
@@ -298,10 +299,18 @@ ipcMain.on('model-ready', async () => {
   updateConfig({ lastBootAtMs: bootAtMs, bootIntroShown: true });
 });
 
+// 所有显示器的工作区（已排除任务栏），供窗口位置限制使用
+function getWorkAreas() {
+  return screen.getAllDisplays().map((d) => d.workArea);
+}
+
 ipcMain.on('window-move', (_e, dx, dy) => {
   if (!state.win || state.bgMouseInteraction === false) return;
-  const [x, y] = state.win.getPosition();
-  state.win.setPosition(x + Math.round(dx), y + Math.round(dy));
+  // 位置限制：窗口中间一半的区域不能移出屏幕工作区（多显示器合并计算，详见 win-limit.js）；
+  // 被限制住的那部分位移直接丢弃
+  const cur = state.win.getBounds();
+  const pos = constrainMove(cur, Math.round(dx), Math.round(dy), getWorkAreas());
+  state.win.setPosition(pos.x, pos.y);
 });
 
 // 缩放：渲染进程只上报"鼠标相对按下时的水平位移"，尺寸和宽高比全部在这里算
@@ -314,23 +323,18 @@ ipcMain.on('window-resize-by', (_e, dx) => {
   if (!state.win || state.bgMouseInteraction === false || !Number.isFinite(dx)) return;
   const w = Math.max(WIN_MIN_W, Math.min(WIN_MAX_W, Math.round(state.resizeStartW + dx)));
   const h = Math.round((w * WIN_H) / WIN_W);
-  state.win.setBounds({ width: w, height: h });
+  // 缩放时左上角不动、向右下放大，窗口变大后中间区域可能被推出工作区，这里一并限制
+  const cur = state.win.getBounds();
+  const pos = constrainResize({ x: cur.x, y: cur.y, width: w, height: h }, getWorkAreas());
+  state.win.setBounds({ x: pos.x, y: pos.y, width: w, height: h });
 });
 
-// 桌面模式下，渲染进程每次"是否悬停在模型/椭圆按钮/展开的对话框上"这个判定结果变化时上报一次
+// 桌面模式下，渲染进程每次"是否悬停在模型/展开的对话框上"这个判定结果变化时上报一次
 // （不是每帧都发，见 app.js 里的防抖），据此切换窗口是否穿透鼠标事件。
 // 非桌面模式下这个开关本来就没打开，忽略即可，不需要额外判断。
 ipcMain.on('set-click-through', (_e, ignore) => {
   if (!state.win || state.win.isDestroyed() || state.bgMouseInteraction) return;
   state.win.setIgnoreMouseEvents(!!ignore, { forward: true });
-});
-
-// 桌面模式下拖拽/缩放虚拟视口，松手后把结果存下来，下次进入桌面模式/下次启动都还原成这个样子
-ipcMain.on('save-desktop-viewport', (_e, viewport) => {
-  if (!viewport || typeof viewport !== 'object') return;
-  const { x, y, width, height } = viewport;
-  if (![x, y, width, height].every(Number.isFinite)) return;
-  updateConfig({ desktopViewport: { x, y, width, height } });
 });
 
 ipcMain.on('scene-adjust-save', (_e, name, adj) => {
@@ -669,7 +673,7 @@ app.on('window-all-closed', () => app.quit());
 // 退出前记住主窗口位置，下次启动原样恢复；随后强制销毁窗口，防止渲染进程卡住
 // （WebGL 资源释放慢）拖着整个进程退不干净。注意：任务管理器强杀/断电这类非正常退出不会走到这里，
 // 那种情况下位置就不会更新，这是可以接受的取舍。
-// 桌面模式下真实窗口的位置/大小是被临时放大的那一份（纵向铺满屏幕工作区），不是用户认知里
+// 桌面模式下真实窗口的位置/大小是被临时纵向展开的那一份，不是用户认知里
 // "普通模式窗口"该在的地方——这时候不能存窗口当前的实际 bounds，要存 state.normalWinBounds
 // （切换进桌面模式前记下的那份快照），不然下次启动或者切回普通模式时就会用错位置。
 app.on('before-quit', () => {

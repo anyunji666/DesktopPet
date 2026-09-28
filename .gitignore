@@ -4,5 +4,5 @@ dist/
 .DS_Store
 
 # 本地调试/开发用，不进公开仓库
-CHANGELOG.md
+代码组织与重构记录.md
 tools/
