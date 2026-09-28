@@ -12,7 +12,7 @@ const pkg = require('../package.json');
 const ROOT = path.join(__dirname, '..');
 
 // ---------- 关于：作者 / 版本 / GitHub 地址，读 package.json 里的 author / homepage，只在这里维护一份 ----------
-const APP_VERSION_LABEL = `${pkg.version} 测试版`;
+const APP_VERSION_LABEL = pkg.version;
 const APP_REPO_URL = pkg.homepage || '';
 
 function showAboutDialog() {

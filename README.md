@@ -4,7 +4,7 @@
 以及接 LLM 实现按天记忆的对话功能。
 
 - **作者**：安运
-- **版本**：0.1.0 测试版
+- **版本**：0.1.6
 - **GitHub**：https://github.com/anyunji666/DesktopPet
 
 ## 运行
