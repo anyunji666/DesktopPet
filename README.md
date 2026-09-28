@@ -23,7 +23,11 @@ macOS / Linux 用户用 `mac或linux启动.sh`。
 ## 目录说明
 
 - `Character/`：角色模型（.pmx）及配套语音、台词、骨骼屏蔽等配置
-- `Scene/`：可选的背景场景，见 `Scene/README.md`
+- `Scene/`：可选的背景场景，背景调整方法见 `Scene/背景调整说明.md`
 - `Actions/`：动作/舞蹈动画文件
 - `main-modules/`：Electron 主进程，按领域拆分（配置、聊天记录、LLM、窗口菜单等）
 - `public/`：渲染进程页面与前端逻辑
+
+## 自定义素材
+
+添加角色、场景、舞蹈的方法见 [素材添加说明](素材添加说明.md)。

@@ -1,7 +1,7 @@
 // ---------- 扫描场景（Scene/<场景名>/） ----------
 // 每个场景文件夹里：
 //   - 自动选用最大的 .pmx / .pmd / .glb / .gltf 作为场景本体（可在 scene.json 的 model 字段里指定）
-//   - 可选的 scene.json 用来描述缩放/位置/背景/灯光/镜头等，详见 Scene/README.md
+//   - 可选的 scene.json 用来描述缩放/位置/背景/灯光/镜头等，详见 Scene/背景调整说明.md
 //   - 没有模型但有 scene.json 也可以，那就是纯"背景 + 灯光"场景
 const fs = require('fs');
 const path = require('path');
