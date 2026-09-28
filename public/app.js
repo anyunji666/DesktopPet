@@ -299,10 +299,10 @@ document.addEventListener('mouseup', (e) => {
   if (!dragging && !rotating) return;
   dragging = false;
   rotating = false;
-  // 开场舞循环期间也允许点击出对话气泡，其他舞蹈中不响应。
+  // 只有待机姿态和待机动画下才响应点击（出对话气泡 + 台词语音），其他舞蹈（含开场舞、退场舞）中不响应。
   // e.detail === 1 才是"单独一次点击"；双击时这里会先后收到 detail 1、2 两次 mouseup，
   // detail 2（双击的第二下）交给下面的 dblclick 处理，这里跳过，避免连续弹两条随机台词
-  if (moved < 6 && downOnModel && (!state.danceMode || state.entranceMode) && e.detail === 1) {
+  if (moved < 6 && downOnModel && (!state.danceMode || state.idleAnim) && e.detail === 1) {
     if (state.quotes.length) {
       const i = Math.floor(Math.random() * state.quotes.length);
       showBubble(state.quotes[i]);
@@ -319,8 +319,8 @@ document.addEventListener('contextmenu', (e) => {
 
 document.addEventListener('dblclick', (e) => {
   if (!hitModel(e)) return;
-  // 与单击气泡的保护逻辑保持一致：跳舞时不响应双击，开场舞循环期间除外
-  if (state.danceMode && !state.entranceMode) return;
+  // 与单击气泡的保护逻辑保持一致：跳舞时不响应双击，待机动画期间除外
+  if (state.danceMode && !state.idleAnim) return;
   e.preventDefault();
   showChatBox();
 });
@@ -456,7 +456,7 @@ function animate() {
       resettlePhysics(physicsObj);
       state.helper.enable('physics', true);
     }
-    // 循环动作（开场舞/待机）在这一帧会不会跨过循环点，先记一下当前时间
+    // 循环动作（待机动画）在这一帧会不会跨过循环点，先记一下当前时间
     const la = state.loopingAction;
     const prevT = la ? la.time : null;
     state.helper.update(dt);

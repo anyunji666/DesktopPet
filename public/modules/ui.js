@@ -24,10 +24,16 @@ function unduckMusic() {
   duckOrigVolume = null;
 }
 
-// 播台词 / AI 回复语音；舞蹈音乐正在放时先压低音量，语音播完恢复（开场舞循环期间点角色说话也能听清）。
+// 播台词 / AI 回复语音；舞蹈音乐正在放时先压低音量，语音播完恢复。
+// （角色语音现在只在待机时播，待机动画本身没有音乐，所以压低音乐的分支基本不会再触发，保留作兜底）
 // opts.onMetadata(duration)：拿到时长时回调（AI 回复用它把气泡延长到语音结束）；opts.onEnd：播完或出错时回调
+// 角色语音只在待机时播（待机姿态 / 待机动画）：普通舞蹈、退场舞（含加载动作的间隙）期间一律不播
+export function canPlayVoice() {
+  return !state.exitInProgress && !(state.danceMode && !state.idleAnim);
+}
+
 export function playVoice(url, opts = {}) {
-  if (!url) return;
+  if (!url || !canPlayVoice()) return;
   voiceAudio.pause();
   voiceAudio.onended = voiceAudio.onerror = voiceAudio.onloadedmetadata = null;
   voiceAudio.src = url;
@@ -44,7 +50,7 @@ export function playVoice(url, opts = {}) {
   voiceAudio.play().catch(() => {});
 }
 
-// 立刻停掉当前语音（切角色时用），同时恢复被压低的舞蹈音乐
+// 立刻停掉当前语音（切角色 / 退场 / 开始跳舞时用），同时恢复被压低的舞蹈音乐
 export function stopVoice() {
   voiceAudio.pause();
   voiceAudio.onended = voiceAudio.onerror = voiceAudio.onloadedmetadata = null;

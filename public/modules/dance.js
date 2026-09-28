@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { MMDAnimationHelper } from 'three/addons/animation/MMDAnimationHelper.js';
 import { state, clock, loader, tmpV, audio, setGazeCenter } from './state.js';
 import { PHYSICS_CFG, ensureAmmo, applyPhysicsCfg, trackAmmoObjectsDuring, trackPhysicsObjects, disposePhysics, resettlePhysics } from './physics.js';
-import { showBubble, showLoading, hideLoading } from './ui.js';
+import { showBubble, showLoading, hideLoading, stopVoice } from './ui.js';
 
 // 待机动画：点"待机"或舞蹈播完后，循环播放指定舞蹈（可用 from/to 截片段，帧区间按 30fps 计）。
 // 片段建议选原地不动的部分；
@@ -18,7 +18,7 @@ const IDLE_DANCE = { name: '生气了亲一下就哄好了' }; // 生气抱臂�
 const PHYSICS_ENGAGE_DELAY = 0.6;
 
 // 特殊动作：不出现在右键菜单里，由程序自动使用
-// 开场舞：打开软件/切换角色后自动循环播放，点"待机"才回待机姿态
+// 开场舞：切换角色后自动播放一次，播完回待机动画（程序刚打开时跳过，直接待机）
 // 退场舞：切换角色时给旧角色播一次，播完才卸载旧模型
 export const ENTRANCE_DANCE_NAME = 'Stay Tonight';
 export const EXIT_DANCE_NAME = '张元英转圈';
@@ -27,7 +27,7 @@ export function stopDance() {
   state.danceMode = false;
   state.danceEndAt = Infinity;
   state.danceEndCallback = null;
-  state.entranceMode = false;
+  state.idleAnim = false;
   state.physicsEnableAt = null; // 换动作了，之前那次"延迟接管物理"的计时作废，helper 也会被下面整个重建
   audio.pause();
   audio.currentTime = 0;
@@ -74,6 +74,7 @@ export function playIdle() {
     keepHint: true,
     noFollow: true,
     gazeCenter: false, // 待机动画属于待机：视线基准留在脸高，不移到模型中心
+    idle: true, // 标记这是待机动画：期间允许播角色语音，其他动作一律打断并禁止
   });
 }
 
@@ -93,13 +94,15 @@ export function recoverFromDanceFailure(opts) {
   if (opts && opts.onEnd) opts.onEnd(); // 退场舞是切换角色用的：哪怕它失败了，切换本身也要继续
 }
 
-// opts.loop: 循环播放（开场舞/待机动画），不自动回待机；opts.onEnd: 播完一次后的回调（退场舞）
+// opts.loop: 循环播放（目前只有待机动画用），不自动回待机；opts.onEnd: 播完一次后的回调（退场舞）
 // opts.clipFrom/clipTo: 只播放帧区间片段；opts.silent: 静音；opts.keepHint: 保留说明文字；opts.noFollow: 不跟随镜头
+// opts.idle: 这是待机动画（允许角色语音；非待机动作会打断并禁止语音）
 // opts.gazeCenter: 视线基准移到模型几何中心（默认 true，即所有非待机动作）；待机动画传 false 保持脸高
 export function playDance(index, opts = {}) {
   if (!state.mesh || !state.dances[index]) return;
   if (state.loadingDance) return; // 动作加载中，忽略重复点击
   clearTimeout(state.pendingDanceTimer);
+  if (!opts.idle) stopVoice(); // 切舞 / 退场舞：立刻打断正在播的角色语音（待机动画不打断）
   const d = state.dances[index];
 
   const startLoad = async () => {
@@ -202,16 +205,17 @@ export function playDance(index, opts = {}) {
             state.followSmooth.z = tmpV.z;
           }
           state.danceMode = true;
+          state.idleAnim = !!opts.idle;
+          if (!opts.idle) stopVoice(); // 加载动作期间新到的语音，动作正式开始时也一并打断
           // 非待机动作（开场舞/普通舞/退场舞）：视线基准移到模型中心；待机动画保持脸高
           setGazeCenter(opts.gazeCenter !== false);
           document.getElementById('hint').style.display = opts.keepHint ? 'block' : 'none'; // 跳舞时隐藏说明文字
           // 普通舞：播完一次就回待机，LoopOnce 停在末帧，
           // 由 animate() 顶层计时统一触发 stopDance（避免在 mixer.update 内部处理，时序不可靠）。
-          // 开场舞（opts.loop）：LoopRepeat 一直循环，直到用户点"待机"。
+          // 待机动画（opts.loop）：LoopRepeat 一直循环，直到用户切到别的动作。
           const mixer = state.helper.objects.get(state.mesh).mixer;
           const act = mixer.clipAction(clip);
           state.danceEndCallback = opts.onEnd || null;
-          state.entranceMode = !!opts.loop;
           if (opts.loop) {
             act.setLoop(THREE.LoopRepeat, Infinity);
             state.danceEndAt = Infinity;
