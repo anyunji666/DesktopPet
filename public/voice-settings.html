@@ -94,7 +94,7 @@
 
   <!-- ===== 豆包 ===== -->
   <div class="panel" id="panel-doubao">
-    <div class="section-title">豆包 · 服务商密钥 <span style="font-weight: normal; color: #999;">（所有角色共用）</span></div>
+    <div class="section-title">豆包 · 服务商密钥 <span style="font-weight: normal; color: #999;">（全局共享）</span></div>
     <label>App ID</label>
     <input id="doubao_app_id" placeholder="火山引擎语音合成的 App ID" />
     <label>Access Key</label>
@@ -135,12 +135,11 @@
 
   <!-- ===== MiMo ===== -->
   <div class="panel" id="panel-mimo">
-    <div class="section-title">MiMo · 服务商设置 <span style="font-weight: normal; color: #999;">（所有角色共用）</span></div>
+    <div class="section-title">MiMo · 服务商设置 <span style="font-weight: normal; color: #999;">（全局共享）</span></div>
     <label>API Key</label>
     <input id="mimo_api_key" type="password" placeholder="MiMo API Key" />
     <label>Base URL</label>
     <input id="mimo_base_url" placeholder="https://api.xiaomimimo.com/v1" />
-    <p class="tip">返回的合成音频固定用 mp3（体积小、传输快，语音本来也不落地存储，不用为音质纠结）。</p>
 
     <div class="section-title">MiMo · 此角色的音色</div>
     <label>音色来源</label>
@@ -169,7 +168,6 @@
     <button id="save-btn" type="button">保存</button>
   </div>
   <div id="status"></div>
-  <p class="tip" style="margin-top: 14px;">朗读时，只有「」包裹的对话内容会发给所选服务商合成语音；*星号包裹的内心独白* 和没有符号的旁白都不会朗读。密钥保存在本机 config.json 里，和 API 设置一致。</p>
 
 <script>
   const $ = (id) => document.getElementById(id);
