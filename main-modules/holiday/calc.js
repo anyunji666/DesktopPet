@@ -81,7 +81,7 @@ function buildFestivalTag(timeText) {
   const monthDays = daysInMonth(parsed.year, parsed.month);
   const suffix = buildHolidaySuffix(date0);
 
-  return `<${TAG_NAME}>\n<!-- 故事当前日期（取自上一轮摘要的"故事时间"）的星期，以及当天和临近两天的节日，仅供参考，不必每轮提及 -->\n${parsed.year}年${parsed.month}月${parsed.day}日 是 星期${weekday}（本月共${monthDays}天）${suffix}\n</${TAG_NAME}>`;
+  return `<${TAG_NAME}>\n<!-- 上述最近的故事时间的星期，以及节日播报，仅供剧情参考 -->\n${parsed.year}年${parsed.month}月${parsed.day}日 是 星期${weekday}（本月共${monthDays}天）${suffix}\n</${TAG_NAME}>`;
 }
 
 module.exports = { buildFestivalTag, parseStoryDate, buildHolidaySuffix, TAG_NAME };
