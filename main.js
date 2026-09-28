@@ -14,6 +14,8 @@ const { startServer } = require('./main-modules/server');
 const geminiRelay = require('./main-modules/gemini-relay');
 const { state } = require('./main-modules/state');
 const { constrainMove, constrainResize } = require('./main-modules/win-limit');
+const { beginChat, endChat, getChatPending, assertHistoryEditable } = require('./main-modules/chat-lock');
+const { planCrossDaySummary, runChatTurn } = require('./main-modules/chat-turn');
 const { loadConfig, updateConfig } = require('./main-modules/config');
 const { scanCharacters } = require('./main-modules/character');
 const { scanScenes, setAdjust, normAdjust } = require('./main-modules/scene');
@@ -22,41 +24,21 @@ const {
   savePersonaFile,
   loadChatHistory,
   saveChatHistory,
-  saveChatImage,
   readChatImageDataURL,
   deleteChatImage,
   clearChatImages,
-  loadDaySummary,
-  saveDaySummary,
   clearDaySummaries,
-  appendMemoryLines,
   clearMemoryIndex,
   clearOpenedDay,
 } = require('./main-modules/chat-store');
-const { getTtsConfig, saveTtsConfig, getPresets, speakReply, testVoice } = require('./main-modules/tts');
+const { getTtsConfig, saveTtsConfig, getPresets, testVoice } = require('./main-modules/tts');
 const { getAsrConfig, saveAsrConfig } = require('./main-modules/asr/config');
 const { createAsrSession } = require('./main-modules/asr/doubao');
-const { splitTone } = require('./main-modules/tts/tone');
 const { importCloneAudio, AUDIO_EXTENSIONS } = require('./main-modules/tts/clone-store');
 const doubaoVoicesStore = require('./main-modules/tts/doubao-voices-store');
-const {
-  getApiConfig,
-  saveApiConfig,
-  getPromptConfig,
-  savePromptConfig,
-  buildPromptText,
-  stripMetaForHistory,
-  splitTurnSummary,
-  callLLM,
-  fetchModelList,
-  dayKeyOf,
-  computeLastPastDayKey,
-  flattenDayLines,
-  buildSummaryPrompt,
-  parseSummaryAndMemory,
-  setLlmLogListener,
-  getLatestLlmCall,
-} = require('./main-modules/llm');
+const { getApiConfig, saveApiConfig, getPromptConfig, savePromptConfig } = require('./main-modules/llm');
+const { splitTurnSummary } = require('./main-modules/history-flatten');
+const { fetchModelList, setLlmLogListener, getLatestLlmCall } = require('./main-modules/llm-client');
 const {
   WIN_W,
   WIN_H,
@@ -66,7 +48,6 @@ const {
   getAboutInfo,
   openRepoUrl,
   toggleDevEntries,
-  openSettingsWindow,
   openHistoryWindow,
   send,
   currentCharacterPayload,
@@ -362,9 +343,11 @@ ipcMain.on('show-menu', () => {
 });
 
 // ---------- IPC：AI 对话 ----------
-// imageDataURL 可选：用户随这条消息发的图片（选文件/粘贴/截图）。图片会：
-// 1) 存进 chat-history/images/<角色>/，消息里记文件名（记录窗口里能回看）
-// 2) vision 开启时按 OpenAI 视觉格式随本轮消息直发给模型；关闭时只以 "[图片]" / 用户附言的文字形式进 prompt
+// 一次只能发一条：chat-send 开头上锁（chat-lock.js），LLM 回复且落盘/报错之后才解锁，
+// 期间主界面和聊天记录窗口的发送都被禁用，同一角色的聊天记录也不允许编辑/插入/删除/清空。
+// 这里只做 IPC 层（校验 / 上锁 / 解锁 / 推送）；一轮对话本身怎么跑（跨天摘要 -> 存图 -> 拼 prompt ->
+// 调 LLM -> 落盘 -> TTS）在 main-modules/chat-turn.js。
+
 ipcMain.handle('chat-send', async (e, characterName, message, imageDataURL) => {
   if (typeof characterName !== 'string' || !state.characters.some((c) => c.name === characterName)) {
     throw new Error('未知角色');
@@ -372,102 +355,36 @@ ipcMain.handle('chat-send', async (e, characterName, message, imageDataURL) => {
   const text = typeof message === 'string' ? message.trim() : '';
   if (!text && !imageDataURL) throw new Error('消息不能为空');
 
-  const history = loadChatHistory(characterName);
-
-  // 跨天了：本轮消息和历史最后一条不是同一天，说明"旧的上一个封存包"要从"上一个封存包"退到"更早"了，
-  // 退之前先把那天摘要好、缓存起来（没缓存过才需要摘）。这次摘要调用和下面生成回复的调用串行执行，
-  // 不并发；摘要这次要是失败了（网络/接口报错），直接抛出去，本轮不生成回复、不落历史，跟 callLLM
-  // 本身失败的表现一致。
-  if (history.length) {
-    const lastMsgDayKey = dayKeyOf(history[history.length - 1].ts || Date.now());
-    const nowDayKey = dayKeyOf(Date.now());
-    if (nowDayKey !== lastMsgDayKey) {
-      const dayToSummarize = computeLastPastDayKey(history, lastMsgDayKey);
-      if (dayToSummarize && !loadDaySummary(characterName, dayToSummarize)) {
-        const dayLines = flattenDayLines(characterName, history, dayToSummarize);
-        if (dayLines.length) {
-          const summaryPrompt = buildSummaryPrompt(characterName, dayToSummarize, dayLines);
-          const rawSummary = await callLLM(
-            [{ role: 'user', content: summaryPrompt }],
-            `摘要生成 - ${characterName}`
-          );
-          const { summary, memoryLines } = parseSummaryAndMemory(rawSummary);
-          saveDaySummary(characterName, dayToSummarize, summary || rawSummary.trim());
-          if (memoryLines.length) appendMemoryLines(characterName, memoryLines);
-        }
-      }
-    }
-  }
-
-  // 先落图片文件，再拼 prompt（vision 模式需要 dataURL，拼完就能丢掉）
-  let imageFile = null;
-  if (imageDataURL) imageFile = saveChatImage(characterName, imageDataURL);
-
-  // 摊平历史时本轮图片还没进 history，这里给 user_input 的文字部分兜底：
-  // 和 flattenChatHistory 里历史消息的处理方式一致，带图就标 [图片:文件名]，有配文字再拼在后面
-  const imageTag = imageFile ? `[图片:${imageFile}]` : '';
-  const inputText = imageTag ? (text ? `${imageTag} ${text}` : imageTag) : text;
-  const promptText = buildPromptText(characterName, history, inputText);
-
-  // vision 开启且带了图：文字 + 图片按 OpenAI 视觉 content 数组发送
-  const messages = [{ role: 'user', content: promptText }];
-  if (imageFile && getApiConfig().vision) {
-    messages[0].content = [
-      { type: 'text', text: promptText },
-      { type: 'image_url', image_url: { url: imageDataURL } },
-    ];
-  }
-
-  // 回复末尾会带一个 <story_overview> 摘要块（给历史轮次压缩用），摘要块前面可能还有一句【配音语气】。
-  // 必须先摘掉摘要块，剩下的部分再拆语气——如果先拆语气，摘要块跟在语气后面，语气就不是字符串真正的
-  // 末尾了，splitTone 那个"只匹配末尾"的正则会直接匹配失败，语气解析会静默失效。
-  const rawReply = await callLLM(messages, `对话回复 - ${characterName}`);
-  const { body: replyBody, summaryBlock } = splitTurnSummary(rawReply);
-  // 摘要块 / 语气都不该进气泡、聊天记录、IPC 返回值：拆完之后 reply 就是干净正文，气泡 / TTS / 返回值都用它
-  const { text: reply, tone } = splitTone(characterName, replyBody);
-
-  // 只过滤"落档/回填给模型下一轮"这份记录：括号包裹的元指令/元回复属于 OOC 内容，不算剧情，
-  // 不应该沉淀进长期聊天记录、也不该在后续轮次里当成故事历史又发回模型。
-  // 本轮气泡显示（下面的 reply）、TTS 朗读、这次 IPC 的返回值都仍然用未过滤的原文，用户照常能看到。
-  const userContentForHistory = stripMetaForHistory(text);
-  const replyTextForHistory = stripMetaForHistory(reply);
-  // 摘要块重新拼回存档内容末尾——flattenChatHistory 做轮次压缩要靠它才能把老轮次换成摘要；
-  // 语气【】不拼回去，跟现在的设计一致：语气只给 TTS 用，不落档、也不发回模型
-  const replyContentForHistory = summaryBlock ? `${replyTextForHistory}\n${summaryBlock}` : replyTextForHistory;
-  // 过滤后文字和图片都没有了，说明这一条整个是纯元指令/元回复的 OOC 对话，不值得占历史一条，直接跳过不存
-  if (userContentForHistory || imageFile) {
-    history.push({ role: 'user', content: userContentForHistory, image: imageFile, ts: Date.now() });
-  }
-  if (replyTextForHistory) {
-    history.push({ role: 'assistant', content: replyContentForHistory, ts: Date.now() });
-  }
-  saveChatHistory(characterName, history);
-
-  // 朗读 AI 回复：不 await——文字气泡照常立即显示，语音合成好了再通过 'play-tts' 推给宠物窗口。
-  // 放在这里，主窗口和聊天记录窗口发起的对话都会走到，不用两处各接一遍
-  speakReply(characterName, reply, tone);
-
-  // 主窗口自己发起的对话，气泡由渲染进程本地展示（app.js 里 chatSend 之后直接 showBubble）。
-  // 这里只处理"别的窗口（比如聊天记录窗口）发起的对话"：额外把回复推给主宠物窗口头顶显示一下。
+  // === 上锁 ===
+  // 已经有一条在等回复时 beginChat 会直接抛错，本次发送被拒绝（不影响正在进行的那一条）
+  // 先判断要不要做跨天摘要，锁一开始就带上对应阶段（同步、无 await，判断到上锁之间不会有别的改动插进来）
+  const summaryPlan = planCrossDaySummary(characterName);
   const fromMainWindow = state.win && !state.win.isDestroyed() && e.sender === state.win.webContents;
-  if (!fromMainWindow) send('show-bubble', reply);
+  beginChat({
+    character: characterName,
+    source: fromMainWindow ? 'main' : 'history',
+    user: text,
+    imageDataURL,
+    phase: summaryPlan ? 'summarizing' : 'waiting',
+  });
 
-  // 双向同步：主窗口发起的对话，推给聊天记录窗口实时追加显示。
-  // 记录窗口自己发起的对话本地已 appendMsg，推回去会重复，所以只在 fromMainWindow 时推。
-  if (
-    fromMainWindow &&
-    state.historyWin && !state.historyWin.isDestroyed() &&
-    state.historyWinCharacter === characterName
-  ) {
-    state.historyWin.webContents.send('chat-updated', {
-      character: characterName,
-      user: text,
-      reply,
-      image: imageFile ? readChatImageDataURL(characterName, imageFile) : null,
-    });
+  // === 跑一轮对话，成功/失败都要解锁 ===
+  let turn;
+  try {
+    turn = await runChatTurn(characterName, text, imageDataURL, summaryPlan);
+  } catch (err) {
+    endChat({ ok: false });
+    throw err;
   }
+  endChat({ ok: true, committed: turn.committed, startIndex: turn.startIndex });
 
-  return reply;
+  // 主窗口自己发起的对话，气泡由渲染进程本地展示（chat.js 里 chatSend 之后直接 showBubble）；
+  // 聊天记录窗口发起的对话，额外把回复推给主宠物窗口头顶显示一下。
+  // （聊天记录窗口里的消息不再靠这里推送：发出时的临时气泡、落盘后的正式消息，
+  //  都由 chat-lock.js 的 chat-pending-changed / chat-settled 事件统一处理，两个窗口发起的对话走同一条路径）
+  if (!fromMainWindow) send('show-bubble', turn.reply);
+
+  return turn.reply;
 });
 
 ipcMain.handle('get-api-config', () => getApiConfig());
@@ -508,6 +425,8 @@ ipcMain.handle('save-persona', (_e, characterName, system, storyBackground) => {
   return true;
 });
 ipcMain.handle('fetch-model-list', (_e, apiUrl, apiKey) => fetchModelList(apiUrl, apiKey));
+// 窗口刚打开时查一下当前有没有在等回复的对话（之后的变化走 chat-pending-changed 推送）
+ipcMain.handle('get-chat-pending', () => getChatPending());
 ipcMain.handle('get-chat-history', (_e, characterName) => {
   if (typeof characterName !== 'string') return [];
   return loadChatHistory(characterName).map((m) => ({
@@ -634,6 +553,7 @@ function validCharacter(characterName) {
 
 ipcMain.handle('edit-chat-message', (_e, characterName, index, content) => {
   if (!validCharacter(characterName)) throw new Error('未知角色');
+  assertHistoryEditable(characterName); // 正在等这个角色的回复时不允许改记录
   if (!Number.isInteger(index) || index < 0) throw new Error('无效的消息索引');
   const text = typeof content === 'string' ? content.trim() : '';
   if (!text) throw new Error('消息不能为空');
@@ -647,6 +567,7 @@ ipcMain.handle('edit-chat-message', (_e, characterName, index, content) => {
 
 ipcMain.handle('add-chat-message', (_e, characterName, role, content) => {
   if (!validCharacter(characterName)) throw new Error('未知角色');
+  assertHistoryEditable(characterName); // 正在等这个角色的回复时不允许改记录
   if (role !== 'user' && role !== 'assistant') throw new Error('无效的消息身份');
   const text = typeof content === 'string' ? content.trim() : '';
   if (!text) throw new Error('消息不能为空');
@@ -660,6 +581,7 @@ ipcMain.handle('add-chat-message', (_e, characterName, role, content) => {
 
 ipcMain.handle('delete-chat-message', (_e, characterName, index) => {
   if (!validCharacter(characterName)) throw new Error('未知角色');
+  assertHistoryEditable(characterName); // 正在等这个角色的回复时不允许改记录
   if (!Number.isInteger(index) || index < 0) throw new Error('无效的消息索引');
 
   const history = loadChatHistory(characterName);
@@ -672,6 +594,7 @@ ipcMain.handle('delete-chat-message', (_e, characterName, index) => {
 
 ipcMain.handle('clear-chat-history', (_e, characterName) => {
   if (!validCharacter(characterName)) throw new Error('未知角色');
+  assertHistoryEditable(characterName); // 正在等这个角色的回复时不允许改记录
   saveChatHistory(characterName, []);
   clearChatImages(characterName); // 图片文件夹整个清掉
   clearDaySummaries(characterName); // 按天摘要缓存也一起清掉

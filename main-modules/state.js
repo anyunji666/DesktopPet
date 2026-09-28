@@ -12,6 +12,7 @@ const state = {
   settingsWin: null, // API 设置窗口
   historyWin: null, // 聊天记录窗口
   historyWinCharacter: null, // 聊天记录窗口当前打开的角色名
+  chatPending: null, // 正在等 LLM 回复的那一轮对话（chat-lock.js 维护）；null = 空闲。{ character, source: 'main'|'history', user, imageDataURL, ts, phase: 'summarizing'|'waiting' }
   voiceWin: null, // 音色设置（语音功能）窗口
   llmLogWin: null, // LLM 调用记录窗口（审查用，替代原来 cmd 窗口里打印的方式）
   aboutWin: null, // 关于窗口（连续点版本号 6 次可切换下面的 showDevEntries）

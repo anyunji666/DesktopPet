@@ -56,8 +56,15 @@ contextBridge.exposeInMainWorld('petAPI', {
   notifyModelReady: () => ipcRenderer.send('model-ready'),
   // 主进程推送：开机自启动计时气泡（3 秒后自动消失，和普通对话气泡分开一个通道，时长不同）
   onBootTimerBubble: (cb) => ipcRenderer.on('boot-timer-bubble', (_e, text) => cb(text)),
-  // 主进程推送：主窗口发起的对话完成，聊天记录窗口据此实时追加消息
-  onChatUpdated: (cb) => ipcRenderer.on('chat-updated', (_e, data) => cb(data)),
+  // ---- 一次只能发一条（锁在主进程 chat-lock.js）----
+  // 当前有没有在等回复的对话：窗口刚打开时查一次，之后的变化靠下面的推送。返回 null 或
+  // { character, source: 'main'|'history', user, imageDataURL, ts }
+  getChatPending: () => ipcRenderer.invoke('get-chat-pending'),
+  // 主进程推送：有一条消息发出去开始等回复 / 回复落盘或报错后解锁（payload 为 null）。
+  // 主窗口收到的只有 { character, source }；聊天记录窗口收到完整内容，用来显示"发出即显示"的临时气泡
+  onChatPendingChanged: (cb) => ipcRenderer.on('chat-pending-changed', (_e, data) => cb(data)),
+  // 主进程推送（仅聊天记录窗口）：这轮结束了。ok=true 时带上实际落盘的消息 committed 和起始下标 startIndex
+  onChatSettled: (cb) => ipcRenderer.on('chat-settled', (_e, data) => cb(data)),
   // 聊天记录窗口的消息编辑 / 添加 / 删除 / 清空
   editChatMessage: (characterName, index, content) => ipcRenderer.invoke('edit-chat-message', characterName, index, content),
   addChatMessage: (characterName, role, content) => ipcRenderer.invoke('add-chat-message', characterName, role, content),

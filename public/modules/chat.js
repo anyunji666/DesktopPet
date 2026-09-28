@@ -9,7 +9,31 @@ const chatBox = document.getElementById('chat-box');
 const chatInput = document.getElementById('chat-input');
 const chatHistoryBtn = document.getElementById('chat-history-btn');
 let chatBoxTimer = null;
-let chatSending = false;
+// 一次只能发一条：锁在主进程（chat-lock.js），这里的两个标志只是让界面立刻做出反应——
+//   localSending：本窗口刚点了发送、等回复中（主进程的推送还没到时也能马上拦住第二次发送）
+//   remoteBusy：主进程广播"有一条消息在等回复"（包括聊天记录窗口发的那条）
+let localSending = false;
+let remoteBusy = false;
+// 主进程锁当前所处阶段：'summarizing' 跨天摘要整理中 / 'waiting' 等待回复；没人在等时为 null。
+// 本窗口刚点发送、主进程推送还没到的那一瞬间也当作 'waiting'，推送到了再按真实阶段更新
+let pendingPhase = null;
+const isBusy = () => localSending || remoteBusy;
+
+// 各阶段给人看的提示：气泡 / 输入框 placeholder
+const PHASE_BUBBLE = {
+  summarizing: '正在整理上一日对话内容，等待发送中…',
+  waiting: '等待回复中…',
+};
+const PHASE_PLACEHOLDER = {
+  summarizing: '正在整理上一日对话内容…',
+  waiting: '等待回复中…',
+};
+const currentPhase = () => (pendingPhase === 'summarizing' ? 'summarizing' : 'waiting');
+// 等回复期间的气泡：本窗口自己发的才显示（别的窗口发的，这里仍只收起输入框，不弹气泡）。
+// 时间给足（10 分钟）：摘要 + 回复可能很久，不能中途自己消失；回复/报错回来后会被新的 showBubble 覆盖
+function showPendingBubble() {
+  showBubble(PHASE_BUBBLE[currentPhase()], 10 * 60 * 1000);
+}
 
 // ---------------- 语音输入：点击🎙开始，再点一下停止，识别文字实时写回输入框 ----------------
 const micBtn = document.getElementById('mic-btn');
@@ -23,13 +47,26 @@ function resetChatBoxTimer() {
 }
 export function showChatBox() {
   chatBox.classList.add('show');
-  chatInput.disabled = false;
-  chatInput.focus(); // focus 事件里会清掉倒计时，只要输入框有光标就不会被自动收起
+  applyBusyUI();
+  if (chatInput.disabled) {
+    resetChatBoxTimer(); // 正在等回复：输入框用不了、也拿不到焦点，靠倒计时自动收起
+  } else {
+    chatInput.focus(); // focus 事件里会清掉倒计时，只要输入框有光标就不会被自动收起
+  }
 }
 export function hideChatBox() {
   clearTimeout(chatBoxTimer);
   chatBox.classList.remove('show');
   chatInput.blur();
+}
+
+// 等回复期间：输入框和🎙禁用，placeholder 提示原因；回复/报错后恢复。所有"能不能输入"都从这里统一决定
+function applyBusyUI() {
+  const busy = isBusy();
+  chatInput.disabled = busy;
+  micBtn.disabled = busy;
+  if (busy) chatInput.placeholder = PHASE_PLACEHOLDER[currentPhase()];
+  else chatInput.placeholder = chatBox.classList.contains('recording') ? '正在听，点击⏹停止…' : '想对TA说点什么…';
 }
 
 // 输入框/按钮上的鼠标操作不要冒泡到 document，否则会被当成"拖拽窗口"或触发右键菜单
@@ -104,28 +141,30 @@ chatInput.addEventListener('paste', async (e) => {
 
 // 文字输入框 / 语音识别结果，最终都走这一个函数把消息发给 LLM，共用"思考中"气泡 + 报错处理
 async function sendToAI(text, image) {
-  if ((!text && !image) || chatSending || !state.characterName) return;
-  chatSending = true;
+  if ((!text && !image) || isBusy() || !state.characterName) return;
+  localSending = true;
+  applyBusyUI();
   hideChatBox();
-  showBubble('……', 60000); // 思考中占位，回复/报错回来后会被下面的 showBubble 覆盖掉
+  showPendingBubble(); // 等待占位（随阶段变化），回复/报错回来后会被下面的 showBubble 覆盖掉
   try {
     const reply = await window.petAPI.chatSend(state.characterName, text, image);
     showBubble(reply, 5000);
   } catch (err) {
     showBubble('出错了：' + (err && err.message ? err.message : String(err)), 5000);
-    if (image) setPendingImage(image); // 失败时把图片放回预览，方便直接重发
+    // 失败时把文字和图片都放回输入框/预览区，方便直接重发（主进程那边已经把没落盘的图片文件删掉了）
+    if (text && !chatInput.value) chatInput.value = text;
+    if (image) setPendingImage(image);
   } finally {
-    chatSending = false;
-    chatInput.disabled = false;
+    localSending = false;
+    applyBusyUI();
   }
 }
 
 async function sendChatMessage() {
   const text = chatInput.value.trim();
   const image = pendingImage;
-  if ((!text && !image) || chatSending || !state.characterName) return;
+  if ((!text && !image) || isBusy() || !state.characterName) return;
   chatInput.value = '';
-  chatInput.disabled = true;
   const sendingImage = image; // 下面马上清预览，先存住
   setPendingImage(null);
   sendToAI(text, sendingImage);
@@ -137,11 +176,11 @@ function setRecordingUI(on) {
   micBtn.classList.toggle('recording', on);
   micBtn.textContent = on ? '⏹' : '🎙';
   micBtn.title = on ? '停止录音' : '语音输入';
-  chatInput.placeholder = on ? '正在听，点击⏹停止…' : '想对TA说点什么…';
+  applyBusyUI(); // placeholder 由它统一决定（等回复的提示优先于录音提示）
 }
 
 async function startVoiceInput() {
-  if (voiceState !== 'idle' || chatSending) return;
+  if (voiceState !== 'idle' || isBusy()) return;
   clearTimeout(chatBoxTimer); // 录音期间不能被"3秒无操作自动收起"打断
   voiceState = 'starting';
   setRecordingUI(true);
@@ -216,6 +255,24 @@ micBtn.addEventListener('mousedown', (e) => e.preventDefault());
 micBtn.addEventListener('click', (e) => {
   e.stopPropagation();
   toggleVoiceInput();
+});
+
+// 主进程广播：有消息在等回复（含聊天记录窗口发的）/ 已回复或报错解锁
+window.petAPI.onChatPendingChanged((pending) => {
+  remoteBusy = !!pending;
+  pendingPhase = pending ? pending.phase || 'waiting' : null;
+  if (remoteBusy) {
+    if (voiceState !== 'idle') stopVoiceInput(); // 正在录音时别人发了消息：结束录音，识别出的文字留在输入框里
+    if (!localSending) hideChatBox(); // 别的窗口发起的，跟自己发送时一样把输入框收起来
+    if (localSending) showPendingBubble(); // 自己发的：阶段变了（摘要 -> 等回复）同步刷新气泡文字
+  }
+  applyBusyUI();
+});
+// 刚加载时可能已经有一条在等回复（比如渲染进程被重载过），查一次对齐状态
+window.petAPI.getChatPending().then((pending) => {
+  remoteBusy = !!pending;
+  pendingPhase = pending ? pending.phase || 'waiting' : null;
+  applyBusyUI();
 });
 
 chatHistoryBtn.addEventListener('click', (e) => {

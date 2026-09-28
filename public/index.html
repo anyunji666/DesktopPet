@@ -148,6 +148,9 @@
     #chat-history-btn:hover, #mic-btn:hover { background: rgba(224, 64, 96, 0.1); }
     /* 录音中：麦克风按钮变红高亮，明确表示"现在点一下是停止" */
     #mic-btn.recording { background: rgba(224, 64, 96, 0.18); color: #e04060; }
+    /* 等 AI 回复期间禁用（一次只能发一条） */
+    #mic-btn:disabled { opacity: 0.35; cursor: default; background: transparent; }
+    #chat-input:disabled { cursor: default; }
     #chat-input {
       flex: 1;
       min-width: 0;
