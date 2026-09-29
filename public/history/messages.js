@@ -59,6 +59,8 @@ function buildMsgEl(role, content, ts, imageDataURL, temp) {
     const delBtn = document.createElement('button');
     delBtn.className = 'act-del';
     delBtn.textContent = '删除';
+    // 顺序：删除 / 编辑 /（AI 回复才有）重新生成
+    actions.appendChild(delBtn);
     actions.appendChild(editBtn);
     // 只有 AI 回复才有"重新生成"：删掉它前面最近一条用户输入及之后的所有消息，再把那条输入重发一遍
     if (role !== 'user') {
@@ -67,7 +69,6 @@ function buildMsgEl(role, content, ts, imageDataURL, temp) {
       regenBtn.textContent = '重新生成';
       actions.appendChild(regenBtn);
     }
-    actions.appendChild(delBtn);
     div.appendChild(actions);
   }
   return div;

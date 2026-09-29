@@ -221,29 +221,40 @@ body.edit-locked .msg-more, body.edit-locked .msg-actions { display: none !impor
 .msg-actions .act-del { color: #d33; }
 .msg.assistant .msg-actions .act-regen { color: #2a7; }
 
-/* 原地编辑态：气泡文本位置换成 textarea + 取消/保存 */
-.msg-edit { display: flex; flex-direction: column; gap: 6px; }
+/* 原地编辑态：输入框放在原文字的位置，尺寸/文字位置和原气泡一致（JS 进入编辑时设定气泡最小宽度、输入框最小高度）。
+   负 margin 正好抵消自身 padding，所以文字不会移位；line-height 继承气泡的 1.6，换行和原来一致。
+   --pl 是左侧 padding，气泡里有图片时 JS 会改小。 */
 .edit-input {
-  width: 100%;
+  --pl: 8px;
+  display: block;
+  flex: 1 1 0;
+  width: 0; /* textarea 默认宽度约 20 个字符，不置 0 会把短气泡撑宽；实际宽度由 flex 填满 */
+  min-width: 0;
   box-sizing: border-box;
   border: none;
   border-radius: 8px;
-  padding: 6px 8px;
+  padding: 6px 8px 6px var(--pl);
+  margin: -6px -8px -6px calc(-1 * var(--pl));
   font: inherit;
-  line-height: 1.5;
-  min-height: 3em;
-  resize: vertical;
+  word-break: break-word;
+  resize: none;
+  overflow: hidden;
   outline: none;
   background: rgba(255, 255, 255, 0.95);
   color: #333;
 }
-.edit-btns { display: flex; gap: 6px; }
+/* 编辑态：取消/保存 顶替底部的"时间戳 + ⋯"那一行 */
+.msg.editing .msg-foot { display: none; }
+.edit-btns { display: flex; gap: 6px; margin-top: 3px; }
 .msg.user .edit-btns { justify-content: flex-end; }
 .edit-btns button {
+  flex: none;
+  white-space: nowrap; /* 窄气泡里按钮文字不许竖着折行 */
   border: none;
   border-radius: 10px;
-  padding: 3px 12px;
+  padding: 2px 12px;
   font-size: 12px;
+  line-height: 1.4;
   cursor: pointer;
 }
 .edit-cancel { background: #f0f0f0; color: #888; }

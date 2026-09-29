@@ -7,30 +7,56 @@ import { confirmDialog } from './confirm-dialog.js';
 import { resendMessage } from './composer.js';
 import { showToast } from './toast.js';
 
+// 退出编辑态：去掉输入框和按钮行，恢复文字/时间行，清掉进入编辑时设置的气泡最小宽度
 function endEdit(row) {
-  const box = row.querySelector('.msg-edit');
-  if (box) box.remove();
-  const line = row.querySelector('.msg-line');
-  if (line) line.style.display = '';
+  row.querySelectorAll('.edit-input, .edit-btns').forEach((el) => el.remove());
+  const text = row.querySelector('.msg-text');
+  if (text) text.style.display = '';
+  row.style.minWidth = '';
   row.classList.remove('editing');
 }
 
+// 原地编辑：气泡尺寸保持和原来一样——
+// 1) 进入编辑前先量出气泡宽度和文字高度，宽度不低于原来，输入框高度不低于原文字高度；
+// 2) 输入框用负 margin 抵消自身 padding，文字位置、换行都和原来一致，进入编辑时不会跳动；
+// 3) 图片保留显示，只把文字换成输入框；
+// 4) 取消/保存按钮替换掉底部的"时间戳 + ⋯"那一行，整体高度基本不变。
 function startEdit(row) {
   // 一行进入编辑态前，先把别的还在编辑的行收掉
-  list.querySelectorAll('.msg-edit').forEach((b) => endEdit(b.closest('.msg')));
+  list.querySelectorAll('.msg.editing').forEach((r) => endEdit(r));
   row.classList.remove('actions-show');
 
   const line = row.querySelector('.msg-line');
+  const textEl = row.querySelector('.msg-text'); // 纯图片消息没有文字元素
   const original = row.dataset.text || '';
-  line.style.display = 'none';
+
+  // 必须在隐藏/替换任何东西之前测量
+  const lockWidth = textEl ? getComputedStyle(row).width : '';
+  const origHeight = textEl ? textEl.getBoundingClientRect().height : 0;
+  const hasImg = !!line.querySelector('.msg-img');
+
+  // 用 min-width 而不是 width：不会比原来窄；极短的消息（如"好的"）放不下两个按钮时才允许略微变宽
+  if (lockWidth) row.style.minWidth = lockWidth;
+  if (textEl) textEl.style.display = 'none';
   row.classList.add('editing');
 
-  const box = document.createElement('div');
-  box.className = 'msg-edit';
   const ta = document.createElement('textarea');
   ta.className = 'edit-input';
   // 不设 maxLength：插入的消息可能超过 300 字，编辑时不能被挡住
   ta.value = original;
+  // 图片和文字并排时，左边只留 2px 内边距（图片和文字之间本来就有 6px 间距）
+  ta.style.setProperty('--pl', hasImg ? '2px' : '8px');
+  if (textEl) ta.style.minHeight = origHeight + 12 + 'px'; // 12 = 上下 padding
+  else ta.style.minWidth = '10em'; // 纯图片消息：没有原文字宽度可参照，给输入框一个最小宽度
+  // 输入框放在原文字的位置，图片（如果有）留在原处
+  line.appendChild(ta);
+
+  // 自动增高：高度跟着内容走，但不低于原文字高度（minHeight），不出现内部滚动条
+  const autosize = () => {
+    ta.style.height = '0px';
+    ta.style.height = ta.scrollHeight + 'px';
+  };
+  ta.addEventListener('input', autosize);
 
   const btns = document.createElement('div');
   btns.className = 'edit-btns';
@@ -42,10 +68,9 @@ function startEdit(row) {
   save.textContent = '保存';
   btns.appendChild(cancel);
   btns.appendChild(save);
+  row.insertBefore(btns, row.querySelector('.msg-foot')); // 底部时间行在编辑态由 CSS 隐藏
 
-  box.appendChild(ta);
-  box.appendChild(btns);
-  row.insertBefore(box, line);
+  autosize();
   ta.focus();
 
   cancel.addEventListener('click', () => endEdit(row));
@@ -60,7 +85,14 @@ function startEdit(row) {
     try {
       await window.petAPI.editChatMessage(characterName, +row.dataset.index, text);
       row.dataset.text = text;
-      row.querySelector('.msg-text').textContent = text;
+      let t = row.querySelector('.msg-text');
+      if (!t) {
+        // 纯图片消息第一次加文字：补一个文字元素
+        t = document.createElement('div');
+        t.className = 'msg-text';
+        line.appendChild(t);
+      }
+      t.textContent = text;
       endEdit(row);
     } catch (err) {
       alertError(err);
