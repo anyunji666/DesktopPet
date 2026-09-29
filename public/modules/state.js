@@ -59,7 +59,6 @@ export const state = {
   voices: [], // 台词对应语音 URL，与 quotes 索引一一对应
   bubbleColor: null,
   characterName: null,
-  ignoreBones: new Set(), // 要在动作里屏蔽的骨骼
   materialFixes: null,
 
   // 模型

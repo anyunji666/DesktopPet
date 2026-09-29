@@ -384,7 +384,6 @@ window.petAPI.onInit((data) => {
   state.voices = data.voices || [];
   state.bubbleColor = data.bubbleColor || null;
   state.characterName = data.characterName || null;
-  state.ignoreBones = new Set(data.ignoreBones || []);
   state.materialFixes = data.materialFixes || null;
   applyScene(data.scene || null);
   if (data.bgMouseInteraction === false) {
@@ -402,7 +401,6 @@ window.petAPI.onSwitchCharacter((data) => {
     state.voices = data.voices || [];
     state.bubbleColor = data.bubbleColor || null;
     state.characterName = data.characterName || null;
-    state.ignoreBones = new Set(data.ignoreBones || []);
     state.materialFixes = data.materialFixes || null;
     hideChatBox(); // 切角色时把可能开着的对话输入框收起来
     stopVoice(); // 停掉旧角色还没播完的语音（同时恢复被压低的舞蹈音乐）

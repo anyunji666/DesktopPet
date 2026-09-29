@@ -98,23 +98,6 @@ function loadVoices(characterName, lines) {
   return voices;
 }
 
-// ---------- 读取角色要在动作里屏蔽的骨骼（Character/<角色名>/ignore-bones.json） ----------
-// 不同模型的辅助骨骼（腰キャンセル/手捩/武器挂点等）位置含义不同，
-// 别的模型的动作文件驱动这些骨骼会把道具/衣服拉飞，按角色配置屏蔽掉
-function loadIgnoreBones(characterName) {
-  const p = path.join(CHARACTER_ROOT, characterName, 'ignore-bones.json');
-  try {
-    const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
-    if (Array.isArray(data)) return data.filter((x) => typeof x === 'string');
-    console.warn(`[pet] 角色 "${characterName}" 的 ignore-bones.json 格式不对（应为字符串数组），已忽略`);
-  } catch (err) {
-    if (err.code !== 'ENOENT') {
-      console.warn(`[pet] 角色 "${characterName}" 的 ignore-bones.json 解析失败: ${err.message}`);
-    }
-  }
-  return [];
-}
-
 // ---------- 读取角色材质修正（Character/<角色名>/fixes.json） ----------
 // 个别模型的材质参数在 three.js 里显示不佳（如银狼脸部 diffuse 被作者压成 0.753 灰色，
 // 脸会比身体暗一圈显得发灰），按角色配置修正：
@@ -139,6 +122,5 @@ module.exports = {
   scanCharacters,
   loadQuotes,
   loadVoices,
-  loadIgnoreBones,
   loadMaterialFixes,
 };

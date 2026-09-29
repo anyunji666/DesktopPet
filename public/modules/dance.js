@@ -120,13 +120,6 @@ export function playDance(index, opts = {}) {
       (clip) => {
         state.loadingDance = false;
         try {
-          // 剥离当前角色要屏蔽的骨骼轨道（轨道名形如 .bones[骨骼名].position）
-          if (state.ignoreBones.size) {
-            clip.tracks = clip.tracks.filter((t) => {
-              const m = t.name.match(/^\.bones\[(.+?)\]\./);
-              return !m || !state.ignoreBones.has(m[1]);
-            });
-          }
           // 只播放片段（待机动画用）：按 30fps 的帧区间裁剪
           if (opts.clipFrom !== undefined && opts.clipTo !== undefined) {
             clip = THREE.AnimationUtils.subclip(clip, clip.name + '-seg', opts.clipFrom, opts.clipTo, 30);

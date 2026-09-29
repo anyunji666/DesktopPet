@@ -3,7 +3,7 @@ const { app, BrowserWindow, Menu, dialog, shell, screen, ipcMain } = require('el
 const path = require('path');
 const { state } = require('./state');
 const { loadConfig, updateConfig } = require('./config');
-const { loadQuotes, loadVoices, loadIgnoreBones, loadMaterialFixes } = require('./character');
+const { loadQuotes, loadVoices, loadMaterialFixes } = require('./character');
 const { scanDances } = require('./dance');
 const { scanScenes, getAdjust, setAdjust, ADJUST_DEFAULT } = require('./scene');
 const { cancelSpeaking } = require('./tts');
@@ -254,7 +254,6 @@ function currentCharacterPayload() {
     quotes: q.lines,
     voices: loadVoices(c.name, q.lines),
     bubbleColor: q.color,
-    ignoreBones: loadIgnoreBones(c.name),
     materialFixes: loadMaterialFixes(c.name),
   };
 }
