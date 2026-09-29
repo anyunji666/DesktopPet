@@ -3,7 +3,7 @@ import { showLoading, showBubble, playVoice, stopVoice, hitModel } from './modul
 import { triggerBlink, idlePose, updateBlink } from './modules/idle-animation.js';
 import { resettlePhysics } from './modules/physics.js';
 import { loadModel, disposeModel } from './modules/model.js';
-import { stopDance, playIdle, playDance, playExitThen } from './modules/dance.js';
+import { stopDance, playIdle, playDance, playExitThen, PHYSICS_ENGAGE_WARMUP_STEPS } from './modules/dance.js';
 import { applyScene, zoomSceneBy, moveSceneDepth, panSceneBy, orbitSceneBy, resetSceneAdjust } from './modules/scene.js';
 import { showChatBox, hideChatBox } from './modules/chat.js';
 import { initTtsPlayback } from './modules/tts.js';
@@ -448,24 +448,16 @@ function animate() {
   }
   if (state.danceMode && state.helper) {
     // 开场那一小段（见 dance.js 的 PHYSICS_ENGAGE_DELAY）播完了，物理该接管裙摆了：
-    // 先按"这段时间里骨骼已经转到的姿态"重新 resettle 一次物理（清零虚假速度），
-    // 再重新打开物理模拟，让它顺势接上，而不是从转向一开始就被拽着硬转
+    // 先按"这段时间里骨骼已经转到的姿态"把物理刚体 reset 过去，并预演几步让头发/裙摆先垂落到位，
+    // 再重新打开物理模拟，让它顺势接上，而不是从转向一开始就被拽着硬转、或接管时肉眼看到下坠
     if (state.physicsEnableAt !== null && t >= state.physicsEnableAt) {
       state.physicsEnableAt = null;
       const physicsObj = state.mesh ? state.helper.objects.get(state.mesh).physics : null;
-      resettlePhysics(physicsObj);
+      resettlePhysics(physicsObj, PHYSICS_ENGAGE_WARMUP_STEPS);
       state.helper.enable('physics', true);
     }
-    // 循环动作（待机动画）在这一帧会不会跨过循环点，先记一下当前时间
-    const la = state.loopingAction;
-    const prevT = la ? la.time : null;
+    // 循环动作（待机）跨循环点时不重置物理，见 dance.js 里的 resetPhysicsOnLoop
     state.helper.update(dt);
-    // MMDAnimationHelper 内部在跨循环点时已经默认对 physics 做了一次 reset，
-    // 这里检测到跨点后再补几步 warmup，让头发/裙摆更快落位，减少循环衔接处的残留甩动
-    if (la && prevT !== null && la.time < prevT) {
-      const physicsObj = state.mesh ? state.helper.objects.get(state.mesh).physics : null;
-      resettlePhysics(physicsObj, 4);
-    }
   } else if (state.mesh) {
     idlePose(t);
   }

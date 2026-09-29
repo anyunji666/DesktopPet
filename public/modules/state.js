@@ -95,8 +95,7 @@ export const state = {
   danceEndCallback: null,
   idleAnim: false, // 待机动画循环中：期间允许点击互动和角色语音，其他动作一律不响应、不播语音（见 ui.js canPlayVoice）
   exitInProgress: false, // 退场舞播放中
-  loopingAction: null, // 当前循环播放（待机动画）的 AnimationAction，供 animate() 检测循环衔接点
-  physicsEnableAt: null, // 到这个时间点，animate() 里重新 resettlePhysics 并让物理接管裙摆；见 dance.js playDance 里的说明
+  physicsEnableAt: null, // 到这个时间点，animate() 里 resettlePhysics 并让物理接管裙摆；见 dance.js playDance 里的说明
 
   // 场景
   sceneGroup: null,

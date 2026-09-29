@@ -7,9 +7,9 @@ import { state } from './state.js';
 //   gravityScale    重力倍率，默认 1（调大如 1.5 让发梢更服帖下垂）
 //   stiffnessScale  关节弹簧刚度倍率，默认 1（调大如 2 回弹更快、不易甩飞）
 //   damping         追加阻尼 0~1（抑制甩动幅度。MMDPhysics 默认完全不设阻尼，头发容易飘得夸张）
-// stiffnessScale 1.6→1.2、damping 0.25→0.16：resettlePhysics 加了清零虚假初速度的
-// 修复后，甩飞已经从根上解决，不再需要靠调硬/调重阻尼来压制症状，调低这两个值
-// 让头发/裙摆的摆动恢复柔软自然、不那么发硬发滞。
+// stiffnessScale 1.6→1.2、damping 0.25→0.16：当初是在"清零虚假初速度"补丁之后调低的，
+// 但实测真正解决开场甩飞的是 dance.js 的 PHYSICS_ENGAGE_DELAY（开场先停物理），
+// 不是清零速度/加热身步数。所以这两个值当时的调法依据并不牢靠，摆动手感不对可以重新调。
 export const PHYSICS_CFG = {
   gravityScale: 1,
   stiffnessScale: 1.2,
@@ -56,32 +56,22 @@ export function applyPhysicsCfg() {
   }
 }
 
-// 骨骼姿态发生"瞬间跳变"时（动作刚加载完从绑定姿态跳到第0帧、或循环动作播完
-// 最后一帧跳回第0帧），MMDPhysics 会用极短的内部步长对这段跳变做有限差分，
-// 算出一个离谱的瞬时速度，经弹簧约束甩到头发/裙摆上，表现为甩飞、服饰错位。
-// 加大 warmup 步数（试过 8/16/26）对这个没用：three.js 的 MMDPhysics.reset()
-// 只把刚体的位置/朝向传送回当前骨骼（RigidBody._setTransformFromBone），
-// 完全没有清零刚体自身的线速度/角速度——那股离谱的瞬时速度就原封不动地
-// 留在刚体上，warmup() 再跑多少步都只是让这份虚假速度继续参与模拟、慢慢
-// 衰减，而不是消失。这里在 reset() 之后手动把每个刚体的线速度/角速度清零、
-// 顺带清一下残留的外力，从源头掐断虚假初速度，再进 warmup 让弹簧/重力
-// 从"静止"状态开始收敛，而不是从"带着乱七八糟速度"开始。
-export function resettlePhysics(physicsObj, steps = 8) {
+// 把物理刚体传送回当前骨骼姿态（RigidBody._setTransformFromBone）。
+// 用在"物理停了一段时间、骨骼已经转到别处"之后重新开启物理之前，避免刚体从旧位置被猛拽过来。
+//
+// 开场甩飞/裙摆错位的真正解法是 dance.js 里的 PHYSICS_ENGAGE_DELAY：开场先关物理，
+// 等大转向播完再 reset + 开启。开场处试过的"清零刚体线/角速度"和"加大 warmup 步数（8/16/26）"
+// 对"甩飞"没有帮助，所以默认只做 reset。
+// 循环动作衔接点的抖动同理：真正原因是 helper 在循环点默认会 reset 物理，
+// 已在 dance.js 里对循环动作关掉 resetPhysicsOnLoop，不需要额外补丁。
+//
+// steps > 0：reset 之后再预演 steps 步（每步 1/60 秒，同步一帧内跑完）。
+// 用途不是防甩飞，而是让头发/裙摆在物理接管前先垂落到位：reset 会把刚体放回"静止形状"，
+// 物理一开就要实时垂落，肉眼能看到一下下坠+摆动；预演后接管时已是垂着的状态。
+export function resettlePhysics(physicsObj, steps = 0) {
   if (!physicsObj) return;
   physicsObj.reset();
-  const Ammo = window.Ammo;
-  if (Ammo) {
-    const zero = new Ammo.btVector3(0, 0, 0);
-    for (const b of physicsObj.bodies || []) {
-      const body = b.body;
-      if (!body) continue;
-      if (typeof body.setLinearVelocity === 'function') body.setLinearVelocity(zero);
-      if (typeof body.setAngularVelocity === 'function') body.setAngularVelocity(zero);
-      if (typeof body.clearForces === 'function') body.clearForces();
-    }
-    Ammo.destroy(zero);
-  }
-  physicsObj.warmup(steps);
+  if (steps > 0) physicsObj.warmup(steps);
 }
 
 let ammoPromise = null;

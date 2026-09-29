@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { MMDAnimationHelper } from 'three/addons/animation/MMDAnimationHelper.js';
 import { state, clock, loader, tmpV, audio, setGazeCenter } from './state.js';
-import { PHYSICS_CFG, ensureAmmo, applyPhysicsCfg, trackAmmoObjectsDuring, trackPhysicsObjects, disposePhysics, resettlePhysics } from './physics.js';
+import { PHYSICS_CFG, ensureAmmo, applyPhysicsCfg, trackAmmoObjectsDuring, trackPhysicsObjects, disposePhysics } from './physics.js';
 import { showBubble, showLoading, hideLoading, stopVoice } from './ui.js';
 
 // 待机动画：点"待机"或舞蹈播完后，循环播放指定舞蹈（可用 from/to 截片段，帧区间按 30fps 计）。
@@ -14,8 +14,14 @@ const IDLE_DANCE = { name: '生气了亲一下就哄好了' }; // 生气抱臂�
 // 动作开场常常一上来就是个大转向；如果物理从第 0 帧就跟着一起模拟，会硬扛这记转向，
 // 表现为裙摆瞬间绷紧甩动，很不自然。这里让开场这一小段先关掉物理（物理骨骼暂时不受
 // 模拟、跟着当前姿态不动），等这段时间播完、转向基本到位了，再在 app.js 的 animate()
-// 里 resettlePhysics + 重新开物理，让它从"已经转好的姿态"顺势接管，而不是从一开始就被拽着硬转。
+// 里 resettlePhysics（把刚体传送回当前骨骼）+ 重新开物理，让它从"已经转好的姿态"顺势接管，
+// 而不是从一开始就被拽着硬转。这是开场甩飞的真正解法（清零速度、加热身步数都试过，无效）。
 const PHYSICS_ENGAGE_DELAY = 0.6;
+
+// 物理接管的瞬间，reset 之后先预演这么多步（每步 1/60 秒，一帧内同步跑完），让头发/裙摆
+// 在物理开启前先垂落到位，避免接管时肉眼看到"从静止形状实时下坠+摆动"的那一下抖动。
+// 调大：接管时更"已垂落"，但下坠会变成一帧内的小幅位移；调小/设 0：回到纯 reset（实时下坠）。
+export const PHYSICS_ENGAGE_WARMUP_STEPS = 60;
 
 // 特殊动作：不出现在右键菜单里，由程序自动使用
 // 开场舞：切换角色后自动播放一次，播完回待机动画（程序刚打开时跳过，直接待机）
@@ -45,7 +51,6 @@ export function stopDance() {
   state.helperHasMesh = false;
   state.danceFollow = null;
   state.danceZoom = 0; // danceZoomCur 在渲染循环里平滑回 0
-  state.loopingAction = null; // 见 app.js animate() 里的循环衔接补热逻辑
 }
 
 export function resetPose() {
@@ -156,18 +161,16 @@ export function playDance(index, opts = {}) {
           if (fkAuthored) state.helper.enable('ik', false);
           state.helperHasMesh = true;
           state.helper.update(0); // 立即求值第 0 帧，让模型从新动作的起始位置开始
-          // 骨骼从绑定姿态瞬间跳到第 0 帧姿态会产生虚假初速度，见 resettlePhysics 注释
-          const physicsAfterPose = state.helper.objects.get(state.mesh).physics;
-          resettlePhysics(physicsAfterPose);
           // 见顶部 PHYSICS_ENGAGE_DELAY 的注释：开场这一小段先不让物理插手，
-          // 等 app.js 的 animate() 检测到时间到了，再重新 resettlePhysics + 开物理接管
+          // 等 app.js 的 animate() 检测到时间到了，再 resettlePhysics + 开物理接管
+          const physicsAfterPose = state.helper.objects.get(state.mesh).physics;
           if (physicsAfterPose) {
             state.helper.enable('physics', false);
             state.physicsEnableAt = clock.elapsedTime + PHYSICS_ENGAGE_DELAY;
           } else {
             state.physicsEnableAt = null;
           }
-          hideLoading(); // 挪到复位/预热之后：把这段过程盖在加载遮罩下，用户看不到抖动
+          hideLoading();
           // 从候选根骨骼里选 XZ 位移幅度最大的做镜头跟随（位移轨道可能是本地坐标，幅度比较不受影响）
           state.danceFollow = null;
           state.danceZoom = 0;
@@ -219,15 +222,16 @@ export function playDance(index, opts = {}) {
           if (opts.loop) {
             act.setLoop(THREE.LoopRepeat, Infinity);
             state.danceEndAt = Infinity;
-            // 循环动作衔接处（最后一帧跳回第0帧）交给 app.js 的 animate() 检测并补一次
-            // warmup（MMDAnimationHelper 默认已经在 loop 时对 physics 做 reset，
-            // 这里只是在那之后再补几步热身，让头发/裙摆更快落位、减少残留摆动）
-            state.loopingAction = act;
+            // 循环动作首尾姿势是衔接的（待机动作首尾差 <0.2°），不需要在循环点重置物理。
+            // MMDAnimationHelper 默认 resetPhysicsOnLoop=true：跨循环点会把所有刚体（含头发）
+            // 传送回骨骼的"动画姿态"（头发的静止形状，不是当前垂落的样子），头发先弹回再落下，
+            // 表现为每循环一次抖一下。关掉后头发连续地摆过循环点。
+            // 注意：只适合首尾能衔接的动作；若 IDLE_DANCE 改成 from/to 截取且首尾对不上，需要重新打开。
+            state.helper.configuration.resetPhysicsOnLoop = false;
           } else {
             act.setLoop(THREE.LoopOnce, 1);
             act.clampWhenFinished = true;
             state.danceEndAt = clock.elapsedTime + clip.duration;
-            state.loopingAction = null;
           }
           if (d.wav && !opts.silent) {
             audio.src = d.wav;
