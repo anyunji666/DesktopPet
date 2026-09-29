@@ -35,6 +35,7 @@ contextBridge.exposeInMainWorld('petAPI', {
   chatSend: (characterName, message, imageDataURL) => ipcRenderer.invoke('chat-send', characterName, message, imageDataURL),
   getApiConfig: () => ipcRenderer.invoke('get-api-config'),
   saveApiConfig: (cfg) => ipcRenderer.invoke('save-api-config', cfg),
+  deleteApiProfile: (url) => ipcRenderer.invoke('delete-api-profile', url),
   getPromptConfig: () => ipcRenderer.invoke('get-prompt-config'),
   savePromptConfig: (cfg) => ipcRenderer.invoke('save-prompt-config', cfg),
   // 当前角色的人设 + 世界背景（persona.json）读取 / 保存（设置窗口用）

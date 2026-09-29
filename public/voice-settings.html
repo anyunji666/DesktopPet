@@ -265,7 +265,14 @@
 
     fillSelect($('edge_voice'), [...presets.edge, { value: CUSTOM, label: '其他（手动输入音色名）' }]);
     fillSelect($('mimo_preset_voice'), presets.mimo);
-    $('doubao_resource_list').innerHTML = presets.doubaoResourceIds.map((v) => `<option value="${v}"></option>`).join('');
+    // 用 DOM API 构造而不是拼 HTML 字符串，避免值里带引号 / 尖括号时破坏结构
+    $('doubao_resource_list').replaceChildren(
+      ...presets.doubaoResourceIds.map((v) => {
+        const opt = document.createElement('option');
+        opt.value = v;
+        return opt;
+      })
+    );
     doubaoVoiceList = presets.doubaoVoices || [];
     fillDoubaoPresetSelect();
 

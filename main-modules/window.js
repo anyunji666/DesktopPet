@@ -11,6 +11,22 @@ const pkg = require('../package.json');
 
 const ROOT = path.join(__dirname, '..');
 
+// 所有窗口共用的 webPreferences：
+//   sandbox        —— 渲染进程沙箱化（preload 只用了 contextBridge / ipcRenderer，沙箱下可用）
+//   nodeIntegration—— 页面里绝不能直接用 Node
+//   webviewTag     —— 用不到 <webview>，关掉
+function securePrefs() {
+  return {
+    preload: path.join(ROOT, 'preload.js'),
+    contextIsolation: true,
+    sandbox: true,
+    nodeIntegration: false,
+    webSecurity: true,
+    allowRunningInsecureContent: false,
+    webviewTag: false,
+  };
+}
+
 // ---------- 关于：作者 / 版本 / GitHub 地址，读 package.json 里的 author / homepage，只在这里维护一份 ----------
 const APP_VERSION_LABEL = pkg.version;
 const APP_REPO_URL = pkg.homepage || '';
@@ -97,7 +113,7 @@ function openSettingsWindow() {
       height: 540,
       resizable: false,
       title: 'API 设置',
-      webPreferences: { preload: path.join(ROOT, 'preload.js'), contextIsolation: true },
+      webPreferences: securePrefs(),
     });
     // 桌面模式下宠物主窗口纵向展开且常驻置顶，会让新开的子窗口被 Chromium 判定为遮挡/后台，
     // 首帧渲染被节流，导致内容要等用户点一下（真正的输入事件）才画出来；关掉节流从根源避免
@@ -116,7 +132,7 @@ function openHistoryWindow(characterName) {
       width: 420,
       height: 560,
       title: '聊天记录 - ' + characterName,
-      webPreferences: { preload: path.join(ROOT, 'preload.js'), contextIsolation: true },
+      webPreferences: securePrefs(),
     });
     // 见 openSettingsWindow 里的同名调用注释
     state.historyWin.webContents.setBackgroundThrottling(false);
@@ -134,7 +150,7 @@ function openVoiceWindow(characterName) {
       width: 440,
       height: 700,
       title: '音色设置 - ' + characterName,
-      webPreferences: { preload: path.join(ROOT, 'preload.js'), contextIsolation: true },
+      webPreferences: securePrefs(),
     });
     // 见 openSettingsWindow 里的同名调用注释
     state.voiceWin.webContents.setBackgroundThrottling(false);
@@ -161,7 +177,7 @@ function openAboutWindow() {
       minimizable: false,
       maximizable: false,
       title: '关于',
-      webPreferences: { preload: path.join(ROOT, 'preload.js'), contextIsolation: true },
+      webPreferences: securePrefs(),
     });
     // 见 openSettingsWindow 里的同名调用注释
     state.aboutWin.webContents.setBackgroundThrottling(false);
@@ -206,7 +222,7 @@ function openLlmLogWindow() {
       x: saved && Number.isFinite(saved.x) ? saved.x : undefined,
       y: saved && Number.isFinite(saved.y) ? saved.y : undefined,
       title: 'LLM调用记录',
-      webPreferences: { preload: path.join(ROOT, 'preload.js'), contextIsolation: true },
+      webPreferences: securePrefs(),
     });
     // 见 openSettingsWindow 里的同名调用注释
     state.llmLogWin.webContents.setBackgroundThrottling(false);
@@ -487,6 +503,7 @@ function toggleBgMouseInteraction() {
 }
 
 module.exports = {
+  securePrefs,
   WIN_W,
   WIN_H,
   WIN_MIN_W,

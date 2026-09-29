@@ -6,6 +6,7 @@ const { app } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { CHARACTER_ROOT } = require('./character');
+const { assertSafeName } = require('./security');
 
 let chatDirCache = null;
 function getChatDir() {
@@ -17,7 +18,7 @@ function getChatDir() {
 // system = 角色的个人资料，storyBackground = 角色所处的世界背景，两者都跟随角色存档、非全局。
 // 返回 { system, storyBackground }，缺失/解析失败时两个字段都是空字符串。
 function readPersonaFile(characterName) {
-  const p = path.join(CHARACTER_ROOT, characterName, 'persona.json');
+  const p = path.join(CHARACTER_ROOT, assertSafeName(characterName), 'persona.json');
   try {
     const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
     const system = data && typeof data.system === 'string' ? data.system.trim() : '';
@@ -43,7 +44,7 @@ function loadStoryBackground(characterName) {
 
 // 保存角色人设 / 世界背景：两者都空时删除 persona.json（之后不再发送角色资料/世界背景）
 function savePersonaFile(characterName, { system, storyBackground } = {}) {
-  const p = path.join(CHARACTER_ROOT, characterName, 'persona.json');
+  const p = path.join(CHARACTER_ROOT, assertSafeName(characterName), 'persona.json');
   const sys = typeof system === 'string' ? system.trim() : '';
   const bg = typeof storyBackground === 'string' ? storyBackground.trim() : '';
   if (!sys && !bg) {
@@ -60,7 +61,7 @@ function savePersonaFile(characterName, { system, storyBackground } = {}) {
 function chatHistoryPath(characterName) {
   const dir = getChatDir();
   fs.mkdirSync(dir, { recursive: true });
-  return path.join(dir, characterName + '.json');
+  return path.join(dir, assertSafeName(characterName) + '.json');
 }
 
 // 全量聊天记录（不做截断/压缩，发给 LLM 的也是全量历史）
@@ -90,7 +91,7 @@ function saveChatHistory(characterName, history) {
 function summaryPath(characterName) {
   const dir = getChatDir();
   fs.mkdirSync(dir, { recursive: true });
-  return path.join(dir, characterName + '-summaries.json');
+  return path.join(dir, assertSafeName(characterName) + '-summaries.json');
 }
 
 function loadDaySummaries(characterName) {
@@ -138,7 +139,7 @@ function clearDaySummaries(characterName) {
 function openedDayPath(characterName) {
   const dir = getChatDir();
   fs.mkdirSync(dir, { recursive: true });
-  return path.join(dir, characterName + '-opened-day.json');
+  return path.join(dir, assertSafeName(characterName) + '-opened-day.json');
 }
 
 // 读取当前槽位；没有/格式不对返回 null，是否过期由调用方拿 markedOnDay 跟当前 todayKey 比较判断
@@ -181,7 +182,7 @@ const MEMORY_TAG_MAX_CHARS = 20;
 function memoryPath(characterName) {
   const dir = getChatDir();
   fs.mkdirSync(dir, { recursive: true });
-  return path.join(dir, characterName + '-memory.md');
+  return path.join(dir, assertSafeName(characterName) + '-memory.md');
 }
 
 // 从头部整行丢弃直到不超过 maxChars，保留最新内容
@@ -235,7 +236,7 @@ function clearMemoryIndex(characterName) {
 // ---------- 聊天图片：存 chat-history/images/<角色名>/ 下，消息里只记文件名 ----------
 // 图片是 dataURL 传进来的（渲染进程选文件/粘贴后本地读出），存成独立文件避免聊天记录 JSON 被撑爆。
 function chatImageDir(characterName) {
-  const dir = path.join(getChatDir(), 'images', characterName);
+  const dir = path.join(getChatDir(), 'images', assertSafeName(characterName));
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -283,7 +284,7 @@ function deleteChatImage(characterName, filename) {
 
 // 清空角色全部聊天记录时，把图片文件夹一起清掉
 function clearChatImages(characterName) {
-  const dir = path.join(getChatDir(), 'images', characterName);
+  const dir = path.join(getChatDir(), 'images', assertSafeName(characterName));
   try {
     fs.rmSync(dir, { recursive: true, force: true });
   } catch (err) {

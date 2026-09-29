@@ -1,8 +1,16 @@
 // ---------- Gemini 多 Key 轮询中转（桌宠本地专用） ----------
-// 只监听 127.0.0.1，不对外网暴露；不支持 stream（桌宠本身按非流式请求 LLM）。
+// 只监听 127.0.0.1，并且要求 Host 校验 + Bearer token + 拒绝浏览器请求（详见 requestHandler）；不支持 stream（桌宠本身按非流式请求 LLM）。
 // 核心逻辑（轮询 / 429 冷却 / 模型列表 / 外层重试）参考自 SillyTavern 的 gemini-relay 插件，
 // 精简掉了 SSE 流式分支和 Express 路由，重试参数直接写死，不开放到界面。
 const http = require('http');
+const { isAllowedHost, readBodyLimited, safeEqual, createRateLimiter, redact } = require('./security');
+
+// 安全相关参数
+const MAX_BODY_BYTES = 8 * 1024 * 1024; // 请求体上限（聊天历史很长时也够用）
+const RATE_LIMIT_MAX = 30; // 每分钟最多处理的请求数（桌宠正常使用远低于此）
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const MODEL_ID_RE = /^[A-Za-z0-9._-]{1,100}$/; // 模型名会拼进上游 URL 路径，只允许安全字符
+const rateLimiter = createRateLimiter(RATE_LIMIT_MAX, RATE_LIMIT_WINDOW_MS);
 
 const RETRY_ROUNDS = 3;
 const RETRY_BASE_DELAY_MS = 2000;
@@ -13,9 +21,12 @@ let server = null;
 let keyStates = []; // [{ key, cooldownUntil }]
 let rrIndex = 0;
 let modelsCache = { data: null, fetchedAt: 0 };
+let relayToken = ''; // 访问口令：请求必须带 Authorization: Bearer <token>
 
 function log(...args) {
-  console.log('[gemini-relay]', new Date().toISOString(), ...args);
+  // 日志统一脱敏：不让真实 Key / token 出现在控制台
+  const secrets = [relayToken, ...keyStates.map((k) => k.key)];
+  console.log('[gemini-relay]', new Date().toISOString(), ...args.map((a) => (typeof a === 'string' ? redact(a, secrets) : a)));
 }
 
 // 距离下一个太平洋时间午夜还有多少毫秒（Gemini 免费额度按太平洋时间每日重置）
@@ -70,8 +81,8 @@ async function fetchModelsWithKey(apiKey) {
   const models = [];
   let pageToken = '';
   do {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000&key=${apiKey}${pageToken ? `&pageToken=${pageToken}` : ''}`;
-    const resp = await fetch(url);
+    const url = `https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''}`;
+    const resp = await fetch(url, { headers: { 'x-goog-api-key': apiKey } });
     if (!resp.ok) {
       const bodyText = await resp.text();
       throw { status: resp.status, body: bodyText };
@@ -150,17 +161,18 @@ async function tryAllKeysOnce(model, contents) {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const idx = pickKey();
     const keyState = keyStates[idx];
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${keyState.key}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
 
     let resp;
     try {
       resp = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        // Key 放请求头而不是 URL 查询参数：URL 容易被各种日志 / 报错信息带出去
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': keyState.key },
         body: JSON.stringify({ contents }),
       });
     } catch (networkErr) {
-      lastErr = { status: 0, body: String(networkErr), retryable: true };
+      lastErr = { status: 0, body: redact(String(networkErr), [keyState.key]), retryable: true };
       continue;
     }
 
@@ -211,14 +223,22 @@ async function callGemini(model, contents) {
   throw lastErr || { status: 500, body: '所有 Key 均调用失败' };
 }
 
-function sendJson(res, status, obj) {
-  res.writeHead(status, { 'Content-Type': 'application/json' });
+function sendJson(res, status, obj, extraHeaders) {
+  res.writeHead(status, {
+    'Content-Type': 'application/json',
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+    ...(extraHeaders || {}),
+  });
   res.end(JSON.stringify(obj));
 }
 
 async function handleChatCompletions(payload, res) {
   const model = (payload && payload.model) || '';
   if (!model) return sendJson(res, 400, { error: { message: '请求里缺少 model 字段' } });
+  if (typeof model !== 'string' || !MODEL_ID_RE.test(model)) {
+    return sendJson(res, 400, { error: { message: 'model 字段含有非法字符' } });
+  }
   const contents = toGeminiContents(payload && payload.messages);
 
   try {
@@ -234,34 +254,74 @@ async function handleChatCompletions(payload, res) {
   } catch (err) {
     log('所有 Key 均失败:', err);
     sendJson(res, err.status || 500, {
-      error: { message: '所有 Key 都调用失败，详情: ' + (err.body || err.message || '未知错误') },
+      error: { message: '所有 Key 都调用失败，详情: ' + redact(err.body || err.message || '未知错误', keyStates.map((k) => k.key)) },
     });
   }
 }
 
-// 只监听 127.0.0.1，不做鉴权：反正局域网内其他设备连不进来，本地进程互相信任
+// 请求入口，逐层设卡：
+//   1. Host 校验：Host 头必须是 127.0.0.1/localhost + 本服务端口（挡 DNS rebinding）
+//   2. 拒绝浏览器发来的请求：带 Origin / Sec-Fetch-* 头的一律不处理（挡网页对本机端口的跨站请求）
+//   3. Bearer token：桌宠自己请求时由主进程自动带上，其它程序不知道口令就进不来
+//   4. 限频 + 请求体上限 + 必须是 JSON
+// 任何情况下都不返回 CORS 头，也不响应 OPTIONS 预检。
 function requestHandler(req, res) {
-  if (req.method === 'GET' && (req.url === '/v1/models' || req.url === '/models')) {
+  const port = server && server.address() ? server.address().port : 0;
+
+  if (!isAllowedHost(req.headers.host, port)) {
+    return sendJson(res, 403, { error: { message: 'Forbidden host' } });
+  }
+  if (req.headers.origin !== undefined || req.headers['sec-fetch-site'] !== undefined || req.headers['sec-fetch-mode'] !== undefined) {
+    return sendJson(res, 403, { error: { message: 'Browser requests are not allowed' } });
+  }
+  if (req.method === 'OPTIONS') {
+    return sendJson(res, 403, { error: { message: 'Forbidden' } });
+  }
+
+  const auth = req.headers.authorization || '';
+  const m = /^Bearer\s+(.+)$/i.exec(auth);
+  if (!relayToken || !m || !safeEqual(m[1].trim(), relayToken)) {
+    return sendJson(res, 401, { error: { message: 'Unauthorized: invalid or missing relay token' } }, { 'WWW-Authenticate': 'Bearer' });
+  }
+
+  const limit = rateLimiter();
+  if (!limit.ok) {
+    return sendJson(res, 429, { error: { message: '请求过于频繁，请稍后再试' } }, { 'Retry-After': String(limit.retryAfterSec) });
+  }
+
+  // 只看路径，忽略查询串
+  const pathname = String(req.url || '').split('?')[0];
+
+  if (req.method === 'GET' && (pathname === '/v1/models' || pathname === '/models')) {
     getModelList()
       .then((models) => sendJson(res, 200, { object: 'list', data: models }))
       .catch((e) =>
-        sendJson(res, e.status || 500, { error: { message: '获取模型列表失败: ' + (e.body || e.message || '未知错误') } })
+        sendJson(res, e.status || 500, {
+          error: { message: '获取模型列表失败: ' + redact(e.body || e.message || '未知错误', keyStates.map((k) => k.key)) },
+        })
       );
     return;
   }
 
-  if (req.method === 'POST' && (req.url === '/v1/chat/completions' || req.url === '/chat/completions')) {
-    let body = '';
-    req.on('data', (chunk) => (body += chunk));
-    req.on('end', async () => {
-      let payload;
-      try {
-        payload = JSON.parse(body || '{}');
-      } catch (e) {
-        return sendJson(res, 400, { error: { message: 'Invalid JSON body' } });
-      }
-      await handleChatCompletions(payload, res);
-    });
+  if (req.method === 'POST' && (pathname === '/v1/chat/completions' || pathname === '/chat/completions')) {
+    const ctype = String(req.headers['content-type'] || '').toLowerCase();
+    if (!ctype.startsWith('application/json')) {
+      req.resume();
+      return sendJson(res, 415, { error: { message: 'Content-Type must be application/json' } });
+    }
+    readBodyLimited(req, MAX_BODY_BYTES)
+      .then(async (buf) => {
+        let payload;
+        try {
+          payload = JSON.parse(buf.toString('utf-8') || '{}');
+        } catch (e) {
+          return sendJson(res, 400, { error: { message: 'Invalid JSON body' } });
+        }
+        await handleChatCompletions(payload, res);
+      })
+      .catch((e) => {
+        if (!res.headersSent) sendJson(res, e.status || 400, { error: { message: e.message || 'Bad request' } });
+      });
     return;
   }
 
@@ -273,7 +333,8 @@ function requestHandler(req, res) {
 // 热更新时按 key 内容匹配保留冷却状态，避免刚保存一下配置就把冷却计时重置掉。
 // preferredPort：调用方记住的上次端口号；只在"这次是从头启动"时才会用到——优先复用它，
 // 只有它被别的程序占用了才回退到系统自动分配的端口（调用方应该把返回状态里的新端口重新记下来）。
-function setKeys(keys, preferredPort) {
+function setKeys(keys, preferredPort, token) {
+  if (typeof token === 'string' && token) relayToken = token;
   const list = (Array.isArray(keys) ? keys : []).map((k) => (typeof k === 'string' ? k.trim() : '')).filter(Boolean);
 
   if (!list.length) {
@@ -305,6 +366,9 @@ function setKeys(keys, preferredPort) {
   return new Promise((resolve, reject) => {
     const tryListen = (port, isFallback) => {
       const s = http.createServer(requestHandler);
+      s.requestTimeout = 30 * 1000; // 请求体 30 秒内必须收完，防慢速占连接
+      s.headersTimeout = 10 * 1000;
+      s.maxHeadersCount = 50;
       s.on('error', (err) => {
         if (!isFallback && port && err.code === 'EADDRINUSE') {
           log(`记住的端口 ${port} 被占用，改用系统自动分配的端口`);
@@ -328,7 +392,7 @@ function setKeys(keys, preferredPort) {
 function getStatus() {
   return {
     running: !!server,
-    port: server ? server.address().port : null,
+    port: server && server.address() ? server.address().port : null,
     keyCount: keyStates.length,
   };
 }

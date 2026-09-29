@@ -5,6 +5,7 @@
 const { app } = require('electron');
 const fs = require('fs');
 const path = require('path');
+const { assertSafeName } = require('../security');
 
 // MiMo 官方限制：参考音频只支持 mp3 / wav；转成 base64 后的字符串不能超过 10 MB。
 // base64 会比原文件大约 1/3，所以原文件上限取 7 MB（留出余量，不用去纠结官方说的 MB 是 1000 还是 1024 进制）
@@ -21,8 +22,9 @@ function getCloneDir() {
   return cloneDirCache;
 }
 
+// 角色名会拼进文件名：统一走 security.js 的校验（拒绝路径分隔符 / .. / 控制字符等），不再悄悄替换字符
 function safeName(name) {
-  return String(name).replace(/[\\/:*?"<>|]/g, '_');
+  return assertSafeName(String(name));
 }
 
 // 把用户选的音频复制进 tts-clone/，返回要写进 config 的元信息

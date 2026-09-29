@@ -6,13 +6,38 @@ const { loadPersona, loadStoryBackground, loadMemoryIndex } = require('./chat-st
 const { TONE_PROMPT, toneEnabled } = require('./tts/tone');
 const { flattenChatHistory, formatMinuteTime, formatDayCN } = require('./history-flatten');
 const { buildFestivalBlock } = require('./holiday');
+const { generateToken, maskSecret, resolveSecretInput } = require('./security');
 
 // ---------- API 配置（存进 config.json 的 apiConfig 字段，和角色/场景选择共用同一份配置文件） ----------
+
+// 已保存过的 API 地址 + 密钥（设置窗口里 API Base URL 的下拉选择框用）。
+// 每次保存设置时把当前 地址+密钥 记进来（同地址覆盖密钥并提到最前），最多留 MAX_API_PROFILES 条。
+const MAX_API_PROFILES = 20;
+// 地址比较时忽略首尾空白和末尾的斜杠：https://x.com/v1 和 https://x.com/v1/ 算同一条
+function normApiUrl(u) {
+  return String(u || '').trim().replace(/\/+$/, '');
+}
+function sanitizeApiProfiles(list) {
+  if (!Array.isArray(list)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const p of list) {
+    if (!p || typeof p.api_url !== 'string') continue;
+    const url = p.api_url.trim();
+    const key = normApiUrl(url);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push({ api_url: url, api_key: typeof p.api_key === 'string' ? p.api_key.trim() : '' });
+  }
+  return out.slice(0, MAX_API_PROFILES);
+}
+
 function getApiConfig() {
   const cfg = loadConfig().apiConfig;
   return {
     api_url: (cfg && cfg.api_url) || '',
     api_key: (cfg && cfg.api_key) || '',
+    apiProfiles: sanitizeApiProfiles(cfg && cfg.apiProfiles),
     model: (cfg && cfg.model) || '',
     temperature: Number.isFinite(cfg && cfg.temperature) ? cfg.temperature : 0.9,
     max_tokens: Number.isFinite(cfg && cfg.max_tokens) ? cfg.max_tokens : 300,
@@ -22,7 +47,63 @@ function getApiConfig() {
     llmRelayKeys: Array.isArray(cfg && cfg.llmRelayKeys) ? cfg.llmRelayKeys : [],
     // 上次中转服务实际分配到的端口：记住它，下次优先复用，不用每次都变
     llmRelayPort: Number.isInteger(cfg && cfg.llmRelayPort) ? cfg.llmRelayPort : null,
+    // 本地中转的访问口令（自动生成，桌宠自己请求中转时由主进程自动带上，不需要用户填）
+    relayToken: (cfg && typeof cfg.relayToken === 'string') ? cfg.relayToken : '',
   };
+}
+
+// 没有口令就生成一个并保存；已有的沿用
+function ensureRelayToken() {
+  const cur = getApiConfig();
+  if (cur.relayToken) return cur.relayToken;
+  const token = generateToken();
+  saveApiConfig({ relayToken: token });
+  return token;
+}
+
+// ---------- 给渲染进程看的版本：密钥一律遮罩 ----------
+// 渲染进程（设置窗口）拿到的 api_key / 已保存列表里的 api_key / 中转 Key 都是遮罩后的字符串
+// （形如 ••••abcd），真实密钥不离开主进程。保存时如果原样传回遮罩，resolveApiPatch 会还原成真实密钥。
+function getApiConfigForRenderer() {
+  const c = getApiConfig();
+  return {
+    api_url: c.api_url,
+    api_key: maskSecret(c.api_key),
+    apiProfiles: c.apiProfiles.map((p) => ({ api_url: p.api_url, api_key: maskSecret(p.api_key) })),
+    model: c.model,
+    temperature: c.temperature,
+    max_tokens: c.max_tokens,
+    vision: c.vision,
+    llmRelayKeys: c.llmRelayKeys.map(maskSecret),
+    llmRelayPort: c.llmRelayPort,
+  };
+}
+
+// 渲染进程传来的保存请求 -> 还原遮罩后的补丁（只放行它有权改的字段，relayToken 不允许从渲染进程改）
+function resolveApiPatch(patch) {
+  const cur = getApiConfig();
+  const out = { ...patch };
+  delete out.relayToken;
+  delete out.apiProfiles;
+
+  const urlForMatch = typeof patch.api_url === 'string' ? patch.api_url : cur.api_url;
+  const sameUrlProfile = cur.apiProfiles.find((p) => normApiUrl(p.api_url) === normApiUrl(urlForMatch));
+  const candidates = [sameUrlProfile && sameUrlProfile.api_key, cur.api_key, ...cur.apiProfiles.map((p) => p.api_key)];
+  if (typeof patch.api_key === 'string') out.api_key = resolveSecretInput(patch.api_key, candidates);
+
+  if (Array.isArray(patch.llmRelayKeys)) {
+    out.llmRelayKeys = patch.llmRelayKeys
+      .map((k) => resolveSecretInput(typeof k === 'string' ? k : '', cur.llmRelayKeys))
+      .filter(Boolean);
+  }
+  return out;
+}
+
+// 拉模型列表时表单里的 Key 可能是遮罩：还原成真实密钥（优先取和该地址对应的已保存密钥）
+function resolveApiKeyForUrl(apiUrl, apiKey) {
+  const cur = getApiConfig();
+  const sameUrlProfile = cur.apiProfiles.find((p) => normApiUrl(p.api_url) === normApiUrl(apiUrl));
+  return resolveSecretInput(apiKey, [sameUrlProfile && sameUrlProfile.api_key, cur.api_key, ...cur.apiProfiles.map((p) => p.api_key)]);
 }
 
 function saveApiConfig(patch) {
@@ -38,9 +119,29 @@ function saveApiConfig(patch) {
       ? patch.llmRelayKeys.map((k) => (typeof k === 'string' ? k.trim() : '')).filter(Boolean)
       : cur.llmRelayKeys,
     llmRelayPort: Number.isInteger(patch.llmRelayPort) ? patch.llmRelayPort : cur.llmRelayPort,
+    apiProfiles: cur.apiProfiles,
+    relayToken: typeof patch.relayToken === 'string' && patch.relayToken ? patch.relayToken : cur.relayToken,
   };
+  // 只有这次明确带了 api_url（即设置窗口点保存）才记进已保存列表；
+  // 其它只改别的字段的调用（比如记录中转端口）不动这个列表
+  if (typeof patch.api_url === 'string' && normApiUrl(next.api_url)) {
+    const k = normApiUrl(next.api_url);
+    next.apiProfiles = [
+      { api_url: next.api_url, api_key: next.api_key },
+      ...cur.apiProfiles.filter((p) => normApiUrl(p.api_url) !== k),
+    ].slice(0, MAX_API_PROFILES);
+  }
   updateConfig({ apiConfig: next });
   return next;
+}
+
+// 从已保存列表里删掉一条（只删这条历史记录，不影响当前正在用的 api_url / api_key）
+function deleteApiProfile(url) {
+  const cur = getApiConfig();
+  const k = normApiUrl(url);
+  const next = { ...cur, apiProfiles: cur.apiProfiles.filter((p) => normApiUrl(p.api_url) !== k) };
+  updateConfig({ apiConfig: next });
+  return next.apiProfiles;
 }
 
 // ---------- Prompt 模板配置（存进 config.json 的 promptConfig 字段，全局生效，不区分角色） ----------
@@ -177,7 +278,12 @@ function buildPromptText(characterName, history, text) {
 
 module.exports = {
   getApiConfig,
+  getApiConfigForRenderer,
+  resolveApiPatch,
+  resolveApiKeyForUrl,
+  ensureRelayToken,
   saveApiConfig,
+  deleteApiProfile,
   getPromptConfig,
   savePromptConfig,
   buildPromptText,

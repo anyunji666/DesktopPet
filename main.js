@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, powerMonitor, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, powerMonitor, screen, session } = require('electron');
 const path = require('path');
 const crypto = require('crypto');
 const os = require('os');
@@ -12,11 +12,12 @@ const ROOT = __dirname;
 
 const { startServer } = require('./main-modules/server');
 const geminiRelay = require('./main-modules/gemini-relay');
+const { hardenWebContents, hardenSession, guardIpc, isSafeName, maskSecret } = require('./main-modules/security');
 const { state } = require('./main-modules/state');
 const { constrainMove, constrainResize } = require('./main-modules/win-limit');
 const { beginChat, endChat, getChatPending, assertHistoryEditable } = require('./main-modules/chat-lock');
 const { planCrossDaySummary, runChatTurn } = require('./main-modules/chat-turn');
-const { loadConfig, updateConfig } = require('./main-modules/config');
+const { loadConfig, updateConfig, migrateSecrets } = require('./main-modules/config');
 const { scanCharacters } = require('./main-modules/character');
 const { scanScenes, setAdjust, normAdjust } = require('./main-modules/scene');
 const {
@@ -32,14 +33,26 @@ const {
   clearOpenedDay,
 } = require('./main-modules/chat-store');
 const { getTtsConfig, saveTtsConfig, getPresets, testVoice } = require('./main-modules/tts');
+const { maskProviders, resolveProvidersInput } = require('./main-modules/tts/config');
 const { getAsrConfig, saveAsrConfig } = require('./main-modules/asr/config');
 const { createAsrSession } = require('./main-modules/asr/doubao');
 const { importCloneAudio, AUDIO_EXTENSIONS } = require('./main-modules/tts/clone-store');
 const doubaoVoicesStore = require('./main-modules/tts/doubao-voices-store');
-const { getApiConfig, saveApiConfig, getPromptConfig, savePromptConfig } = require('./main-modules/llm');
+const {
+  getApiConfig,
+  getApiConfigForRenderer,
+  resolveApiPatch,
+  resolveApiKeyForUrl,
+  ensureRelayToken,
+  saveApiConfig,
+  deleteApiProfile,
+  getPromptConfig,
+  savePromptConfig,
+} = require('./main-modules/llm');
 const { splitTurnSummary } = require('./main-modules/history-flatten');
 const { fetchModelList, setLlmLogListener, getLatestLlmCall } = require('./main-modules/llm-client');
 const {
+  securePrefs,
   WIN_W,
   WIN_H,
   WIN_MIN_W,
@@ -67,6 +80,19 @@ if (!gotLock) {
     }
   });
 }
+
+// ---------- 安全加固：窗口 / 权限 / IPC ----------
+// 本地页面的来源（端口在静态服务启动后才确定，所以用函数延迟取值）
+const pageOrigin = () => `http://127.0.0.1:${state.serverPort}`;
+
+// 所有 IPC 只接受来自本地静态服务页面的调用（必须在注册任何 handler 之前包好）
+guardIpc(ipcMain, pageOrigin);
+
+// 每个窗口都：不许跳转到外部页面、不许 window.open、不许挂 webview
+app.on('browser-window-created', (_e, win) => hardenWebContents(win.webContents, pageOrigin));
+
+// 权限请求默认全拒，只放行本地页面的麦克风（语音输入）
+app.whenReady().then(() => hardenSession(session.defaultSession, pageOrigin));
 
 // ---------- 启动计时气泡 ----------
 // 不管是不是开机自启动触发的，每次模型出现都报一次用时；但同一场开机内只在"第一次启动"
@@ -129,6 +155,8 @@ function isWidthValid(width) {
 }
 
 async function createWindow() {
+  // 旧版本留下的明文密钥升级成加密存储（系统不支持加密时什么也不做）
+  migrateSecrets();
   const server = await startServer();
   const port = server.address().port;
   state.serverPort = port;
@@ -138,7 +166,7 @@ async function createWindow() {
   (() => {
     const cfgApi = getApiConfig();
     geminiRelay
-      .setKeys(cfgApi.llmRelayKeys, cfgApi.llmRelayPort)
+      .setKeys(cfgApi.llmRelayKeys, cfgApi.llmRelayPort, ensureRelayToken())
       .then((status) => {
         if (status.port && status.port !== cfgApi.llmRelayPort) saveApiConfig({ llmRelayPort: status.port });
       })
@@ -205,10 +233,7 @@ async function createWindow() {
     resizable: false,
     hasShadow: false,
     skipTaskbar: true,
-    webPreferences: {
-      preload: path.join(ROOT, 'preload.js'),
-      contextIsolation: true,
-    },
+    webPreferences: securePrefs(),
   });
   // 用 'screen-saver' 层级而不是构造参数里的普通 alwaysOnTop:true——层级越高，
   // 越不容易在系统状态切换时被压到后面（见下面 reassertAlwaysOnTop 的注释）
@@ -387,10 +412,13 @@ ipcMain.handle('chat-send', async (e, characterName, message, imageDataURL) => {
   return turn.reply;
 });
 
-ipcMain.handle('get-api-config', () => getApiConfig());
+// 渲染进程拿到的密钥一律是遮罩（••••abcd），真实密钥不离开主进程；
+// 保存时原样传回遮罩 = 沿用原密钥（见 llm.js 的 resolveApiPatch）
+ipcMain.handle('get-api-config', () => getApiConfigForRenderer());
 ipcMain.handle('save-api-config', async (_e, patch) => {
-  const next = saveApiConfig(patch && typeof patch === 'object' ? patch : {});
-  const relayStatus = await geminiRelay.setKeys(next.llmRelayKeys, next.llmRelayPort).catch((err) => {
+  saveApiConfig(resolveApiPatch(patch && typeof patch === 'object' ? patch : {}));
+  const next = getApiConfig();
+  const relayStatus = await geminiRelay.setKeys(next.llmRelayKeys, next.llmRelayPort, ensureRelayToken()).catch((err) => {
     console.error('[pet] Gemini 轮询中转启动失败:', err);
     return geminiRelay.getStatus();
   });
@@ -398,8 +426,12 @@ ipcMain.handle('save-api-config', async (_e, patch) => {
   if (relayStatus.port && relayStatus.port !== next.llmRelayPort) {
     saveApiConfig({ llmRelayPort: relayStatus.port });
   }
-  return { ...next, relayStatus };
+  return { ...getApiConfigForRenderer(), relayStatus };
 });
+// 删除设置窗口里"已保存的 API 地址"下拉中的一条，返回删除后的列表
+ipcMain.handle('delete-api-profile', (_e, url) =>
+  deleteApiProfile(typeof url === 'string' ? url : '').map((p) => ({ api_url: p.api_url, api_key: maskSecret(p.api_key) }))
+);
 ipcMain.handle('get-relay-status', () => geminiRelay.getStatus());
 ipcMain.handle('get-prompt-config', () => getPromptConfig());
 ipcMain.handle('save-prompt-config', (_e, patch) => savePromptConfig(patch && typeof patch === 'object' ? patch : {}));
@@ -424,7 +456,10 @@ ipcMain.handle('save-persona', (_e, characterName, system, storyBackground) => {
   });
   return true;
 });
-ipcMain.handle('fetch-model-list', (_e, apiUrl, apiKey) => fetchModelList(apiUrl, apiKey));
+ipcMain.handle('fetch-model-list', (_e, apiUrl, apiKey) => {
+  const url = typeof apiUrl === 'string' ? apiUrl : '';
+  return fetchModelList(url, resolveApiKeyForUrl(url, typeof apiKey === 'string' ? apiKey : ''));
+});
 // 窗口刚打开时查一下当前有没有在等回复的对话（之后的变化走 chat-pending-changed 推送）
 ipcMain.handle('get-chat-pending', () => getChatPending());
 ipcMain.handle('get-chat-history', (_e, characterName) => {
@@ -448,15 +483,20 @@ ipcMain.handle('get-llm-log', () => getLatestLlmCall());
 // 密钥是各角色共用的，音色参数按角色分开存；试听用表单当前值，不要求先保存
 ipcMain.handle('tts-get-config', (_e, characterName) => {
   if (!validCharacter(characterName)) throw new Error('未知角色');
-  return { characterName, ...getTtsConfig(characterName), presets: getPresets() };
+  const cfg = getTtsConfig(characterName);
+  return { characterName, ...cfg, providers: maskProviders(cfg.providers), presets: getPresets() };
 });
 ipcMain.handle('tts-save-config', (_e, characterName, payload) => {
   if (!validCharacter(characterName)) throw new Error('未知角色');
-  return saveTtsConfig(characterName, payload && typeof payload === 'object' ? payload : {});
+  const p = payload && typeof payload === 'object' ? payload : {};
+  // 表单里原样传回的遮罩密钥要还原成已存的真实密钥
+  const saved = saveTtsConfig(characterName, { ...p, providers: p.providers ? resolveProvidersInput(p.providers) : undefined });
+  return { ...saved, providers: maskProviders(saved.providers) };
 });
 ipcMain.handle('tts-test', (_e, characterName, payload, text) => {
   if (!validCharacter(characterName)) throw new Error('未知角色');
-  return testVoice(payload && typeof payload === 'object' ? payload : {}, typeof text === 'string' ? text : '');
+  const p = payload && typeof payload === 'object' ? payload : {};
+  return testVoice({ ...p, providers: resolveProvidersInput(p.providers) }, typeof text === 'string' ? text : '');
 });
 // MiMo 音色复刻：弹系统文件选择框，选中的参考音频复制进用户数据目录，返回元信息给设置窗口
 ipcMain.handle('tts-pick-clone-audio', async (e, characterName) => {
@@ -548,7 +588,7 @@ ipcMain.handle('asr-save-config', (_e, patch) => saveAsrConfig(patch && typeof p
 // ---------- IPC：聊天记录的编辑 / 添加 / 删除 / 清空（聊天记录窗口用） ----------
 // 和 chat-send 一样校验角色名（防路径注入），内容按索引定位——history.html 渲染顺序就是数组顺序。
 function validCharacter(characterName) {
-  return typeof characterName === 'string' && state.characters.some((c) => c.name === characterName);
+  return typeof characterName === 'string' && isSafeName(characterName) && state.characters.some((c) => c.name === characterName);
 }
 
 ipcMain.handle('edit-chat-message', (_e, characterName, index, content) => {

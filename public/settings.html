@@ -99,6 +99,59 @@
   }
   .model-row button:active { background: #ffe9ee; }
   .model-row button:disabled { opacity: 0.5; cursor: default; }
+  /* API Base URL 下拉选择：输入框 + ▾ 按钮 + 已保存地址列表 */
+  .combo { position: relative; display: flex; gap: 8px; }
+  .combo input { flex: 1; min-width: 0; }
+  .combo > button {
+    padding: 0 12px;
+    border: 1px solid #e04060;
+    border-radius: 8px;
+    background: #fff;
+    color: #e04060;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .combo > button:active { background: #ffe9ee; }
+  .combo-list {
+    display: none;
+    position: absolute;
+    left: 0; right: 0; top: 100%;
+    margin-top: 4px;
+    max-height: 190px;
+    overflow-y: auto;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+    z-index: 20;
+  }
+  .combo-list.show { display: block; }
+  .combo-empty { padding: 10px; font-size: 12px; color: #aaa; }
+  .combo-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .combo-item:hover { background: #fff3f5; }
+  .combo-item.active { background: #ffe9ee; }
+  .combo-item .url { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #333; }
+  .combo-item .key { color: #aaa; font-size: 11px; white-space: nowrap; }
+  .combo-item .del {
+    border: none;
+    background: transparent;
+    color: #bbb;
+    font-size: 14px;
+    line-height: 1;
+    padding: 2px 4px;
+    border-radius: 4px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .combo-item .del:hover { color: #e04060; background: #ffe9ee; }
+  .combo-item .del.armed { color: #fff; background: #e04060; font-size: 11px; padding: 3px 6px; }
   #model_select { margin-top: 6px; display: none; }
   #model_select.show { display: block; }
 </style>
@@ -108,8 +161,12 @@
   <p class="desc">通用 OpenAI 兼容接口配置，支持任意兼容平台（OpenAI / DeepSeek / 各类中转等）</p>
 
   <label>API Base URL</label>
-  <input id="api_url" placeholder="例如 https://api.openai.com/v1" />
-  <p class="tip">填到 /v1 为止即可，程序会自动拼接 /chat/completions</p>
+  <div class="combo" id="url_combo">
+    <input id="api_url" placeholder="例如 https://api.openai.com/v1" autocomplete="off" />
+    <button id="url_toggle" type="button" title="选择已保存的地址">▾</button>
+    <div id="url_list" class="combo-list"></div>
+  </div>
+  <p class="tip">填到 /v1 为止即可，程序会自动拼接 /chat/completions。点右侧 ▾ 可选择保存过的地址，会自动填入对应的密钥</p>
 
   <label>API Key</label>
   <input id="api_key" type="password" placeholder="sk-..." />
@@ -204,7 +261,7 @@
   function applyRelayStatus(status) {
     relayRunning = !!(status && status.running);
     $('relay-status-tip').textContent = relayRunning
-      ? `已启动。API Base URL 可输入 http://127.0.0.1:${status.port}/v1 测试`
+      ? `已启动。API Base URL 可输入 http://127.0.0.1:${status.port}/v1 测试（API Key 可留空，访问口令由程序自动带上）。已保存的 Key 只显示末四位，不改动就保持原样`
       : '';
     updateRelayButton();
   }
@@ -231,8 +288,98 @@
     }
   });
 
+  // ---------- API Base URL 下拉：已保存的 地址+密钥 ----------
+  let apiProfiles = [];
+  const normUrl = (u) => String(u || '').trim().replace(/\/+$/, '');
+  // 主进程传来的密钥本身就是遮罩后的（••••abcd），这里直接显示
+  const maskKey = (k) => (k ? k : '无密钥');
+
+  function renderUrlList() {
+    const box = $('url_list');
+    box.innerHTML = '';
+    if (!apiProfiles.length) {
+      const empty = document.createElement('div');
+      empty.className = 'combo-empty';
+      empty.textContent = '还没有保存过的地址（点保存后会出现在这里）';
+      box.appendChild(empty);
+      return;
+    }
+    const current = normUrl($('api_url').value);
+    for (const p of apiProfiles) {
+      const item = document.createElement('div');
+      item.className = 'combo-item' + (normUrl(p.api_url) === current ? ' active' : '');
+      item.title = p.api_url;
+
+      const url = document.createElement('span');
+      url.className = 'url';
+      url.textContent = p.api_url;
+
+      const key = document.createElement('span');
+      key.className = 'key';
+      key.textContent = maskKey(p.api_key);
+
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'del';
+      del.textContent = '✕';
+      del.title = '删除这条保存的地址和密钥';
+      let armTimer = null;
+      del.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        // 两步确认：第一次点变成"确认删除"，3 秒内再点才真删（密钥删了找不回来）
+        if (!del.classList.contains('armed')) {
+          del.classList.add('armed');
+          del.textContent = '确认删除';
+          armTimer = setTimeout(() => {
+            del.classList.remove('armed');
+            del.textContent = '✕';
+          }, 3000);
+          return;
+        }
+        clearTimeout(armTimer);
+        try {
+          apiProfiles = await window.petAPI.deleteApiProfile(p.api_url);
+          renderUrlList();
+        } catch (err) {
+          setStatus('删除失败：' + (err && err.message ? err.message : String(err)), 'err');
+        }
+      });
+
+      item.addEventListener('click', () => {
+        $('api_url').value = p.api_url;
+        $('api_key').value = p.api_key || '';
+        closeUrlList();
+      });
+
+      item.append(url, key, del);
+      box.appendChild(item);
+    }
+  }
+
+  function closeUrlList() {
+    $('url_list').classList.remove('show');
+  }
+
+  $('url_toggle').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const box = $('url_list');
+    if (box.classList.contains('show')) {
+      closeUrlList();
+    } else {
+      renderUrlList();
+      box.classList.add('show');
+    }
+  });
+  document.addEventListener('click', (e) => {
+    if (!$('url_combo').contains(e.target)) closeUrlList();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeUrlList();
+  });
+
   async function load() {
     const cfg = await window.petAPI.getApiConfig();
+    apiProfiles = cfg.apiProfiles || [];
     $('api_url').value = cfg.api_url || '';
     $('api_key').value = cfg.api_key || '';
     $('model').value = cfg.model || '';

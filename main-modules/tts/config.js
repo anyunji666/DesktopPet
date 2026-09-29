@@ -4,6 +4,7 @@
 //   characters —— 以角色名为 key，每个角色自己的"服务商 + 各家音色参数"
 // 每个角色把三家的参数都留着（provider 只决定当前用哪家），切换服务商对比试音时不用重填。
 const { loadConfig, updateConfig } = require('../config');
+const { maskSecret, resolveSecretInput } = require('../security');
 
 const PROVIDERS = ['off', 'edge', 'doubao', 'mimo'];
 const MIMO_MODES = ['preset', 'clone'];
@@ -94,4 +95,26 @@ function saveTtsConfig(characterName, payload) {
   return { providers, voice };
 }
 
-module.exports = { normalizeProviders, normalizeVoice, getTtsConfig, saveTtsConfig };
+// ---------- 给渲染进程看的版本：语音服务密钥遮罩 ----------
+// 设置窗口拿到的 access_key / api_key 是遮罩（••••abcd），真实密钥不离开主进程；
+// 保存 / 试听时表单里原样传回遮罩，就还原成当前已存的真实密钥
+function maskProviders(providers) {
+  const p = normalizeProviders(providers);
+  return {
+    doubao: { app_id: p.doubao.app_id, access_key: maskSecret(p.doubao.access_key) },
+    mimo: { api_key: maskSecret(p.mimo.api_key), base_url: p.mimo.base_url },
+  };
+}
+
+function resolveProvidersInput(input) {
+  const cur = normalizeProviders(readAll().providers);
+  const src = input && typeof input === 'object' ? input : {};
+  const d = src.doubao && typeof src.doubao === 'object' ? src.doubao : {};
+  const m = src.mimo && typeof src.mimo === 'object' ? src.mimo : {};
+  return {
+    doubao: { app_id: d.app_id, access_key: resolveSecretInput(d.access_key, [cur.doubao.access_key]) },
+    mimo: { api_key: resolveSecretInput(m.api_key, [cur.mimo.api_key]), base_url: m.base_url },
+  };
+}
+
+module.exports = { normalizeProviders, normalizeVoice, getTtsConfig, saveTtsConfig, maskProviders, resolveProvidersInput };

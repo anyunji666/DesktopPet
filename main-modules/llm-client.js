@@ -2,6 +2,19 @@
 // 只管"把请求发出去并拿回结果"：读 API 配置（来自 llm.js）、发 OpenAI 兼容请求、超时处理、记最近一次调用。
 // 依赖方向：本文件 -> llm.js（只取 getApiConfig）；llm.js 不能反向 require 本文件，否则会循环依赖。
 const { getApiConfig } = require('./llm');
+const geminiRelay = require('./gemini-relay');
+
+// 请求地址指向本机的 Gemini 中转时，自动带上中转的访问口令，用户不用手填。
+// 只对"本机 + 中转当前端口"生效，口令绝不会发给任何其它地址
+function relayTokenFor(url, cfg) {
+  try {
+    const u = new URL(url);
+    const isLocal = u.hostname === '127.0.0.1' || u.hostname === 'localhost' || u.hostname === '[::1]';
+    const relayPort = geminiRelay.getStatus().port || cfg.llmRelayPort;
+    if (isLocal && relayPort && Number(u.port) === relayPort && cfg.relayToken) return cfg.relayToken;
+  } catch {}
+  return '';
+}
 
 // ---------- 审查用：最近一次 LLM 调用的请求/回复 ----------
 // 只留最近 1 次（请求+回复算一条），正常回复和归档摘要两种调用都算在内，不区分类型，谁最后调用完就显示谁的。
@@ -50,10 +63,12 @@ async function callLLM(messages, label = '对话回复') {
   const cfg = getApiConfig();
   if (!cfg.api_url) throw new Error('未配置 API Base URL，请先在"⚙ API 设置"里填写');
   if (!cfg.model) throw new Error('未配置模型名称，请先在"⚙ API 设置"里填写');
-  if (!cfg.api_key) throw new Error('未配置 API Key，请先在"⚙ API 设置"里填写');
 
   const baseUrl = cfg.api_url.replace(/\/$/, '');
   const url = baseUrl.endsWith('/chat/completions') ? baseUrl : baseUrl + '/chat/completions';
+  // 走本地中转时口令自动带上，不再要求填 API Key；其它地址仍必须有 Key
+  const bearer = relayTokenFor(url, cfg) || cfg.api_key;
+  if (!bearer) throw new Error('未配置 API Key，请先在"⚙ API 设置"里填写');
 
   // === 发请求 + 读响应体（共用一个 120 秒计时器）===
   const controller = new AbortController();
@@ -69,7 +84,7 @@ async function callLLM(messages, label = '对话回复') {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${cfg.api_key}`,
+        Authorization: `Bearer ${bearer}`,
       },
       body: JSON.stringify({
         model: cfg.model,
@@ -118,11 +133,12 @@ async function fetchModelList(apiUrl, apiKey) {
   if (!apiUrl) throw new Error('请先填写 API Base URL');
   const baseUrl = apiUrl.replace(/\/$/, '');
   const url = baseUrl.endsWith('/models') ? baseUrl : `${baseUrl}/models`;
+  const bearer = relayTokenFor(url, getApiConfig()) || apiKey;
   const resp = await fetch(url, {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
-      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+      ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
     },
   });
   const rawText = await resp.text();
