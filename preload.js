@@ -18,7 +18,10 @@ contextBridge.exposeInMainWorld('petAPI', {
   setClickThrough: (ignore) => ipcRenderer.send('set-click-through', ignore),
   // 主进程推送：右键菜单切换背景鼠标互动时，进入/退出桌面模式（进入时带上视口 = 普通窗口的位置/大小）
   onEnterDesktopMode: (cb) => ipcRenderer.on('enter-desktop-mode', (_e, data) => cb(data)),
-  onExitDesktopMode: (cb) => ipcRenderer.on('exit-desktop-mode', () => cb()),
+  onExitDesktopMode: (cb) => ipcRenderer.on('exit-desktop-mode', (_e, data) => cb(data)),
+  // 进出桌面模式前，主进程先通知盖住画面（隐藏视口），渲染进程盖好后回一个确认，主进程再改窗口几何
+  onDesktopTransitionBegin: (cb) => ipcRenderer.on('desktop-transition-begin', () => cb()),
+  notifyDesktopTransitionReady: () => ipcRenderer.send('desktop-transition-ready'),
   // 桌面模式下新开子窗口（聊天记录/设置等）前后，主进程通知暂停/恢复渲染循环，
   // 避免宠物那个纵向展开的透明覆盖层跟子窗口的首次绘制抢 GPU/合成资源
   onPauseRender: (cb) => ipcRenderer.on('pause-render', () => cb()),

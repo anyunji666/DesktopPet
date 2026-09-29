@@ -101,22 +101,54 @@ function applyViewportRect(rect) {
 }
 applyViewportRect(fullWindowRect());
 
+// ---- 进出桌面模式的过渡遮盖 ----
+// 主进程改窗口几何和下发新视口是两步，中间那一小段窗口已经变了、视口还是旧的，
+// 模型会被画在错误位置上（闪一下）。主进程改窗口之前先发 desktop-transition-begin，
+// 这里给 body 加 mode-switching（CSS 里隐藏视口和气泡）、等这一帧真正画出去后回确认；
+// 新视口应用完（enter/exit 处理函数末尾）再摘掉。过渡期间忽略 window 的 resize 事件，
+// 不让中间状态的窗口尺寸改写视口。
+let modeSwitching = false;
+let modeSwitchTimer = null;
+
+function beginModeSwitchCover() {
+  modeSwitching = true;
+  document.body.classList.add('mode-switching');
+  clearTimeout(modeSwitchTimer);
+  // 兜底：万一后续的 enter/exit 消息一直没到，不能让画面永远藏着
+  modeSwitchTimer = setTimeout(endModeSwitchCover, 1500);
+  // 两层 rAF：确保隐藏样式已经随一帧提交到屏幕，主进程收到确认再改窗口
+  requestAnimationFrame(() => requestAnimationFrame(() => window.petAPI.notifyDesktopTransitionReady()));
+}
+
+function endModeSwitchCover() {
+  modeSwitching = false;
+  clearTimeout(modeSwitchTimer);
+  // 新视口的样式/canvas 尺寸要先随一帧画好，再显示
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (!modeSwitching) document.body.classList.remove('mode-switching');
+  }));
+}
+
 function enterDesktopModeUI(viewport) {
   desktopMode = true;
   document.body.classList.add('desktop-mode');
   applyViewportRect(viewport);
   lastIgnoreMouse = true; // 主进程那边进入桌面模式时已经开了穿透，这里对齐一下缓存，避免重复发送
+  endModeSwitchCover();
 }
 
-function exitDesktopModeUI() {
+function exitDesktopModeUI(viewport) {
   desktopMode = false;
   document.body.classList.remove('desktop-mode');
-  applyViewportRect(fullWindowRect());
+  // 优先用主进程下发的目标尺寸；窗口刚缩小时 window.innerHeight 可能还是旧值
+  applyViewportRect(viewport || fullWindowRect());
   lastIgnoreMouse = false;
+  endModeSwitchCover();
 }
 
+window.petAPI.onDesktopTransitionBegin(() => beginModeSwitchCover());
 window.petAPI.onEnterDesktopMode((data) => enterDesktopModeUI(data.viewport));
-window.petAPI.onExitDesktopMode(() => exitDesktopModeUI());
+window.petAPI.onExitDesktopMode((data) => exitDesktopModeUI(data && data.viewport));
 
 // 桌面模式下新开子窗口（聊天记录/设置等）时，主进程会通知这边暂停渲染循环，
 // 让出 GPU/合成资源给新窗口的首次绘制，加载完/超时兜底后主进程会再通知恢复
@@ -314,6 +346,14 @@ document.addEventListener('mouseup', (e) => {
 
 document.addEventListener('contextmenu', (e) => {
   e.preventDefault();
+  // 桌面模式下只有点在模型或展开的对话框上才弹菜单。
+  // 原生菜单打开期间窗口收不到 mousemove，穿透状态停在\"不穿透\"，菜单被空白处的右键关掉时，
+  // 这次点击会落到窗口上再触发一次 contextmenu；这里不在可交互区域就不弹，
+  // 并立即把穿透状态纠正回来，下一次点击就能正常穿透到桌面。
+  if (desktopMode && !(hitModel(e) || isOverChatBox(e))) {
+    setClickThrough(true);
+    return;
+  }
   window.petAPI.showMenu();
 });
 
@@ -423,7 +463,7 @@ window.petAPI.onSceneAdjust((adj) => {
 window.addEventListener('resize', () => {
   // 桌面模式下真实窗口比视口高，视口的位置/大小由主进程在进入桌面模式时下发，
   // 不能跟着真实窗口的 resize 事件走
-  if (desktopMode) return;
+  if (desktopMode || modeSwitching) return;
   applyViewportRect(fullWindowRect());
 });
 

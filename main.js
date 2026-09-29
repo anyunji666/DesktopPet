@@ -15,6 +15,7 @@ const geminiRelay = require('./main-modules/gemini-relay');
 const { hardenWebContents, hardenSession, guardIpc, isSafeName, maskSecret } = require('./main-modules/security');
 const { state } = require('./main-modules/state');
 const { constrainMove, constrainResize } = require('./main-modules/win-limit');
+const { requestClickThrough } = require('./main-modules/drag-guard');
 const { beginChat, endChat, getChatPending, assertHistoryEditable } = require('./main-modules/chat-lock');
 const { planCrossDaySummary, runChatTurn } = require('./main-modules/chat-turn');
 const { exportToFile, importFromFile } = require('./main-modules/chat-transfer');
@@ -354,10 +355,8 @@ ipcMain.on('window-resize-by', (_e, dx) => {
 // 桌面模式下，渲染进程每次"是否悬停在模型/展开的对话框上"这个判定结果变化时上报一次
 // （不是每帧都发，见 app.js 里的防抖），据此切换窗口是否穿透鼠标事件。
 // 非桌面模式下这个开关本来就没打开，忽略即可，不需要额外判断。
-ipcMain.on('set-click-through', (_e, ignore) => {
-  if (!state.win || state.win.isDestroyed() || state.bgMouseInteraction) return;
-  state.win.setIgnoreMouseEvents(!!ignore, { forward: true });
-});
+// 子窗口正在被拖动/缩放时不立刻生效，只记下最新值、拖完再恢复（见 main-modules/drag-guard.js）。
+ipcMain.on('set-click-through', (_e, ignore) => requestClickThrough(ignore));
 
 ipcMain.on('scene-adjust-save', (_e, name, adj) => {
   if (typeof name !== 'string' || !state.scenes.some((s) => s.name === name)) return;
@@ -655,7 +654,7 @@ ipcMain.handle('export-chat-history', async (e, characterName) => {
   const d = new Date();
   const pad = (n) => String(n).padStart(2, '0');
   const opts = {
-    title: '导出聊天记录',
+    title: '记录导出',
     defaultPath: `${characterName}-聊天记录-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}.json`,
     filters: [{ name: 'JSON', extensions: ['json'] }],
   };
@@ -669,7 +668,7 @@ ipcMain.handle('import-chat-history', async (e, characterName) => {
   assertHistoryEditable(characterName); // 正在等这个角色的回复时不允许改记录
   const parent = BrowserWindow.fromWebContents(e.sender);
   const opts = {
-    title: '导入聊天记录（会覆盖当前记录）',
+    title: '记录导入（会覆盖当前记录）',
     properties: ['openFile'],
     filters: [{ name: 'JSON', extensions: ['json'] }],
   };

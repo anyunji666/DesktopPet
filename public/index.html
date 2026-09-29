@@ -27,6 +27,10 @@
       position: fixed;
       inset: 0;
     }
+    /* 进出桌面模式的过渡遮盖：主进程改窗口几何期间视口和气泡先藏起来，
+       新视口应用完再显示（见 app.js 的 beginModeSwitchCover），避免模型闪现在错误位置 */
+    body.mode-switching #viewport,
+    body.mode-switching #bubble { visibility: hidden !important; }
     /* 场景背景层：位于 three.js 画布下方，无场景时为空（窗口保持透明） */
     #scene-bg {
       position: absolute;
