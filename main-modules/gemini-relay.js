@@ -261,7 +261,7 @@ async function handleChatCompletions(payload, res) {
 
 // 请求入口，逐层设卡：
 //   1. Host 校验：Host 头必须是 127.0.0.1/localhost + 本服务端口（挡 DNS rebinding）
-//   2. 拒绝浏览器发来的请求：带 Origin / Sec-Fetch-* 头的一律不处理（挡网页对本机端口的跨站请求）
+//   2. 拒绝浏览器发来的请求：带 Origin / Sec-Fetch-Site 头的一律不处理（挡网页对本机端口的跨站请求；Sec-Fetch-Mode 不查，Node 自带 fetch 会固定带它）
 //   3. Bearer token：桌宠自己请求时由主进程自动带上，其它程序不知道口令就进不来
 //   4. 限频 + 请求体上限 + 必须是 JSON
 // 任何情况下都不返回 CORS 头，也不响应 OPTIONS 预检。
@@ -271,7 +271,7 @@ function requestHandler(req, res) {
   if (!isAllowedHost(req.headers.host, port)) {
     return sendJson(res, 403, { error: { message: 'Forbidden host' } });
   }
-  if (req.headers.origin !== undefined || req.headers['sec-fetch-site'] !== undefined || req.headers['sec-fetch-mode'] !== undefined) {
+  if (req.headers.origin !== undefined || req.headers['sec-fetch-site'] !== undefined) {
     return sendJson(res, 403, { error: { message: 'Browser requests are not allowed' } });
   }
   if (req.method === 'OPTIONS') {
