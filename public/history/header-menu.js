@@ -108,7 +108,7 @@ menuExportBtn.addEventListener('click', async () => {
 menuImportBtn.addEventListener('click', async () => {
   closeMenu();
   if (editLocked()) return notifyEditLocked();
-  if (!(await confirmDialog(`导入会用文件里的内容覆盖和「${characterName}」现有的全部聊天记录（包括按天摘要和长期记忆），此操作不可撤销。建议先导出备份。继续选择文件吗？`))) return;
+  if (!(await confirmDialog(`导入会用文件里的内容覆盖和「${characterName}」现有的全部聊天记录（包括按天总结和长期记忆），此操作不可撤销。建议先导出备份。继续选择文件吗？`))) return;
   if (editLocked()) return notifyEditLocked(); // 确认期间刚好发出了新消息
   try {
     const r = await window.petAPI.importChatHistory(characterName);

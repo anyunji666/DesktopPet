@@ -1,13 +1,14 @@
 // ---------- AI 对话的"一次只能发一条"锁 ----------
 // 主界面输入框和聊天记录窗口都能发消息，而一条消息从发出到回复落盘之间有一段不短的等待
-// （LLM 请求 + 可能的跨天摘要）。这期间：
+// （LLM 请求 + 可能的跨天总结）。这期间：
 //   1) 不允许再发第二条（两个窗口共用同一把锁，任何一边在等，另一边也发不了）
 //   2) 不允许改动同一角色的聊天记录（编辑/插入/删除/清空），否则 chat-send 结尾整份落盘时会把改动覆盖掉
 // 锁放在主进程，不依赖任何一个窗口自己的界面状态；界面上的禁用只是给人看的，真正的拦截在这里。
 // 状态存在 state.chatPending 上，开始/结束都会广播给主窗口和聊天记录窗口，两边按钮据此联动。
 // 锁内分两个阶段（phase），只影响界面上给人看的提示文案，不影响拦截规则：
-//   'summarizing'：跨天了，正在先整理上一日对话摘要（这次 LLM 调用完才会去生成回复）
-//   'waiting'    ：等待 LLM 回复（没有摘要要做的对话从头到尾都是这个阶段）
+//   'summarizing'：跨天了，正在先给某一天生成总结（这次 LLM 调用完才会去生成回复）。被总结的不一定是昨天：
+//                  昨天是"上一个封印包"、保持展开，通常摘的是更早的一天，日期放在 summaryDay 里给界面显示
+//   'waiting'    ：等待 LLM 回复（没有总结要做的对话从头到尾都是这个阶段）
 const { state } = require('./state');
 
 function sendTo(win, channel, payload) {
@@ -16,7 +17,7 @@ function sendTo(win, channel, payload) {
 
 // 主窗口只需要知道"有人在等"，不用带上用户消息/图片
 function lightPending(p) {
-  return p ? { character: p.character, source: p.source, phase: p.phase } : null;
+  return p ? { character: p.character, source: p.source, phase: p.phase, summaryDay: p.summaryDay } : null;
 }
 
 function broadcastPending() {
@@ -27,14 +28,15 @@ function broadcastPending() {
 }
 
 // 开始一轮对话：已经有一轮在等就抛错（这就是"一次只能发一条"的兜底），否则上锁并广播
-// phase 是起始阶段：已知要先做跨天摘要就传 'summarizing'，这样界面从一开始就显示对的提示，不会先闪一下"等待回复"
-function beginChat({ character, source, user, imageDataURL, phase = 'waiting' }) {
+// phase 是起始阶段：已知要先做跨天总结就传 'summarizing'，这样界面从一开始就显示对的提示，不会先闪一下"等待回复"
+// summaryDay：phase 为 'summarizing' 时被总结的那天（YYYY-MM-DD），只用于界面提示
+function beginChat({ character, source, user, imageDataURL, phase = 'waiting', summaryDay = null }) {
   if (state.chatPending) throw new Error('上一条消息还没有回复，请等它回复或报错后再发送');
-  state.chatPending = { character, source, user, imageDataURL: imageDataURL || null, ts: Date.now(), phase };
+  state.chatPending = { character, source, user, imageDataURL: imageDataURL || null, ts: Date.now(), phase, summaryDay };
   broadcastPending();
 }
 
-// 切换阶段并广播（比如摘要整理完了，进入等待回复）。没有在等的对话、或阶段没变就什么都不做
+// 切换阶段并广播（比如总结整理完了，进入等待回复）。没有在等的对话、或阶段没变就什么都不做
 function setChatPhase(phase) {
   const p = state.chatPending;
   if (!p || p.phase === phase) return;

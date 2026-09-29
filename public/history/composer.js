@@ -1,7 +1,7 @@
 // ---------------- 底部输入条：发送文字 / 图片 ----------------
 // 选文件 / 粘贴 -> 压缩 -> 预览，随下一条消息一起发出。语音输入见 voice-input.js。
 import { characterName, chatInput, micBtn } from './state.js';
-import { lock, PENDING_PLACEHOLDER, pendingPhase, onPendingChange } from './pending.js';
+import { lock, pendingPlaceholder, onPendingChange } from './pending.js';
 import { alertError } from './toast.js';
 
 const sendBtn = document.getElementById('send-btn');
@@ -23,7 +23,7 @@ export function applyComposerLock() {
   sendBtn.disabled = sl;
   micBtn.disabled = sl;
   imgBtn.disabled = sl;
-  if (sl) chatInput.placeholder = PENDING_PLACEHOLDER[pendingPhase()];
+  if (sl) chatInput.placeholder = pendingPlaceholder();
   else chatInput.placeholder = micBtn.classList.contains('recording') ? '正在听，点击⏹停止…' : '想对TA说点什么…';
 }
 onPendingChange(applyComposerLock);

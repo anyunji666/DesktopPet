@@ -203,8 +203,8 @@ const PROMPT_FOOTER = `## **必须遵守的强制性输出规则**
   概述: 女主借口漏水深夜造访男主公寓，实则想拖延离开、试探男主的态度；男主识破了这个借口，却仍配合她演下去，两人关系从单纯的房东房客多了一层暧昧的试探。
   </story_overview>`;
 
-// 生成"某天聊天摘要"用的 prompt：单独一次总结任务，不带角色人设/语气/输出格式那些约束，
-// 避免摘要文本也带上角色口癖，污染归档内容。前置词（prefix）是全局的、给 AI 本身设定身份用的，
+// 生成"某天聊天总结"用的 prompt：单独一次总结任务，不带角色人设/语气/输出格式那些约束，
+// 避免总结文本也带上角色口癖，污染归档内容。前置词（prefix）是全局的、给 AI 本身设定身份用的，
 // 跟 buildPromptText 一样带上，保持这次调用里模型对自己是谁的认知一致。具体措辞先占位，后续再调整。
 function buildSummaryPrompt(characterName, dayKey, dayLines) {
   const { prefix } = getPromptConfig();
@@ -214,8 +214,8 @@ function buildSummaryPrompt(characterName, dayKey, dayLines) {
   parts.push(dayLines.join('\n'));
   parts.push('');
   parts.push('请按下面的格式输出，两部分都要给：');
-  parts.push('[摘要]');
-  parts.push('（不超过100字总结这天聊了什么；内容太多压不进100字就列几个要点，不需要覆盖所有细节，不要加"摘要："前缀，不要用分点符号）');
+  parts.push('[总结]');
+  parts.push('（不超过100字总结这天聊了什么；内容太多压不进100字就列几个要点，不需要覆盖所有细节，不要加"总结："前缀，不要用分点符号）');
   parts.push('[记忆]');
   parts.push('（这天对话里出现的、值得长期记住的用户偏好/重要设定，浓缩成标签风格的关键词/短语，不要写完整句子，一行一条，每条不超过20字；有时效性的约定/日程不算，没有就只写"无"）');
   return parts.join('\n');
@@ -248,7 +248,7 @@ function buildPromptText(characterName, history, text) {
   if (readerInfo.trim()) {
     parts.push(`<user_persona>\n<!-- 用户所扮演的角色设定资料 -->\n${readerInfo.trim()}\n</user_persona>`);
   }
-  // hot 记忆索引：常驻的、只存"用户偏好/重要设定"这类没有时效性的长期结论的小索引，由跨天摘要/滚动摘要
+  // hot 记忆索引：常驻的、只存"用户偏好/重要设定"这类没有时效性的长期结论的小索引，由跨天总结/滚动总结
   // 那次 LLM 调用顺带产出并追加，不需要每轮从全量历史里现猜。没内容就不发这一段
   const memoryIndex = loadMemoryIndex(characterName);
   if (memoryIndex.trim()) {
@@ -257,13 +257,13 @@ function buildPromptText(characterName, history, text) {
   parts.push('---');
   // ---- 以上是固定前缀，以下是每轮都会变化的内容 ----
   if (chatHistoryText.trim()) {
-    parts.push(`<chat_history>\n<!-- 对话记录，按时间顺序排列；"某年某月某日 旧对话封印包"表示当天聊过，但内容已收起并未发送给你 -->\n${chatHistoryText}\n</chat_history>`);
+    parts.push(`<chat_history>\n<!-- 对话记录，按时间顺序排列；元时间指实际聊天日期，不同于故事时间 -->\n${chatHistoryText}\n</chat_history>`);
   }
   // 故事时间的星期 + 国际/中国节日（取自上一轮摘要的"故事时间"，解析不出日期就不发这一段）。
   // 每轮都会变，所以放在固定前缀之后、紧贴 user_input，不破坏前缀缓存
   const festivalBlock = buildFestivalBlock(history);
   if (festivalBlock) parts.push(festivalBlock);
-  parts.push(`<user_input>\n<!-- 用户本轮最新输入，当前系统时间：${nowText} -->\n[${nowText}] ${text}\n</user_input>`);
+  parts.push(`<user_input>\n<!-- 用户本轮最新输入，元时间 ${nowText} -->\n${text}\n</user_input>`);
   parts.push('---');
   parts.push(INPUT_NOTE);
   parts.push('---');

@@ -1,6 +1,6 @@
 // ---------- 聊天历史处理：文本清洗 / 按天封存 / 摊平成 prompt 文本 ----------
-// 只管"历史怎么变成一段文本"：括号元指令过滤、<story_overview> 摘要块拆分、自然日分组、封存天摘要预算、
-// 轮次压缩、跨天摘要的解析。不碰 API 配置、不碰 prompt 模板、不发请求。
+// 只管"历史怎么变成一段文本"：括号元指令过滤、<story_overview> 摘要块拆分、自然日分组、封存天总结预算、
+// 轮次压缩、跨天总结的解析。不碰 API 配置、不碰 prompt 模板、不发请求。
 // 依赖方向：本文件只依赖 chat-store / date-detect，被 llm.js（拼 prompt）和 chat-turn.js（一轮对话流程）引用，
 // 不能反过来 require llm.js，否则会循环依赖。
 const { loadDaySummary, loadOpenedDay, saveOpenedDay } = require('./chat-store');
@@ -45,11 +45,11 @@ function extractTurnSummary(content) {
     .trim();
 }
 
-// 把 epoch 毫秒格式化成 "YYYY-MM-DD HH:mm"（精确到分钟，本地时区）
+// 把 epoch 毫秒格式化成 "YYYY年M月D日 HH:mm"（精确到分钟，本地时区；月/日不补零，与 formatDayCN 一致，时分补零）
 function formatMinuteTime(ts) {
   const d = new Date(ts);
   const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 // 把 ts 归到本地自然日 key："YYYY-MM-DD"（补零，仅用于分组/比较）
@@ -66,7 +66,7 @@ function formatDayCN(dayKey) {
 }
 
 // "上一个封存包"：history 里所有早于 refDayKey 的日子中最新的那一天（不管隔了几天），没有则返回 null。
-// 摊平历史（今天 vs 上一个封存包）、以及主进程判断"跨天了要不要先补摘要"都靠这个算，抽出来两边共用。
+// 摊平历史（今天 vs 上一个封存包）、以及主进程判断"跨天了要不要先补总结"都靠这个算，抽出来两边共用。
 function computeLastPastDayKey(history, refDayKey) {
   let lastPastDayKey = null;
   for (const h of history) {
@@ -77,7 +77,7 @@ function computeLastPastDayKey(history, refDayKey) {
   return lastPastDayKey;
 }
 
-// 摊平某一天的原始对话为 "speaker: content" 文本行，不带时间戳/日期分组——只给"生成这天的摘要"这个场景用，
+// 摊平某一天的原始对话为 "speaker: content" 文本行，不带时间戳/日期分组——只给"生成这天的总结"这个场景用，
 // 和 flattenChatHistory 里发给正式回复 prompt 的格式（带时间戳、按天分组）是两回事。
 function flattenDayLines(characterName, history, dayKey) {
   const lines = [];
@@ -91,11 +91,12 @@ function flattenDayLines(characterName, history, dayKey) {
   return lines;
 }
 
-// 解析 buildSummaryPrompt 要求的 "[摘要]...[记忆]..." 两段式输出。
-// 两个标记只要有一个缺失就把全文当摘要，不强依赖格式一定标准，LLM 偶尔不听话也不至于直接崩。
+// 解析 buildSummaryPrompt 要求的 "[总结]...[记忆]..." 两段式输出（同时兼容旧标记 [摘要]，两个标记都是 4 个字符，切片偏移一致）。
+// 两个标记只要有一个缺失就把全文当总结，不强依赖格式一定标准，LLM 偶尔不听话也不至于直接崩。
 function parseSummaryAndMemory(rawText) {
   const text = (rawText || '').trim();
-  const sumIdx = text.indexOf('[摘要]');
+  const sumMatch = /\[(?:总结|摘要)\]/.exec(text);
+  const sumIdx = sumMatch ? sumMatch.index : -1;
   const memIdx = text.indexOf('[记忆]');
   let summaryPart = text;
   let memPart = '';
@@ -138,7 +139,7 @@ function resolveOpenedDayKey(characterName, currentInputText, todayKey, lastPast
   return stored && stored.markedOnDay === todayKey ? stored.dayKey : null;
 }
 
-// 所有"封存天"（不展开、只发摘要那些天）的摘要正文加起来的总字数预算：这个才是会随着用的
+// 所有"封存天"（不展开、只发总结那些天）的总结正文加起来的总字数预算：这个才是会随着用的
 // 时间变长一直往上涨的量。今天 / 上一个封印包 / 当前打开的封印包 都是全量发送，不设阈值——
 // 一天内聊多少都不压缩，真正需要管的是"聊了多少天"，不是"某一天聊了多少"。
 const SEALED_SUMMARY_BUDGET_CHARS = 2000;
@@ -152,7 +153,7 @@ const SEALED_SUMMARY_BUDGET_CHARS = 2000;
 //   - 今天；"上一个封印包"（历史里早于今天的最新一天，不管隔了几天）；以及"当前打开的封印包"
 //     （见 resolveOpenedDayKey：提到某个日期后跨轮持久展开，直到过了自然日或被新日期替换）=> 正常展开
 //   - 其余更早的日子 => 只输出一行 "YYYY年M月D日 旧对话封印包"，具体内容不发给模型
-// 时间戳：用户消息若与上一条间隔 >= 5 分钟，或者跨天了（哪怕间隔很短），都会带 [YYYY-MM-DD HH:mm] 前缀；
+// 时间戳：用户消息若与上一条间隔 >= 5 分钟，或者跨天了（哪怕间隔很短），都会带 [元时间 YYYY年M月D日 HH:mm] 前缀；
 // 角色的回复永远不带时间戳，但"跨天"是按实际发送时间判断的，不看是谁发的这条。
 function flattenChatHistory(characterName, history, currentInputText) {
   const GAP_MS = 5 * 60 * 1000;
@@ -166,7 +167,7 @@ function flattenChatHistory(characterName, history, currentInputText) {
   if (lastPastDayKey !== null) unsealed.add(lastPastDayKey);
   if (openedDayKey !== null) unsealed.add(openedDayKey);
 
-  // 第一遍：只按天分组，暂不决定封存天要不要发摘要——先把 history 摊成 { dayKey, sealed, msgs } 的天块列表，
+  // 第一遍：只按天分组，暂不决定封存天要不要发总结——先把 history 摊成 { dayKey, sealed, msgs } 的天块列表，
   // sealed = true 表示这天不在 unsealed 集合里，属于要收起来的"封存天"
   let prevTs = null;
   let prevDayKey = null;
@@ -192,7 +193,7 @@ function flattenChatHistory(characterName, history, currentInputText) {
     if (h.role === 'user' && hasTs) {
       const crossedDay = prevDayKey !== null && dk !== prevDayKey;
       if (prevTs === null || h.ts - prevTs >= GAP_MS || crossedDay) {
-        prefix = `[${formatMinuteTime(h.ts)}] `;
+        prefix = `[元时间 ${formatMinuteTime(h.ts)}] `;
       }
     }
     if (hasTs) {
@@ -203,15 +204,15 @@ function flattenChatHistory(characterName, history, currentInputText) {
   }
   flushDay();
 
-  // 第二遍：给封存天的摘要做总字数预算——从最新的封存天往回累加，超过 SEALED_SUMMARY_BUDGET_CHARS
-  // 字就不再发更早那些天的摘要正文了（本地 -summaries.json 不受影响，之后提到那天照样能拆包展开）
+  // 第二遍：给封存天的总结做总字数预算——从最新的封存天往回累加，超过 SEALED_SUMMARY_BUDGET_CHARS
+  // 字就不再发更早那些天的总结正文了（本地 -summaries.json 不受影响，之后提到那天照样能拆包展开）
   let budget = SEALED_SUMMARY_BUDGET_CHARS;
   const sendableSummary = new Map(); // dayKey -> summary 文本（只放"预算内、真发的"那些）
   for (let i = dayBlocks.length - 1; i >= 0; i--) {
     const block = dayBlocks[i];
     if (!block.sealed) continue;
     const summary = loadDaySummary(characterName, block.dayKey);
-    if (!summary) continue; // 还没生成过摘要，走占位文案，不占预算
+    if (!summary) continue; // 还没生成过总结，走占位文案，不占预算
     if (summary.length > budget) continue; // 超预算：这天退化成占位文案，不是报错
     sendableSummary.set(block.dayKey, summary);
     budget -= summary.length;
@@ -289,7 +290,7 @@ function flattenChatHistory(characterName, history, currentInputText) {
       }
     } else {
       const summary = sendableSummary.get(block.dayKey);
-      lines.push(summary ? `${formatDayCN(block.dayKey)} 摘要：${summary}` : `${formatDayCN(block.dayKey)} 旧对话封印包`);
+      lines.push(summary ? `元时间 ${formatDayCN(block.dayKey)} 的总结：${summary}` : `元时间 ${formatDayCN(block.dayKey)} 的旧对话封印包`);
     }
   }
 

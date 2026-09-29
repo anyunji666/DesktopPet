@@ -4,6 +4,7 @@
 import { state } from './state.js';
 import { showBubble } from './ui.js';
 import { startRecording, stopRecording } from './mic.js';
+import { summarizingHint } from '../day-label.js';
 
 const chatBox = document.getElementById('chat-box');
 const chatInput = document.getElementById('chat-input');
@@ -14,25 +15,20 @@ let chatBoxTimer = null;
 //   remoteBusy：主进程广播"有一条消息在等回复"（包括聊天记录窗口发的那条）
 let localSending = false;
 let remoteBusy = false;
-// 主进程锁当前所处阶段：'summarizing' 跨天摘要整理中 / 'waiting' 等待回复；没人在等时为 null。
+// 主进程锁当前所处阶段：'summarizing' 跨天总结整理中 / 'waiting' 等待回复；没人在等时为 null。
 // 本窗口刚点发送、主进程推送还没到的那一瞬间也当作 'waiting'，推送到了再按真实阶段更新
 let pendingPhase = null;
+let pendingSummaryDay = null; // 总结阶段被总结的那天（YYYY-MM-DD），提示里要写具体日期
 const isBusy = () => localSending || remoteBusy;
 
-// 各阶段给人看的提示：气泡 / 输入框 placeholder
-const PHASE_BUBBLE = {
-  summarizing: '正在整理上一日对话内容，等待发送中…',
-  waiting: '等待回复中…',
-};
-const PHASE_PLACEHOLDER = {
-  summarizing: '正在整理上一日对话内容…',
-  waiting: '等待回复中…',
-};
+// 各阶段给人看的提示：气泡 / 输入框 placeholder（总结阶段写具体日期，不写"上一日"——被总结的通常比昨天更早）
 const currentPhase = () => (pendingPhase === 'summarizing' ? 'summarizing' : 'waiting');
+const phaseBubble = () => (currentPhase() === 'summarizing' ? summarizingHint(pendingSummaryDay, true) : '等待回复中…');
+const phasePlaceholder = () => (currentPhase() === 'summarizing' ? summarizingHint(pendingSummaryDay, false) : '等待回复中…');
 // 等回复期间的气泡：本窗口自己发的才显示（别的窗口发的，这里仍只收起输入框，不弹气泡）。
-// 时间给足（10 分钟）：摘要 + 回复可能很久，不能中途自己消失；回复/报错回来后会被新的 showBubble 覆盖
+// 时间给足（10 分钟）：总结 + 回复可能很久，不能中途自己消失；回复/报错回来后会被新的 showBubble 覆盖
 function showPendingBubble() {
-  showBubble(PHASE_BUBBLE[currentPhase()], 10 * 60 * 1000);
+  showBubble(phaseBubble(), 10 * 60 * 1000);
 }
 
 // ---------------- 语音输入：点击🎙开始，再点一下停止，识别文字实时写回输入框 ----------------
@@ -65,7 +61,7 @@ function applyBusyUI() {
   const busy = isBusy();
   chatInput.disabled = busy;
   micBtn.disabled = busy;
-  if (busy) chatInput.placeholder = PHASE_PLACEHOLDER[currentPhase()];
+  if (busy) chatInput.placeholder = phasePlaceholder();
   else chatInput.placeholder = chatBox.classList.contains('recording') ? '正在听，点击⏹停止…' : '想对TA说点什么…';
 }
 
@@ -261,10 +257,11 @@ micBtn.addEventListener('click', (e) => {
 window.petAPI.onChatPendingChanged((pending) => {
   remoteBusy = !!pending;
   pendingPhase = pending ? pending.phase || 'waiting' : null;
+  pendingSummaryDay = pending ? pending.summaryDay || null : null;
   if (remoteBusy) {
     if (voiceState !== 'idle') stopVoiceInput(); // 正在录音时别人发了消息：结束录音，识别出的文字留在输入框里
     if (!localSending) hideChatBox(); // 别的窗口发起的，跟自己发送时一样把输入框收起来
-    if (localSending) showPendingBubble(); // 自己发的：阶段变了（摘要 -> 等回复）同步刷新气泡文字
+    if (localSending) showPendingBubble(); // 自己发的：阶段变了（总结 -> 等回复）同步刷新气泡文字
   }
   applyBusyUI();
 });
@@ -272,6 +269,7 @@ window.petAPI.onChatPendingChanged((pending) => {
 window.petAPI.getChatPending().then((pending) => {
   remoteBusy = !!pending;
   pendingPhase = pending ? pending.phase || 'waiting' : null;
+  pendingSummaryDay = pending ? pending.summaryDay || null : null;
   applyBusyUI();
 });
 

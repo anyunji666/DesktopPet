@@ -1,7 +1,7 @@
 // ---------- AI 对话：一轮对话的完整流程 ----------
-// 跨天摘要 -> 存图 -> 拼 prompt -> 调 LLM -> 落盘 -> 触发 TTS。
+// 跨天总结 -> 存图 -> 拼 prompt -> 调 LLM -> 落盘 -> 触发 TTS。
 // 只管"这一轮怎么跑"：不碰 IPC、不上锁——上锁/解锁、校验角色名、把回复推给窗口都在 main.js 的 chat-send 里；
-// 这里只在跨天摘要做完时通过 chat-lock.js 的 setChatPhase 把锁的阶段切到"等待回复"，界面提示随之切换。
+// 这里只在跨天总结做完时通过 chat-lock.js 的 setChatPhase 把锁的阶段切到"等待回复"，界面提示随之切换。
 const { setChatPhase } = require('./chat-lock');
 const {
   loadChatHistory,
@@ -25,12 +25,12 @@ const { callLLM } = require('./llm-client');
 const { speakReply } = require('./tts');
 const { splitTone } = require('./tts/tone');
 
-// 一轮对话的完整流程：跨天摘要 -> 存图 -> 拼 prompt -> 调 LLM -> 落盘 -> 触发 TTS。
+// 一轮对话的完整流程：跨天总结 -> 存图 -> 拼 prompt -> 调 LLM -> 落盘 -> 触发 TTS。
 // 成功返回 { reply, committed, startIndex }；任何一步抛错都不会落历史。
 // imageDataURL 可选：用户随这条消息发的图片（选文件/粘贴/截图）。图片会：
 // 1) 存进 chat-history/images/<角色>/，消息里记文件名（记录窗口里能回看）
 // 2) vision 开启时按 OpenAI 视觉格式随本轮消息直发给模型；关闭时只以 "[图片]" / 用户附言的文字形式进 prompt
-// 报错时（摘要/回复请求失败、超时等）本轮不落历史，已经存进磁盘的图片文件就成了没人引用的孤儿，
+// 报错时（总结/回复请求失败、超时等）本轮不落历史，已经存进磁盘的图片文件就成了没人引用的孤儿，
 // 这里统一在失败时删掉；图片仍留在渲染进程里，界面会把它放回预览区方便直接重发
 async function runChatTurn(characterName, text, imageDataURL, summaryPlan) {
   const imageHolder = { file: null }; // 已存盘、但还没写进聊天记录的图片文件名
@@ -42,10 +42,10 @@ async function runChatTurn(characterName, text, imageDataURL, summaryPlan) {
   }
 }
 
-// 判断这一轮要不要先做跨天摘要：跨天了（本轮消息和历史最后一条不是同一天），"旧的上一个封存包"要从"上一个封存包"
-// 退到"更早"了，退之前得先把那天摘要好、缓存起来（没缓存过才需要摘）。
+// 判断这一轮要不要先做跨天总结：跨天了（本轮消息和历史最后一条不是同一天），"旧的上一个封存包"要从"上一个封存包"
+// 退到"更早"了，退之前得先把那天总结好、缓存起来（没缓存过才需要总结）。
 // 需要就返回 { dayToSummarize, dayLines }，不需要返回 null。纯同步、只读磁盘：chat-send 上锁前先调它，
-// 这样锁一开始就能带上正确的阶段（summarizing / waiting），runChatTurnInner 再按这份结果去执行摘要。
+// 这样锁一开始就能带上正确的阶段（summarizing / waiting），runChatTurnInner 再按这份结果去执行总结。
 function planCrossDaySummary(characterName) {
   const history = loadChatHistory(characterName);
   if (!history.length) return null;
@@ -60,16 +60,16 @@ function planCrossDaySummary(characterName) {
 async function runChatTurnInner(characterName, text, imageDataURL, imageHolder, summaryPlan) {
   const history = loadChatHistory(characterName);
 
-  // === 跨天摘要 ===
-  // 这次摘要调用和下面生成回复的调用串行执行，不并发；摘要这次要是失败了（网络/接口报错），
+  // === 跨天总结 ===
+  // 这次总结调用和下面生成回复的调用串行执行，不并发；总结这次要是失败了（网络/接口报错），
   // 直接抛出去，本轮不生成回复、不落历史，跟 callLLM 本身失败的表现一致。
-  // 摘要落盘后把锁切到"等待回复"阶段，界面提示随之切换。
+  // 总结落盘后把锁切到"等待回复"阶段，界面提示随之切换。
   if (summaryPlan) {
     const { dayToSummarize, dayLines } = summaryPlan;
     const summaryPrompt = buildSummaryPrompt(characterName, dayToSummarize, dayLines);
     const rawSummary = await callLLM(
       [{ role: 'user', content: summaryPrompt }],
-      `摘要生成 - ${characterName}`
+      `总结生成 - ${characterName}`
     );
     const { summary, memoryLines } = parseSummaryAndMemory(rawSummary);
     saveDaySummary(characterName, dayToSummarize, summary || rawSummary.trim());

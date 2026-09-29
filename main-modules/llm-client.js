@@ -17,7 +17,7 @@ function relayTokenFor(url, cfg) {
 }
 
 // ---------- 审查用：最近一次 LLM 调用的请求/回复 ----------
-// 只留最近 1 次（请求+回复算一条），正常回复和归档摘要两种调用都算在内，不区分类型，谁最后调用完就显示谁的。
+// 只留最近 1 次（请求+回复算一条），正常回复和归档总结两种调用都算在内，不区分类型，谁最后调用完就显示谁的。
 // 原来是打印到 start.bat 的控制台窗口，后来发现 console.clear() 在 Windows 经典 cmd.exe 下不一定生效
 // （不是 TTY / 不支持 ANSI 转义时会静默失效，导致记录在终端里一直累积），改成推给独立的
 // "LLM调用记录" 窗口（window.js 的 openLlmLogWindow），窗口那边整体替换内容显示，不存在清不干净的问题。
@@ -58,7 +58,7 @@ const LLM_TIMEOUT_MS = 120 * 1000;
 
 // 通用 OpenAI 兼容 /chat/completions 请求。特意放在主进程发起（而不是渲染进程 fetch），
 // 是为了避免 API Key 出现在渲染进程的网络面板/DevTools 里
-// label：这次调用是干嘛的（比如"对话回复 - xxx"/"摘要生成 - xxx"），只用来在调试日志里区分，不影响请求本身
+// label：这次调用是干嘛的（比如"对话回复 - xxx"/"总结生成 - xxx"），只用来在调试日志里区分，不影响请求本身
 async function callLLM(messages, label = '对话回复') {
   const cfg = getApiConfig();
   if (!cfg.api_url) throw new Error('未配置 API Base URL，请先在"⚙ API 设置"里填写');

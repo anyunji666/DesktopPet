@@ -85,9 +85,9 @@ function saveChatHistory(characterName, history) {
   }
 }
 
-// ---------- 历史摘要缓存：chat-history/<角色名>-summaries.json，{ "YYYY-MM-DD": "摘要文本" } ----------
-// 跨天时把"刚结束那天"的原文摘要一次并缓存在这里，之后 flattenChatHistory 摊平历史时，
-// 不在展开范围内的天直接读这里的摘要，不用每次都重新让 LLM 总结。
+// ---------- 历史总结缓存：chat-history/<角色名>-summaries.json，{ "YYYY-MM-DD": "总结文本" } ----------
+// 跨天时把"刚结束那天"的原文总结一次并缓存在这里，之后 flattenChatHistory 摊平历史时，
+// 不在展开范围内的天直接读这里的总结，不用每次都重新让 LLM 总结。
 function summaryPath(characterName) {
   const dir = getChatDir();
   fs.mkdirSync(dir, { recursive: true });
@@ -100,13 +100,13 @@ function loadDaySummaries(characterName) {
     return data && typeof data === 'object' && !Array.isArray(data) ? data : {};
   } catch (err) {
     if (err.code !== 'ENOENT') {
-      console.warn(`[pet] 角色 "${characterName}" 的历史摘要读取失败: ${err.message}`);
+      console.warn(`[pet] 角色 "${characterName}" 的历史总结读取失败: ${err.message}`);
     }
     return {};
   }
 }
 
-// 取某一天的摘要；没生成过返回 null（调用方据此决定是否显示占位文案）
+// 取某一天的总结；没生成过返回 null（调用方据此决定是否显示占位文案）
 function loadDaySummary(characterName, dayKey) {
   const all = loadDaySummaries(characterName);
   return typeof all[dayKey] === 'string' && all[dayKey] ? all[dayKey] : null;
@@ -118,16 +118,16 @@ function saveDaySummary(characterName, dayKey, text) {
   try {
     fs.writeFileSync(summaryPath(characterName), JSON.stringify(all, null, 2));
   } catch (err) {
-    console.error(`[pet] 保存历史摘要失败: ${err.message}`);
+    console.error(`[pet] 保存历史总结失败: ${err.message}`);
   }
 }
 
-// 清空角色全部聊天记录时，摘要缓存也一起清掉
+// 清空角色全部聊天记录时，总结缓存也一起清掉
 function clearDaySummaries(characterName) {
   try {
     fs.unlinkSync(summaryPath(characterName));
   } catch (err) {
-    if (err.code !== 'ENOENT') console.warn(`[pet] 清空历史摘要失败: ${err.message}`);
+    if (err.code !== 'ENOENT') console.warn(`[pet] 清空历史总结失败: ${err.message}`);
   }
 }
 
@@ -173,7 +173,7 @@ function clearOpenedDay(characterName) {
 
 // ---------- Hot 记忆索引：chat-history/<角色名>-memory.md ----------
 // 常驻塞进每轮固定前缀区发给 LLM 的一份"指针型"记忆，只存"用户偏好/重要设定"这类没有时效性、需要长期
-// 记住的结论性信息，不存对话细节本身（细节走按天摘要那条链路）。
+// 记住的结论性信息，不存对话细节本身（细节走按天总结那条链路）。
 // 标签风格：一行一条，每条不超过 20 字，不是完整句子。总量上限 200 字——足够放约 10 条标签，
 // 常驻发送也不会占太多 token。超限时从最旧的一整行开始丢，绝不切在行中间。
 const MEMORY_MAX_CHARS = 200;
@@ -213,7 +213,7 @@ function saveMemoryIndex(characterName, text) {
 }
 
 // 追加若干条新记忆（去重：整行已经出现在现有内容里的直接跳过），单条超过 20 字就截断成标签长度，
-// 总量超限时自动从头部丢旧行。由跨天摘要那次 LLM 调用顺带产出，不单独发起请求。
+// 总量超限时自动从头部丢旧行。由跨天总结那次 LLM 调用顺带产出，不单独发起请求。
 function appendMemoryLines(characterName, newLines) {
   if (!Array.isArray(newLines) || !newLines.length) return;
   const cur = loadMemoryIndex(characterName);

@@ -269,7 +269,7 @@ function reassertAlwaysOnTop() {
 powerMonitor.on('unlock-screen', reassertAlwaysOnTop); // 屏保退出 / 锁屏解锁
 powerMonitor.on('resume', reassertAlwaysOnTop); // 系统从睡眠中唤醒
 
-// 每次 LLM 调用完（对话回复 / 归档摘要都算），把最新这一条实时推给"LLM调用记录"窗口；
+// 每次 LLM 调用完（对话回复 / 归档总结都算），把最新这一条实时推给"LLM调用记录"窗口；
 // 窗口没开着时 llmLogWin 是 null/已销毁，这里直接跳过，等窗口下次打开时用 get-llm-log 兜底拿一次
 setLlmLogListener((call) => {
   if (state.llmLogWin && !state.llmLogWin.isDestroyed()) {
@@ -370,7 +370,7 @@ ipcMain.on('show-menu', () => {
 // ---------- IPC：AI 对话 ----------
 // 一次只能发一条：chat-send 开头上锁（chat-lock.js），LLM 回复且落盘/报错之后才解锁，
 // 期间主界面和聊天记录窗口的发送都被禁用，同一角色的聊天记录也不允许编辑/插入/删除/清空。
-// 这里只做 IPC 层（校验 / 上锁 / 解锁 / 推送）；一轮对话本身怎么跑（跨天摘要 -> 存图 -> 拼 prompt ->
+// 这里只做 IPC 层（校验 / 上锁 / 解锁 / 推送）；一轮对话本身怎么跑（跨天总结 -> 存图 -> 拼 prompt ->
 // 调 LLM -> 落盘 -> TTS）在 main-modules/chat-turn.js。
 
 ipcMain.handle('chat-send', async (e, characterName, message, imageDataURL) => {
@@ -382,7 +382,7 @@ ipcMain.handle('chat-send', async (e, characterName, message, imageDataURL) => {
 
   // === 上锁 ===
   // 已经有一条在等回复时 beginChat 会直接抛错，本次发送被拒绝（不影响正在进行的那一条）
-  // 先判断要不要做跨天摘要，锁一开始就带上对应阶段（同步、无 await，判断到上锁之间不会有别的改动插进来）
+  // 先判断要不要做跨天总结，锁一开始就带上对应阶段（同步、无 await，判断到上锁之间不会有别的改动插进来）
   const summaryPlan = planCrossDaySummary(characterName);
   const fromMainWindow = state.win && !state.win.isDestroyed() && e.sender === state.win.webContents;
   beginChat({
@@ -391,6 +391,7 @@ ipcMain.handle('chat-send', async (e, characterName, message, imageDataURL) => {
     user: text,
     imageDataURL,
     phase: summaryPlan ? 'summarizing' : 'waiting',
+    summaryDay: summaryPlan ? summaryPlan.dayToSummarize : null, // 界面提示里要写具体是哪一天
   });
 
   // === 跑一轮对话，成功/失败都要解锁 ===
@@ -683,7 +684,7 @@ ipcMain.handle('clear-chat-history', (_e, characterName) => {
   assertHistoryEditable(characterName); // 正在等这个角色的回复时不允许改记录
   saveChatHistory(characterName, []);
   clearChatImages(characterName); // 图片文件夹整个清掉
-  clearDaySummaries(characterName); // 按天摘要缓存也一起清掉
+  clearDaySummaries(characterName); // 按天总结缓存也一起清掉
   clearMemoryIndex(characterName); // hot 记忆索引是从这些对话里提炼出来的，聊天记录都没了就一起清空
   clearOpenedDay(characterName); // 当前打开的封印包也跟着清掉，避免指向已经不存在的历史
   return true;

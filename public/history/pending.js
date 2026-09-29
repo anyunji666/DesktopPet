@@ -4,20 +4,19 @@
 // 各模块不直接互相调用来刷新界面，而是 onPendingChange 订阅：锁状态一变，每个模块各自刷新自己管的控件。
 import { characterName } from './state.js';
 import { showToast } from './toast.js';
+import { summarizingHint } from '../day-label.js';
 
 export const lock = { pending: null };
 
-// 等回复期间各阶段的提示：临时气泡的时间处 / 输入框 placeholder
-export const PENDING_TEXT = {
-  summarizing: '正在整理上一日对话内容，等待发送中…',
-  waiting: '等待回复中…',
-};
-export const PENDING_PLACEHOLDER = {
-  summarizing: '正在整理上一日对话内容…',
-  waiting: '等待回复中…',
-};
 // 当前锁所处阶段：主进程推送的 phase；本窗口刚点发送、推送还没到的那一瞬间当作 waiting
 export const pendingPhase = () => (lock.pending && lock.pending.phase === 'summarizing' ? 'summarizing' : 'waiting');
+
+// 等回复期间各阶段的提示：临时气泡的时间处 / 输入框 placeholder。
+// 总结阶段写具体日期（lock.pending.summaryDay），不能写"上一日"——被总结的通常是比昨天更早的一天
+export const pendingText = () =>
+  pendingPhase() === 'summarizing' ? summarizingHint(lock.pending.summaryDay, true) : '等待回复中…';
+export const pendingPlaceholder = () =>
+  pendingPhase() === 'summarizing' ? summarizingHint(lock.pending.summaryDay, false) : '等待回复中…';
 
 // 改记录要不要锁：只锁"正在等回复的就是这个角色"的情况（发送要不要锁见 composer.js：任何窗口在等回复都锁）
 export const editLocked = () => !!lock.pending && lock.pending.character === characterName;

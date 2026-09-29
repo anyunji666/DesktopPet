@@ -1,6 +1,6 @@
 // ---------------- 消息列表：渲染 / 临时气泡 / 加载与重绘 ----------------
 import { characterName, list, emptyEl, view } from './state.js';
-import { lock, PENDING_TEXT, pendingPhase, onPendingChange } from './pending.js';
+import { lock, pendingText, onPendingChange } from './pending.js';
 
 function fmtTs(ts) {
   const d = new Date(ts);
@@ -9,7 +9,7 @@ function fmtTs(ts) {
 }
 
 // 构造一条消息的 DOM。temp=true 是"已发出、还在等回复"的临时气泡：没有下标、没有"⋯"编辑/删除，
-// 时间处显示当前阶段的提示（整理摘要中 / 等待回复中）；落盘后由 chat-settled 事件把它换成正式消息
+// 时间处显示当前阶段的提示（整理总结中 / 等待回复中）；落盘后由 chat-settled 事件把它换成正式消息
 function buildMsgEl(role, content, ts, imageDataURL, temp) {
   const div = document.createElement('div');
   div.className = 'msg ' + (role === 'user' ? 'user' : 'assistant') + (temp ? ' sending' : '');
@@ -39,7 +39,7 @@ function buildMsgEl(role, content, ts, imageDataURL, temp) {
   foot.className = 'msg-foot';
   const tsEl = document.createElement('div');
   tsEl.className = 'ts';
-  tsEl.textContent = temp ? PENDING_TEXT.waiting : fmtTs(ts);
+  tsEl.textContent = temp ? pendingText() : fmtTs(ts);
   foot.appendChild(tsEl);
   if (!temp) {
     const more = document.createElement('button');
@@ -98,7 +98,7 @@ export function syncTempBubble() {
     return;
   }
   if (!view.tempEl) view.tempEl = buildMsgEl('user', p.user, p.ts, p.imageDataURL, true);
-  view.tempEl.querySelector('.ts').textContent = PENDING_TEXT[pendingPhase()]; // 阶段变化时只刷新文字，不重建气泡
+  view.tempEl.querySelector('.ts').textContent = pendingText(); // 阶段变化时只刷新文字，不重建气泡
   emptyEl.style.display = 'none';
   list.appendChild(view.tempEl); // 已在列表里也没关系，重新 append 会挪到最后
   window.scrollTo(0, document.body.scrollHeight);
