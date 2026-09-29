@@ -1,14 +1,16 @@
 // ---------------- 头部"⋯"更多菜单：插入消息 / 清空对话（参照 plot-assistant 手机私信页） ----------------
 import { characterName, list, emptyEl, view } from './state.js';
 import { editLocked, notifyEditLocked, onPendingChange } from './pending.js';
-import { alertError } from './toast.js';
-import { appendMsg } from './messages.js';
+import { alertError, showToast } from './toast.js';
+import { appendMsg, reload } from './messages.js';
 import { confirmDialog } from './confirm-dialog.js';
 
 const menuWrap = document.getElementById('menu-wrap');
 const menu = document.getElementById('menu');
 const menuInsertBtn = document.getElementById('menu-insert');
 const menuClearBtn = document.getElementById('menu-clear');
+const menuExportBtn = document.getElementById('menu-export');
+const menuImportBtn = document.getElementById('menu-import');
 const insertOverlay = document.getElementById('insert-overlay');
 const insertText = document.getElementById('insert-text');
 const insertAsUser = document.getElementById('insert-as-user');
@@ -92,11 +94,43 @@ menuClearBtn.addEventListener('click', async () => {
   }
 });
 
-// 等回复期间不允许改记录：插入/清空菜单项和插入弹窗的按钮禁用，已展开的菜单收起
+// ---- 导出 / 导入聊天记录 ----
+menuExportBtn.addEventListener('click', async () => {
+  closeMenu();
+  try {
+    const r = await window.petAPI.exportChatHistory(characterName);
+    if (r) showToast(`已导出 ${r.count} 条消息`, 'info');
+  } catch (err) {
+    alertError(err);
+  }
+});
+
+menuImportBtn.addEventListener('click', async () => {
+  closeMenu();
+  if (editLocked()) return notifyEditLocked();
+  if (!(await confirmDialog(`导入会用文件里的内容覆盖和「${characterName}」现有的全部聊天记录（包括按天摘要和长期记忆），此操作不可撤销。建议先导出备份。继续选择文件吗？`))) return;
+  if (editLocked()) return notifyEditLocked(); // 确认期间刚好发出了新消息
+  try {
+    const r = await window.petAPI.importChatHistory(characterName);
+    if (!r) return; // 取消选择文件
+    emptyEl.style.display = 'none';
+    await reload();
+    window.scrollTo(0, document.body.scrollHeight);
+    const notes = [];
+    if (r.skipped) notes.push(`跳过 ${r.skipped} 条无效消息`);
+    if (r.imageFailed) notes.push(`${r.imageFailed} 张图片导入失败`);
+    showToast(`已导入 ${r.count} 条消息` + (notes.length ? `（${notes.join('，')}）` : ''), 'info');
+  } catch (err) {
+    alertError(err);
+  }
+});
+
+// 等回复期间不允许改记录：插入/清空/导入菜单项和插入弹窗的按钮禁用，已展开的菜单收起
 onPendingChange(() => {
   const el = editLocked();
   menuInsertBtn.disabled = el;
   menuClearBtn.disabled = el;
+  menuImportBtn.disabled = el;
   insertAsUser.disabled = el;
   insertAsAssistant.disabled = el;
   if (el) closeMenu();

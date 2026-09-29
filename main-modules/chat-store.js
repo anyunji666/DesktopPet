@@ -301,6 +301,7 @@ module.exports = {
   chatHistoryPath,
   loadChatHistory,
   saveChatHistory,
+  loadDaySummaries,
   loadDaySummary,
   saveDaySummary,
   clearDaySummaries,

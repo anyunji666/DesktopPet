@@ -72,6 +72,8 @@ contextBridge.exposeInMainWorld('petAPI', {
   deleteChatMessage: (characterName, index) => ipcRenderer.invoke('delete-chat-message', characterName, index),
   truncateChatHistory: (characterName, fromIndex) => ipcRenderer.invoke('truncate-chat-history', characterName, fromIndex),
   clearChatHistory: (characterName) => ipcRenderer.invoke('clear-chat-history', characterName),
+  exportChatHistory: (characterName) => ipcRenderer.invoke('export-chat-history', characterName),
+  importChatHistory: (characterName) => ipcRenderer.invoke('import-chat-history', characterName),
 
   // ---- LLM 调用记录窗口（审查用）----
   getLlmLog: () => ipcRenderer.invoke('get-llm-log'),

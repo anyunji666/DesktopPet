@@ -17,6 +17,7 @@ const { state } = require('./main-modules/state');
 const { constrainMove, constrainResize } = require('./main-modules/win-limit');
 const { beginChat, endChat, getChatPending, assertHistoryEditable } = require('./main-modules/chat-lock');
 const { planCrossDaySummary, runChatTurn } = require('./main-modules/chat-turn');
+const { exportToFile, importFromFile } = require('./main-modules/chat-transfer');
 const { loadConfig, updateConfig, migrateSecrets } = require('./main-modules/config');
 const { scanCharacters } = require('./main-modules/character');
 const { scanScenes, setAdjust, normAdjust } = require('./main-modules/scene');
@@ -645,6 +646,37 @@ ipcMain.handle('truncate-chat-history', (_e, characterName, fromIndex) => {
   saveChatHistory(characterName, history); // 先落盘，成功后再删图片文件，避免记录还在图片却没了
   for (const m of removed) if (m && m.image) deleteChatImage(characterName, m.image);
   return removed.length;
+});
+
+// 聊天记录导出 / 导入（文件格式和校验见 chat-transfer.js）。取消选择文件返回 null
+ipcMain.handle('export-chat-history', async (e, characterName) => {
+  if (!validCharacter(characterName)) throw new Error('未知角色');
+  const parent = BrowserWindow.fromWebContents(e.sender);
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const opts = {
+    title: '导出聊天记录',
+    defaultPath: `${characterName}-聊天记录-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}.json`,
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+  };
+  const r = await (parent ? dialog.showSaveDialog(parent, opts) : dialog.showSaveDialog(opts));
+  if (r.canceled || !r.filePath) return null;
+  return { filePath: r.filePath, count: exportToFile(characterName, r.filePath) };
+});
+
+ipcMain.handle('import-chat-history', async (e, characterName) => {
+  if (!validCharacter(characterName)) throw new Error('未知角色');
+  assertHistoryEditable(characterName); // 正在等这个角色的回复时不允许改记录
+  const parent = BrowserWindow.fromWebContents(e.sender);
+  const opts = {
+    title: '导入聊天记录（会覆盖当前记录）',
+    properties: ['openFile'],
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+  };
+  const r = await (parent ? dialog.showOpenDialog(parent, opts) : dialog.showOpenDialog(opts));
+  if (r.canceled || !r.filePaths.length) return null;
+  assertHistoryEditable(characterName); // 选文件期间可能刚好发出了新消息，落盘前再查一次
+  return importFromFile(characterName, r.filePaths[0]);
 });
 
 ipcMain.handle('clear-chat-history', (_e, characterName) => {
