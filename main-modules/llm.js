@@ -252,7 +252,7 @@ function buildPromptText(characterName, history, text) {
   // 那次 LLM 调用顺带产出并追加，不需要每轮从全量历史里现猜。没内容就不发这一段
   const memoryIndex = loadMemoryIndex(characterName);
   if (memoryIndex.trim()) {
-    parts.push(`<memory_index>\n<!-- 关于用户的长期记忆：偏好、重要设定等，需要一直记住并遵守 -->\n${memoryIndex.trim()}\n</memory_index>`);
+    parts.push(`<memory_index>\n<!-- 用户的一些偏好、重要设定等 -->\n${memoryIndex.trim()}\n</memory_index>`);
   }
   parts.push('---');
   // ---- 以上是固定前缀，以下是每轮都会变化的内容 ----

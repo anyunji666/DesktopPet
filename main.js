@@ -32,6 +32,9 @@ const {
   clearChatImages,
   clearDaySummaries,
   clearMemoryIndex,
+  loadMemoryIndex,
+  saveMemoryIndexManual,
+  MEMORY_MAX_CHARS,
   clearOpenedDay,
 } = require('./main-modules/chat-store');
 const { getTtsConfig, saveTtsConfig, getPresets, testVoice } = require('./main-modules/tts');
@@ -455,6 +458,20 @@ ipcMain.handle('save-persona', (_e, characterName, system, storyBackground) => {
     system: typeof system === 'string' ? system.trim() : '',
     storyBackground: typeof storyBackground === 'string' ? storyBackground.trim() : '',
   });
+  return true;
+});
+// ---------- IPC：当前角色的印象标签（memory index）编辑（设置窗口用） ----------
+// 印象标签 = 跨天总结时 AI 自动提炼的"关于用户的长期记忆"，这里允许用户手动增删改。每个角色各一份。
+ipcMain.handle('get-memory-index', () => {
+  const c = state.characters[state.currentIndex];
+  if (!c) return null;
+  return { characterName: c.name, text: loadMemoryIndex(c.name), maxChars: MEMORY_MAX_CHARS };
+});
+ipcMain.handle('save-memory-index', (_e, characterName, text) => {
+  if (!validCharacter(characterName)) throw new Error('未知角色');
+  // 这个角色正在等回复 / 做跨天总结时，总结那次调用可能马上要往这份标签里追加，此时手动保存会互相覆盖，直接拦下
+  assertHistoryEditable(characterName);
+  saveMemoryIndexManual(characterName, text);
   return true;
 });
 ipcMain.handle('fetch-model-list', (_e, apiUrl, apiKey) => {

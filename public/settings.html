@@ -214,6 +214,12 @@
   <textarea id="persona_system" style="min-height: 110px" placeholder="写角色的身份、性格、说话风格、和你的关系…&#10;例如：凛是一只傲娇的猫娘，嘴上总嫌弃你其实很黏人，说话简短带刺但会脸红…"></textarea>
   <p class="tip">保存后 生成/更新 角色的 persona.json 文件。世界背景和角色资料都清空后保存 = 不发送这两项。</p>
 
+  <div class="section-title">🏷️ 印象标签 <span id="memory-character" style="font-weight: normal; color: #999;"></span></div>
+
+  <label>用户画像（一行一条）</label>
+  <textarea id="memory_index" style="min-height: 90px" placeholder="例如：&#10;喜欢吃辣&#10;不爱早起&#10;怕打雷"></textarea>
+  <p class="tip"><span id="memory-count">0 / 200</span>　跨天总结时 AI 会自动提炼并追加，你也可以在这里增删修改；建议每条 20 字内，总量上限 200 字，超出无法保存。</p>
+
   <div class="section-title">📝 Prompt 模板（全局生效，不区分角色）</div>
 
   <label>用户自定义前置文本</label>
@@ -229,6 +235,21 @@
   const $ = (id) => document.getElementById(id);
   // 当前角色的人设状态：null = 还没加载到（不该出现）
   let personaLoaded = null;
+  // 当前角色的印象标签：加载时记下原文与上限，保存时只有改过才提交
+  let memoryLoaded = null;
+
+  // 与后端 normalizeMemoryText 同一口径：每行去首尾空白、丢空行
+  function normalizeMemory(text) {
+    return String(text || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean).join('\n');
+  }
+  function updateMemoryCount() {
+    const max = memoryLoaded ? memoryLoaded.maxChars : 200;
+    const len = normalizeMemory($('memory_index').value).length;
+    const el = $('memory-count');
+    el.textContent = len + ' / ' + max;
+    el.style.color = len > max ? '#e5534b' : '';
+    el.style.fontWeight = len > max ? 'bold' : '';
+  }
 
   // 状态提示：非错误类文案 2 秒后自动清空；err 常驻，等用户下次操作再被覆盖
   let statusTimer = null;
@@ -401,9 +422,24 @@
       $('persona_system').value = persona.system || '';
       $('story_background').value = persona.storyBackground || '';
     }
+
+    const memory = await window.petAPI.getMemoryIndex();
+    if (memory) {
+      memoryLoaded = { characterName: memory.characterName, original: normalizeMemory(memory.text), maxChars: memory.maxChars };
+      $('memory-character').textContent = '· ' + memory.characterName;
+      $('memory_index').value = memory.text || '';
+      updateMemoryCount();
+    }
   }
 
+  $('memory_index').addEventListener('input', updateMemoryCount);
+
   $('save-btn').addEventListener('click', async () => {
+    // 印象标签超限先拦在最前面，别让其它设置存了一半才报错
+    if (memoryLoaded && normalizeMemory($('memory_index').value).length > memoryLoaded.maxChars) {
+      setStatus('印象标签超过 ' + memoryLoaded.maxChars + ' 字上限，请删减后再保存', 'err');
+      return;
+    }
     setStatus('保存中…', '');
     try {
       await window.petAPI.saveApiConfig({
@@ -421,6 +457,13 @@
       // 角色资料 / 世界背景：直接保存——两项都清空 = 删除文件，之后不再发送
       if (personaLoaded) {
         await window.petAPI.savePersona(personaLoaded.characterName, $('persona_system').value, $('story_background').value);
+      }
+      // 印象标签：没改动就不提交（避免覆盖设置窗口开着期间 AI 自动追加的内容，也不会在角色等回复时被锁误拦）
+      if (memoryLoaded) {
+        const cur = normalizeMemory($('memory_index').value);
+        if (cur !== memoryLoaded.original) {
+          await window.petAPI.saveMemoryIndex(memoryLoaded.characterName, cur);
+        }
       }
       // 保存成功：不需要绿色"已保存"文案停留，直接关闭设置窗口
       window.close();

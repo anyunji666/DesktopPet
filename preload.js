@@ -45,6 +45,9 @@ contextBridge.exposeInMainWorld('petAPI', {
   getPersona: () => ipcRenderer.invoke('get-persona'),
   savePersona: (characterName, system, storyBackground) =>
     ipcRenderer.invoke('save-persona', characterName, system, storyBackground),
+  // 当前角色的印象标签（memory index）读取 / 保存（设置窗口用）
+  getMemoryIndex: () => ipcRenderer.invoke('get-memory-index'),
+  saveMemoryIndex: (characterName, text) => ipcRenderer.invoke('save-memory-index', characterName, text),
   fetchModelList: (apiUrl, apiKey) => ipcRenderer.invoke('fetch-model-list', apiUrl, apiKey),
   // Gemini 多 Key 轮询中转当前状态（是否在跑 / 端口），设置窗口打开时用来回显提示行
   getRelayStatus: () => ipcRenderer.invoke('get-relay-status'),

@@ -212,6 +212,35 @@ function saveMemoryIndex(characterName, text) {
   }
 }
 
+// 规整用户手动编辑的印象标签：每行去首尾空白、丢掉空行，行与行之间用单个换行连接。
+// 设置页的字数计数和这里的上限校验都以这份规整后的文本为准，两边口径一致。
+function normalizeMemoryText(text) {
+  return (typeof text === 'string' ? text : '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .join('\n');
+}
+
+// 用户在设置页手动保存印象标签：跟自动追加不同，超过上限时不静默丢行，而是直接抛错让界面提示，
+// 免得用户改完发现少了几行。规整后为空 = 删除文件（之后不再发送 <memory_index>）。
+function saveMemoryIndexManual(characterName, text) {
+  const normalized = normalizeMemoryText(text);
+  if (normalized.length > MEMORY_MAX_CHARS) {
+    throw new Error(`印象标签超过 ${MEMORY_MAX_CHARS} 字上限（当前 ${normalized.length} 字），请删减后再保存`);
+  }
+  if (!normalized) {
+    clearMemoryIndex(characterName);
+    return;
+  }
+  try {
+    fs.writeFileSync(memoryPath(characterName), normalized, 'utf-8');
+  } catch (err) {
+    console.error(`[pet] 保存印象标签失败: ${err.message}`);
+    throw new Error('保存印象标签失败：' + err.message);
+  }
+}
+
 // 追加若干条新记忆（去重：整行已经出现在现有内容里的直接跳过），单条超过 20 字就截断成标签长度，
 // 总量超限时自动从头部丢旧行。由跨天总结那次 LLM 调用顺带产出，不单独发起请求。
 function appendMemoryLines(characterName, newLines) {
@@ -310,6 +339,8 @@ module.exports = {
   clearOpenedDay,
   loadMemoryIndex,
   saveMemoryIndex,
+  saveMemoryIndexManual,
+  MEMORY_MAX_CHARS,
   appendMemoryLines,
   clearMemoryIndex,
   chatImageDir,
