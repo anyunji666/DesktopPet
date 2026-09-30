@@ -16,7 +16,7 @@ function stripMetaForHistory(content) {
   return content.replace(META_BRACKETS, '').replace(/[ \t]{2,}/g, ' ').trim();
 }
 
-// PROMPT_FOOTER 要求模型在回复末尾输出的摘要块标签（<story_overview>故事时间/概述</story_overview>）。
+// SUMMARY_FOOTER 要求模型在回复末尾输出的摘要块标签（<story_overview>故事时间/概述</story_overview>）。
 // 用带闭合标签的正则匹配，而不是简单地"从某个标记切到字符串末尾"——这样即使标签前后顺序有变化
 // （比如语气【】插在摘要块前面）也能准确截出摘要块本身，不会把语气或别的内容也一起吞进去。
 const STORY_OVERVIEW_RE = /<story_overview>[\s\S]*?<\/story_overview>/;

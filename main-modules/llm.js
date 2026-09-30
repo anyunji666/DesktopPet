@@ -172,6 +172,9 @@ const INPUT_NOTE = `## **用户的输入说明**
 - 不带括号的内容就是用户在扮演他所设置的角色和 你 所扮演的角色互动`;
 
 // 固定拼在模板末尾的说明段落（不受用户配置影响，硬编码）
+// 输出规则分成两段：PROMPT_FOOTER（内容/语言/正文字数/符号规范）和 SUMMARY_FOOTER（摘要模块）。
+// 拆开是为了让提示词里的先后顺序和模型实际输出的顺序一致：正文 →【语气】→ <story_overview> 摘要块。
+// 语气描述（tone.js 的 TONE_PROMPT，仅豆包/MiMo 开启时才有）夹在两段中间，见 buildPromptText。
 const PROMPT_FOOTER = `## **必须遵守的强制性输出规则**
 
 - **内容要求：** 
@@ -192,8 +195,10 @@ const PROMPT_FOOTER = `## **必须遵守的强制性输出规则**
   - 句末拖长音：「不要嘛～」
   - 句末重音：「什么！」
   - 疑问/质疑：「是这样吗？」
-- 示例：「你不要过来～」*怎么这样···*「真是服了你了～」小拳拳锤了一下{{user}}的胸口，还是默许了{{user}}的行为。
-- **摘要模块：** 对本轮的正文内容进行一次总结。每次回复必须以摘要块结尾，缺失=不合格
+- 示例：「你不要过来～」*怎么这样···*「真是服了你了～」小拳拳锤了一下{{user}}的胸口，还是默许了{{user}}的行为。`;
+
+// 摘要模块：必须放在整个回复的最末尾（解析时先摘掉摘要块，再从剩下的末尾拆语气）
+const SUMMARY_FOOTER = `- **摘要模块：** 对本轮的正文内容进行一次总结。每次回复必须以摘要块结尾，缺失=不合格
   - 输出格式：
   <story_overview>
   故事时间: <本轮场景结束时故事里的时间，日期部分请写成"YYYY年M月D日"格式，后面可接具体时刻；会跟着"场景动态推进"跳跃（比如一下跳过几天），不是用户发消息的真实时间>
@@ -273,7 +278,12 @@ function buildPromptText(characterName, history, text) {
   // 立刻看到"必须怎么写"，强化权重；代价是这段固定内容不再享受前缀缓存（见上面 parts 顺序的注释），
   // 换来的是更贴近生成位置、更不容易被中间的长历史冲淡。
   // 当前角色的语音服务商支持语气指令（豆包 / MiMo）时，才要求 LLM 在对话内容后面写一句配音语气
-  parts.push(toneEnabled(characterName) ? `${PROMPT_FOOTER}\n${TONE_PROMPT}` : PROMPT_FOOTER);
+  // 顺序：输出规则 → 语气描述（可选）→ 摘要模块。和模型实际输出的顺序（正文、【语气】、摘要块）一致，
+  // 摘要块最后读到，才不会让模型把【语气】写到摘要块后面（摘要块之后的内容解析时会被丢掉）
+  const footerParts = toneEnabled(characterName)
+    ? [PROMPT_FOOTER, TONE_PROMPT, SUMMARY_FOOTER]
+    : [PROMPT_FOOTER, SUMMARY_FOOTER];
+  parts.push(footerParts.join('\n'));
 
   return parts.join('\n\n');
 }

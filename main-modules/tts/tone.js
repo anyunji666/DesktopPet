@@ -18,7 +18,8 @@ const TRAILING_TONE = new RegExp(
   `(?:${TONE_OPEN}([^${TONE_OPEN}${TONE_CLOSE}\\n]{1,${TONE_MAX_CHARS}})${TONE_CLOSE}|\\[([^\\[\\]\\n]{1,${TONE_MAX_CHARS}})\\])\\s*$`
 );
 
-// 拼进 prompt 输出控制段落的要求（接在 llm.js 的 PROMPT_FOOTER 后面）
+// 拼进 prompt 输出控制段落的要求（在 llm.js 里夹在 PROMPT_FOOTER 和 SUMMARY_FOOTER 之间：
+// 语气写在正文后面、摘要块前面，提示词里的先后顺序要和这个输出顺序一致）
 const TONE_PROMPT = [
   `- **语气描述：** 正文输出完后，紧跟着用${TONE_OPEN}${TONE_CLOSE}包裹写一句本次 你 所扮演的角色的对话内容的语气指导（不超过 30 字，不计入上面的字数限制），概括对话内容的语气走向。要写成有画面感的具体描述，包含情绪、语调走向和说话状态，例如 ${TONE_OPEN}暧昧的悄悄话，压低声音带着笑意，语速偏慢${TONE_CLOSE}。`,
   `  - 格式示例：「你不要过来～」*怎么这样···*「真是服了你了～」小拳拳锤了一下{{user}}的胸口，还是默许了{{user}}的行为。${TONE_OPEN}先嗔怪后娇羞，语气从抗拒软化成撒娇，语速偏快${TONE_CLOSE}`,
