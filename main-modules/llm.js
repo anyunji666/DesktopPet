@@ -4,7 +4,7 @@
 const { loadConfig, updateConfig } = require('./config');
 const { loadPersona, loadStoryBackground, loadMemoryIndex } = require('./chat-store');
 const { TONE_PROMPT, toneEnabled } = require('./tts/tone');
-const { flattenChatHistory, formatMinuteTime, formatDayCN } = require('./history-flatten');
+const { flattenChatHistory, formatDayCN } = require('./history-flatten');
 const { buildFestivalBlock } = require('./holiday');
 const { generateToken, maskSecret, resolveSecretInput } = require('./security');
 
@@ -237,7 +237,6 @@ function buildPromptText(characterName, history, text) {
   const storyBackground = loadStoryBackground(characterName);
   const characterCard = loadPersona(characterName);
   const chatHistoryText = flattenChatHistory(characterName, history, text);
-  const nowText = formatMinuteTime(Date.now());
 
   // 固定内容（前缀/世界背景/角色卡/用户设定/输出说明）全部前置且逐字节不变，聊天历史/本轮输入这些每次都在变的内容后置，
   // 这样发给 DeepSeek / Gemini 这类"自动前缀缓存"的 API 时，前面这一大段固定前缀才能被复用命中、省 token。
@@ -270,7 +269,7 @@ function buildPromptText(characterName, history, text) {
   // 每轮都会变，所以放在固定前缀之后、紧贴 user_input，不破坏前缀缓存
   const festivalBlock = buildFestivalBlock(history);
   if (festivalBlock) parts.push(festivalBlock);
-  parts.push(`<user_input>\n<!-- 用户本轮最新输入，元时间 ${nowText} -->\n${text}\n</user_input>`);
+  parts.push(`<user_input>\n<!-- 用户本轮最新输入 -->\n${text}\n</user_input>`);
   parts.push('---');
   parts.push(INPUT_NOTE);
   parts.push('---');
