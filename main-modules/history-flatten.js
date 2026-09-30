@@ -32,6 +32,17 @@ function splitTurnSummary(rawReply) {
   return { body: raw.slice(0, m.index).trim(), summaryBlock: m[0].trim() };
 }
 
+// 从 assistant 内容的摘要块里取"故事时间"那一行的内容："故事时间: 2026年9月27日 21:40" → "2026年9月27日 21:40"（冒号中英文都认）。
+// 没有摘要块 / 摘要块里没写故事时间 / 内容为空，都返回空串——调用方据此决定显示不显示。
+// 聊天记录窗口给 AI 气泡打时间标签、故事时间的星期/节日播报（holiday/index.js）共用这一份。
+const STORY_TIME_LINE_RE = /故事时间\s*[:：]\s*(.+)/;
+function extractStoryTime(content) {
+  const { summaryBlock } = splitTurnSummary(content);
+  if (!summaryBlock) return '';
+  const m = STORY_TIME_LINE_RE.exec(summaryBlock);
+  return m ? m[1].trim() : '';
+}
+
 // 从"已经存进聊天记录"的 assistant 内容里提取摘要块，供 flattenChatHistory 做轮次压缩用。
 // 找不到（老数据/模型没遵守格式）返回 null，调用方据此决定要不要退回发原文兜底。
 // 返回值剥掉了首尾的 <story_overview>/</story_overview> 标签，只留"故事时间/概述"正文——
@@ -300,6 +311,7 @@ function flattenChatHistory(characterName, history, currentInputText) {
 module.exports = {
   stripMetaForHistory,
   splitTurnSummary,
+  extractStoryTime,
   formatMinuteTime,
   dayKeyOf,
   formatDayCN,

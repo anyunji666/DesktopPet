@@ -31,6 +31,8 @@ h2 { margin: 0 0 12px; font-size: 15px; color: #a02440; }
   border-bottom-left-radius: 4px;
 }
 .ts { font-size: 10px; color: #aaa; }
+/* AI 气泡末尾的故事时间标签：比底部的真实时间戳略显眼一点，但仍是次要信息 */
+.msg-story-time { font-size: 11px; color: #999; margin-top: 4px; }
 /* 气泡底部一行：时间戳 + "⋯"，紧接着下面展开 编辑/删除，消息再长也不用往上翻找 */
 .msg-foot { display: flex; align-items: center; gap: 4px; margin-top: 3px; }
 .msg.user .msg-foot { justify-content: flex-end; }

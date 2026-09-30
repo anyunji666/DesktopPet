@@ -54,7 +54,7 @@ const {
   getPromptConfig,
   savePromptConfig,
 } = require('./main-modules/llm');
-const { splitTurnSummary } = require('./main-modules/history-flatten');
+const { splitTurnSummary, extractStoryTime } = require('./main-modules/history-flatten');
 const { fetchModelList, setLlmLogListener, getLatestLlmCall } = require('./main-modules/llm-client');
 const {
   securePrefs,
@@ -487,6 +487,8 @@ ipcMain.handle('get-chat-history', (_e, characterName) => {
     // assistant 消息存盘时末尾拼了 <story_overview> 摘要块（给轮次压缩用），聊天记录窗口只是给人看的，
     // 这个标签用户不需要看到——只处理这个接口的返回值，磁盘上的历史文件本身不受影响
     content: m.role === 'assistant' ? splitTurnSummary(m.content).body : m.content,
+    // AI 消息的故事时间（取自被剥掉的那个摘要块），记录窗口拿去在气泡末尾打标签；摘要里没有就是空串，不显示
+    storyTime: m.role === 'assistant' ? extractStoryTime(m.content) : '',
     // 图片消息附带 dataURL 供记录窗口直接渲染缩略图；文件丢了就当纯文字消息
     imageDataURL: m.image ? readChatImageDataURL(characterName, m.image) : undefined,
   }));

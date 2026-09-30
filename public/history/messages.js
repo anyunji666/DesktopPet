@@ -10,7 +10,7 @@ function fmtTs(ts) {
 
 // 构造一条消息的 DOM。temp=true 是"已发出、还在等回复"的临时气泡：没有下标、没有"⋯"编辑/删除，
 // 时间处显示当前阶段的提示（整理总结中 / 等待回复中）；落盘后由 chat-settled 事件把它换成正式消息
-function buildMsgEl(role, content, ts, imageDataURL, temp) {
+function buildMsgEl(role, content, ts, imageDataURL, temp, storyTime) {
   const div = document.createElement('div');
   div.className = 'msg ' + (role === 'user' ? 'user' : 'assistant') + (temp ? ' sending' : '');
 
@@ -33,6 +33,15 @@ function buildMsgEl(role, content, ts, imageDataURL, temp) {
   }
 
   div.appendChild(line);
+
+  // AI 气泡末尾的故事时间标签（摘要里提取到才有，没有就不渲染）。放在正文后面、底部真实时间戳上面；
+  // 它是单独的元素，不进 dataset.text / 编辑框，避免编辑保存后变成正文的一部分
+  if (storyTime && role !== 'user' && !temp) {
+    const st = document.createElement('div');
+    st.className = 'msg-story-time';
+    st.textContent = '🕰 ' + storyTime;
+    div.appendChild(st);
+  }
 
   // 气泡底部一行：时间戳 + "⋯"（临时气泡没有 ⋯），编辑/删除紧接在这一行下面展开
   const foot = document.createElement('div');
@@ -74,9 +83,9 @@ function buildMsgEl(role, content, ts, imageDataURL, temp) {
   return div;
 }
 
-export function appendMsg(role, content, ts, imageDataURL) {
+export function appendMsg(role, content, ts, imageDataURL, storyTime) {
   emptyEl.style.display = 'none';
-  const div = buildMsgEl(role, content, ts, imageDataURL, false);
+  const div = buildMsgEl(role, content, ts, imageDataURL, false, storyTime);
   div.dataset.index = view.msgCount++;
   div.dataset.text = content || '';
   list.appendChild(div);
@@ -111,7 +120,7 @@ export async function load() {
     emptyEl.style.display = 'block';
     return;
   }
-  for (const m of history) appendMsg(m.role, m.content, m.ts, m.imageDataURL);
+  for (const m of history) appendMsg(m.role, m.content, m.ts, m.imageDataURL, m.storyTime);
 }
 
 // 全量重绘（编辑/删除后调用）；keepScroll 时恢复原滚动位置，避免编辑中间的消息后跳到底部
