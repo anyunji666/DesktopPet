@@ -40,7 +40,7 @@ function getApiConfig() {
     apiProfiles: sanitizeApiProfiles(cfg && cfg.apiProfiles),
     model: (cfg && cfg.model) || '',
     temperature: Number.isFinite(cfg && cfg.temperature) ? cfg.temperature : 0.9,
-    max_tokens: Number.isFinite(cfg && cfg.max_tokens) ? cfg.max_tokens : 300,
+    max_tokens: Number.isFinite(cfg && cfg.max_tokens) ? cfg.max_tokens : 2600,
     // 当前模型是否支持识图（vision）：开=图片按 OpenAI 视觉格式直发；关=图片只以文字说明进 prompt
     vision: !!(cfg && cfg.vision),
     // Gemini 多 Key 轮询中转要用的 Key 列表；非空时 main.js 会自动起本地中转服务
