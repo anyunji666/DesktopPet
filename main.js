@@ -30,6 +30,9 @@ const {
   readChatImageDataURL,
   deleteChatImage,
   clearChatImages,
+  readChatVoice,
+  deleteChatVoice,
+  clearChatVoices,
   clearDaySummaries,
   clearMemoryIndex,
   loadMemoryIndex,
@@ -493,6 +496,11 @@ ipcMain.handle('get-chat-history', (_e, characterName) => {
     imageDataURL: m.image ? readChatImageDataURL(characterName, m.image) : undefined,
   }));
 });
+// 聊天记录窗口双击 AI 气泡重听：按消息的 ts 取缓存的回复语音，没有（没调用过 TTS / 老消息）返回 null
+ipcMain.handle('get-chat-voice', (_e, characterName, ts) => {
+  if (!validCharacter(characterName)) return null;
+  return readChatVoice(characterName, ts);
+});
 ipcMain.on('open-history-window', (_e, characterName) => {
   if (typeof characterName === 'string') openHistoryWindow(characterName);
 });
@@ -648,6 +656,7 @@ ipcMain.handle('delete-chat-message', (_e, characterName, index) => {
   if (index >= history.length) throw new Error('无效的消息索引');
   const removed = history.splice(index, 1)[0];
   if (removed && removed.image) deleteChatImage(characterName, removed.image); // 图片文件跟着删
+  if (removed) deleteChatVoice(characterName, removed.ts); // 回复语音也跟着删
   saveChatHistory(characterName, history);
   return true;
 });
@@ -663,7 +672,11 @@ ipcMain.handle('truncate-chat-history', (_e, characterName, fromIndex) => {
   if (fromIndex >= history.length) throw new Error('无效的消息索引');
   const removed = history.splice(fromIndex);
   saveChatHistory(characterName, history); // 先落盘，成功后再删图片文件，避免记录还在图片却没了
-  for (const m of removed) if (m && m.image) deleteChatImage(characterName, m.image);
+  for (const m of removed) {
+    if (!m) continue;
+    if (m.image) deleteChatImage(characterName, m.image);
+    deleteChatVoice(characterName, m.ts); // 回复语音跟着删
+  }
   return removed.length;
 });
 
@@ -703,6 +716,7 @@ ipcMain.handle('clear-chat-history', (_e, characterName) => {
   assertHistoryEditable(characterName); // 正在等这个角色的回复时不允许改记录
   saveChatHistory(characterName, []);
   clearChatImages(characterName); // 图片文件夹整个清掉
+  clearChatVoices(characterName); // 回复语音文件夹也整个清掉
   clearDaySummaries(characterName); // 按天总结缓存也一起清掉
   clearMemoryIndex(characterName); // hot 记忆索引是从这些对话里提炼出来的，聊天记录都没了就一起清空
   clearOpenedDay(characterName); // 当前打开的封印包也跟着清掉，避免指向已经不存在的历史

@@ -24,7 +24,7 @@ const {
 } = require('./history-flatten');
 const { callLLM } = require('./llm-client');
 const { speakReply } = require('./tts');
-const { splitTone } = require('./tts/tone');
+const { stripTones } = require('./tts/tone');
 
 // 一轮对话的完整流程：跨天总结 -> 存图 -> 拼 prompt -> 调 LLM -> 落盘 -> 触发 TTS。
 // 成功返回 { reply, committed, startIndex }；任何一步抛错都不会落历史。
@@ -100,13 +100,13 @@ async function runChatTurnInner(characterName, text, imageDataURL, imageHolder, 
   }
 
   // === 调 LLM 并拆解回复 ===
-  // 回复末尾会带一个 <story_overview> 摘要块（给历史轮次压缩用），摘要块前面可能还有一句【配音语气】。
-  // 必须先摘掉摘要块，剩下的部分再拆语气——如果先拆语气，摘要块跟在语气后面，语气就不是字符串真正的
-  // 末尾了，splitTone 那个"只匹配末尾"的正则会直接匹配失败，语气解析会静默失效。
+  // 回复末尾会带一个 <story_overview> 摘要块（给历史轮次压缩用）；配音语气则写在正文每个「」里面、台词前面
+  // （例：「【嗔怪，语速偏快】你不要过来～」），和摘要块的位置互不影响。
   const rawReply = await callLLM(messages, `对话回复 - ${characterName}`);
   const { body: replyBody, summaryBlock } = splitTurnSummary(rawReply);
-  // 摘要块 / 语气都不该进气泡、聊天记录、IPC 返回值：拆完之后 reply 就是干净正文，气泡 / TTS / 返回值都用它
-  const { text: reply, tone } = splitTone(characterName, replyBody);
+  // 摘要块 / 语气都不该进气泡、聊天记录、IPC 返回值：reply 是摘掉所有语气后的干净正文，气泡 / 返回值 / 落档都用它；
+  // replyBody 还带着逐句语气，只给朗读用（TTS 按「」拆出每段自己的语气）
+  const reply = stripTones(characterName, replyBody);
 
   // === 落盘 ===
   // 只过滤"落档/回填给模型下一轮"这份记录：括号包裹的元指令/元回复属于 OOC 内容，不算剧情，
@@ -121,6 +121,7 @@ async function runChatTurnInner(characterName, text, imageDataURL, imageHolder, 
   // 已过滤 OOC、已去掉摘要块），startIndex 是它们在记录数组里的起始下标
   const startIndex = history.length;
   const committed = [];
+  let assistantTs = null; // 这轮 AI 回复落盘消息的 ts：朗读合成好的语音按它存到这条消息名下；没存回复（纯 OOC）时为 null
   // 过滤后文字和图片都没有了，说明这一条整个是纯元指令/元回复的 OOC 对话，不值得占历史一条，直接跳过不存
   if (userContentForHistory || imageFile) {
     const ts = Date.now();
@@ -129,6 +130,7 @@ async function runChatTurnInner(characterName, text, imageDataURL, imageHolder, 
   }
   if (replyTextForHistory) {
     const ts = Date.now();
+    assistantTs = ts;
     history.push({ role: 'assistant', content: replyContentForHistory, ts });
     // storyTime：摘要块里的故事时间，聊天记录窗口据此在气泡末尾打标签；摘要块没写就是空串
     committed.push({ role: 'assistant', content: replyTextForHistory, ts, storyTime: extractStoryTime(replyContentForHistory) });
@@ -137,9 +139,10 @@ async function runChatTurnInner(characterName, text, imageDataURL, imageHolder, 
   imageHolder.file = null; // 已经写进聊天记录，之后再出任何问题都不能删这张图
 
   // === 朗读 ===
-  // 朗读 AI 回复：不 await——文字气泡照常立即显示，语音合成好了再通过 'play-tts' 推给宠物窗口。
+  // 朗读 AI 回复：不 await——文字气泡照常立即显示，语音合成好了再通过 'play-tts' 推给宠物窗口，同时缓存到这条消息名下。
   // 放在这里，主窗口和聊天记录窗口发起的对话都会走到，不用两处各接一遍
-  speakReply(characterName, reply, tone);
+  // assistantTs 让语音合成好后能存到这条 AI 消息名下（聊天记录窗口双击气泡重听）
+  speakReply(characterName, replyBody, assistantTs);
 
   return { reply, committed, startIndex };
 }

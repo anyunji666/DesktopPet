@@ -2,6 +2,7 @@
 // 只做串联：加载各功能模块（各自注册自己的事件/订阅）、接主进程推送、首次加载。
 // 模块依赖单向：state / toast ← pending ← {messages, composer, confirm-dialog} ←
 // {voice-input（依赖 composer）, message-actions, header-menu（依赖 messages / confirm-dialog）} ← index；
+// voice-player（双击气泡重听）只依赖 state，被 messages 引用（重绘时停播），本身由 index 加载以注册双击事件；
 // 没有模块反过来依赖入口，也没有循环 import。
 import { characterName, view } from './state.js';
 import { alertError } from './toast.js';
@@ -10,6 +11,7 @@ import { appendMsg, load, reload } from './messages.js';
 import './composer.js';
 import './voice-input.js';
 import './message-actions.js';
+import './voice-player.js';
 import './confirm-dialog.js';
 import './header-menu.js';
 

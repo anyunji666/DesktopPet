@@ -26,14 +26,22 @@ function unduckMusic() {
 
 // 播台词 / AI 回复语音；舞蹈音乐正在放时先压低音量，语音播完恢复。
 // （角色语音现在只在待机时播，待机动画本身没有音乐，所以压低音乐的分支基本不会再触发，保留作兜底）
-// opts.onMetadata(duration)：拿到时长时回调（AI 回复用它把气泡延长到语音结束）；opts.onEnd：播完或出错时回调
+// opts.onMetadata(duration)：拿到时长时回调；opts.onEnd：播完或出错时回调
+// opts.keepQueue：AI 回复语音队列（tts.js）自己播下一段时传 true；其余任何地方 playVoice / stopVoice 都会
+// 通过 setVoiceCancelHook 登记的钩子把还没播完的 AI 回复队列作废（包括队列正在"等间隔"、还没开口的那段时间）
 // 角色语音只在待机时播（待机姿态 / 待机动画）：普通舞蹈、退场舞（含加载动作的间隙）期间一律不播
 export function canPlayVoice() {
   return !state.exitInProgress && !(state.danceMode && !state.idleAnim);
 }
 
+let voiceCancelHook = null;
+export function setVoiceCancelHook(fn) {
+  voiceCancelHook = fn;
+}
+
 export function playVoice(url, opts = {}) {
   if (!url || !canPlayVoice()) return;
+  if (!opts.keepQueue && voiceCancelHook) voiceCancelHook();
   voiceAudio.pause();
   voiceAudio.onended = voiceAudio.onerror = voiceAudio.onloadedmetadata = null;
   voiceAudio.src = url;
@@ -52,6 +60,7 @@ export function playVoice(url, opts = {}) {
 
 // 立刻停掉当前语音（切角色 / 退场 / 开始跳舞时用），同时恢复被压低的舞蹈音乐
 export function stopVoice() {
+  if (voiceCancelHook) voiceCancelHook();
   voiceAudio.pause();
   voiceAudio.onended = voiceAudio.onerror = voiceAudio.onloadedmetadata = null;
   unduckMusic();

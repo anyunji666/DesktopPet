@@ -18,12 +18,12 @@ function stripMetaForHistory(content) {
 
 // SUMMARY_FOOTER 要求模型在回复末尾输出的摘要块标签（<story_overview>故事时间/概述</story_overview>）。
 // 用带闭合标签的正则匹配，而不是简单地"从某个标记切到字符串末尾"——这样即使标签前后顺序有变化
-// （比如语气【】插在摘要块前面）也能准确截出摘要块本身，不会把语气或别的内容也一起吞进去。
+// （比如摘要块前后夹了别的内容）也能准确截出摘要块本身，不会把别的内容也一起吞进去。
 const STORY_OVERVIEW_RE = /<story_overview>[\s\S]*?<\/story_overview>/;
 
 // 把 LLM 原始回复拆成 { body, summaryBlock }：summaryBlock 是摘要块原文（含标签，未找到则为空串），
-// body 是去掉摘要块之后剩下的部分（可能还带着语气【…】，留给 splitTone 继续拆）。
-// main.js 生成回复时用这个把"摘要块"和"正文/语气"分开处理：正文/语气才进气泡和聊天记录展示，
+// body 是去掉摘要块之后剩下的部分（可能还带着每个「」里的逐句语气【…】，由 chat-turn.js 用 stripTones 摘掉）。
+// chat-turn.js 生成回复时用这个把"摘要块"和"正文"分开处理：正文（摘掉语气后）才进气泡和聊天记录展示，
 // 摘要块只重新拼回持久化历史（喂给下一轮 LLM 用），三者互不干扰。
 function splitTurnSummary(rawReply) {
   const raw = typeof rawReply === 'string' ? rawReply : '';

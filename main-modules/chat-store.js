@@ -321,6 +321,83 @@ function clearChatImages(characterName) {
   }
 }
 
+// ---------- 回复语音：存 chat-history/voices/<角色名>/<消息ts>/ 下 ----------
+// 跟聊天图片一样存成独立文件，不写进聊天记录 JSON：TTS 是对话落盘之后才异步合成完的，如果这时下一轮对话已经
+// 在跑，它落盘时会用旧的历史数组整份覆盖，挂在消息上的语音字段就丢了；按 AI 消息的 ts 单独存就不受影响。
+// 编辑消息只改 content、不改 ts，所以编辑后的气泡仍然对应原来的语音。
+// 目录里每个「」一个音频文件（0.mp3、1.mp3 ……），meta.json 记各段顺序、格式、阅读时间线位置和旧版相对停顿：
+//   { "clips": [ { "file": "0.mp3", "mime": "audio/mpeg", "gapBeforeMs": 0, "readOffsetMs": 0 }, ... ] }
+// readOffsetMs 是后加的字段，老缓存没有，播放端检测到缺失就退回用 gapBeforeMs。
+// 没调用过 TTS（或全部合成失败）的消息没有这个目录。
+function voiceCharDir(characterName) {
+  return path.join(getChatDir(), 'voices', assertSafeName(characterName));
+}
+
+// ts 只允许是有限数字，转成目录名（防路径逃逸）；不合法返回 null
+function voiceDirName(ts) {
+  return Number.isFinite(ts) ? String(Math.trunc(ts)) : null;
+}
+
+// 保存一条消息的语音；clips = [{ buffer|bytes, mime, gapBeforeMs, readOffsetMs }]（按播放顺序）。已存在的同 ts 语音整个覆盖
+function saveChatVoice(characterName, ts, clips) {
+  const name = voiceDirName(ts);
+  if (!name || !Array.isArray(clips) || !clips.length) return false;
+  const dir = path.join(voiceCharDir(characterName), name);
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true });
+  const meta = { clips: [] };
+  clips.forEach((c, i) => {
+    const file = `${i}.mp3`; // 三家服务商目前统一返回 mp3
+    fs.writeFileSync(path.join(dir, file), c.buffer || c.bytes);
+    const entry = { file, mime: c.mime || 'audio/mpeg', gapBeforeMs: Math.max(0, Number(c.gapBeforeMs) || 0) };
+    if (Number.isFinite(c.readOffsetMs)) entry.readOffsetMs = Math.max(0, c.readOffsetMs);
+    meta.clips.push(entry);
+  });
+  fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify(meta)); // meta 最后写：读取时有 meta 才算存好了
+  return true;
+}
+
+// 读回一条消息的语音，返回 { clips: [{ bytes, mime, gapBeforeMs, readOffsetMs? }] }（老缓存没有 readOffsetMs）；没有 / 读不出来返回 null
+function readChatVoice(characterName, ts) {
+  const name = voiceDirName(ts);
+  if (!name) return null;
+  const dir = path.join(voiceCharDir(characterName), name);
+  try {
+    const meta = JSON.parse(fs.readFileSync(path.join(dir, 'meta.json'), 'utf-8'));
+    const clips = [];
+    for (const c of meta.clips || []) {
+      if (typeof c.file !== 'string' || /[\\/]|\.\./.test(c.file)) continue;
+      const clip = { bytes: fs.readFileSync(path.join(dir, c.file)), mime: c.mime || 'audio/mpeg', gapBeforeMs: c.gapBeforeMs || 0 };
+      if (Number.isFinite(c.readOffsetMs)) clip.readOffsetMs = c.readOffsetMs;
+      clips.push(clip);
+    }
+    return clips.length ? { clips } : null;
+  } catch (err) {
+    if (err.code !== 'ENOENT') console.warn(`[pet] 读取回复语音失败: ${err.message}`);
+    return null;
+  }
+}
+
+// 消息被删除时调用：把它的语音一起删掉（没有语音也没关系）
+function deleteChatVoice(characterName, ts) {
+  const name = voiceDirName(ts);
+  if (!name) return;
+  try {
+    fs.rmSync(path.join(voiceCharDir(characterName), name), { recursive: true, force: true });
+  } catch (err) {
+    console.warn(`[pet] 删除回复语音失败: ${err.message}`);
+  }
+}
+
+// 清空角色全部聊天记录 / 导入记录覆盖时，把语音文件夹一起清掉
+function clearChatVoices(characterName) {
+  try {
+    fs.rmSync(voiceCharDir(characterName), { recursive: true, force: true });
+  } catch (err) {
+    console.warn(`[pet] 清空角色语音失败: ${err.message}`);
+  }
+}
+
 module.exports = {
   getChatDir,
   readPersonaFile,
@@ -348,4 +425,8 @@ module.exports = {
   readChatImageDataURL,
   deleteChatImage,
   clearChatImages,
+  saveChatVoice,
+  readChatVoice,
+  deleteChatVoice,
+  clearChatVoices,
 };

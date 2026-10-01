@@ -1,6 +1,7 @@
 // ---------------- 消息列表：渲染 / 临时气泡 / 加载与重绘 ----------------
 import { characterName, list, emptyEl, view } from './state.js';
 import { lock, pendingText, onPendingChange } from './pending.js';
+import { stopReplay } from './voice-player.js';
 
 function fmtTs(ts) {
   const d = new Date(ts);
@@ -88,6 +89,7 @@ export function appendMsg(role, content, ts, imageDataURL, storyTime) {
   const div = buildMsgEl(role, content, ts, imageDataURL, false, storyTime);
   div.dataset.index = view.msgCount++;
   div.dataset.text = content || '';
+  if (Number.isFinite(ts)) div.dataset.ts = ts; // 消息时间戳：双击气泡重听时按它去取这条消息缓存的语音（见 voice-player.js）
   list.appendChild(div);
   window.scrollTo(0, document.body.scrollHeight);
 }
@@ -126,6 +128,7 @@ export async function load() {
 // 全量重绘（编辑/删除后调用）；keepScroll 时恢复原滚动位置，避免编辑中间的消息后跳到底部
 export async function reload(keepScroll = false) {
   const prevScroll = window.scrollY;
+  stopReplay(); // 整页重绘（删除 / 重新生成等）会让正在重听的那条可能已不存在，先停掉
   list.innerHTML = '';
   view.msgCount = 0;
   await load();

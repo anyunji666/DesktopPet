@@ -2,6 +2,7 @@
 // 导出成一个 JSON 文件：消息（图片以 dataURL 内嵌）+ 按天总结 + 长期记忆索引，方便备份 / 换电脑迁移。
 // 导入是"整份覆盖"：先把文件完整校验一遍，确认没问题才动现有数据，坏文件不会把原来的记录弄丢。
 // 不导出"打开的封印包槽位"：它只是当天有效的临时状态，导入时反而要清掉，避免指向被覆盖掉的历史。
+// 回复语音也不导出（体积大），导入覆盖时把旧的语音一并清掉。
 const fs = require('fs');
 const {
   loadChatHistory,
@@ -16,6 +17,7 @@ const {
   saveChatImage,
   readChatImageDataURL,
   clearChatImages,
+  clearChatVoices,
 } = require('./chat-store');
 
 const FORMAT = 'desktop-pet-chat';
@@ -107,6 +109,7 @@ function applyImport(characterName, data) {
 
   // 校验通过，才开始动现有数据：整份覆盖，跟"清空对话"清掉的东西保持一致
   clearChatImages(characterName);
+  clearChatVoices(characterName);
   clearDaySummaries(characterName);
   clearMemoryIndex(characterName);
   clearOpenedDay(characterName);

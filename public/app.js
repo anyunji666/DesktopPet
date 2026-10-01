@@ -337,7 +337,7 @@ document.addEventListener('mouseup', (e) => {
   if (moved < 6 && downOnModel && (!state.danceMode || state.idleAnim) && e.detail === 1) {
     if (state.quotes.length) {
       const i = Math.floor(Math.random() * state.quotes.length);
-      showBubble(state.quotes[i]);
+      showBubble(state.quotes[i], 5000);
       playVoice(state.voices[i]);
     }
     triggerBlink(); // 互动时眨个眼
