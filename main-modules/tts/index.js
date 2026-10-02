@@ -107,7 +107,7 @@ async function synthesizeSegment(cfg, text, signal, tone) {
 
 // 合成期间用户可能已经删了这条消息 / 点了重新生成：消息不在了就不存，免得留下没人引用的语音文件
 function persistVoice(characterName, msgTs, clips) {
-  if (!Number.isFinite(msgTs)) return; // 这轮没存 AI 消息（纯 OOC），没有可挂的地方
+  if (!Number.isFinite(msgTs)) return; // 这轮没存 AI 消息（回复为空），没有可挂的地方
   try {
     const exists = loadChatHistory(characterName).some((m) => m && m.role === 'assistant' && m.ts === msgTs);
     if (exists) saveChatVoice(characterName, msgTs, clips);

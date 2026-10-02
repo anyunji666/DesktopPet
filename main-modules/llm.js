@@ -224,29 +224,38 @@ const SUMMARY_FOOTER = `- **摘要模块：** 对本轮的正文内容进行一�
   - 输出格式：
   <story_overview>
   故事时间: <本轮场景结束时故事里的时间，日期部分请写成"YYYY年M月D日"格式，后面可接具体时刻；会跟着"场景动态推进"跳跃，不是用户发消息的现实时间>
-  概述: <按时间顺序列出本轮正文发生的关键事件及其造成的角色实际改变（关系/处境/认知），平铺直叙，不用比喻/形容词；无实质进展则留空，不超150字>
+  概述: <按时间顺序列出本轮正文发生的关键事件及其造成的角色实际改变（关系/处境/认知），平铺直叙，不用比喻；无实质进展则留空，不超150字；不要对括号中的元交流进行总结摘要>
   </story_overview>
   - 摘要示例（仅供格式参考，具体内容需按当轮对话实际生成）：
   <story_overview>
   故事时间: 2026年9月27日 21:40
-  概述: 女主借口漏水深夜造访男主公寓，实则想拖延离开、试探男主的态度；男主识破了这个借口，却仍配合她演下去，两人关系从单纯的房东房客多了一层暧昧的试探。
+  概述: 女主以漏水为由深夜造访男主公寓，想拖延离开并试探男主的态度；男主识破借口，仍配合她演下去，两人关系从房东房客变为互相试探。
   </story_overview>`;
 
 // 生成"某天聊天总结"用的 prompt：单独一次总结任务，不带角色人设/语气/输出格式那些约束，
 // 避免总结文本也带上角色口癖，污染归档内容。前置词（prefix）是全局的、给 AI 本身设定身份用的，
-// 跟 buildPromptText 一样带上，保持这次调用里模型对自己是谁的认知一致。具体措辞先占位，后续再调整。
-function buildSummaryPrompt(characterName, dayKey, dayLines) {
+// 跟 buildPromptText 一样带上，保持这次调用里模型对自己是谁的认知一致。
+// 结构：前置词 → <historical_conversation> 对话记录 → 任务说明与输出格式（指令放在对话后面，长对话里不容易被冲淡）。
+// 不带角色名：故事里有具体的角色名，总结让模型直接用故事里的称呼。
+// 对话行里的括号元交流原样保留（不再在存档时过滤），[总结] 不对它做特殊处理。
+function buildSummaryPrompt(dayKey, dayLines) {
   const { prefix } = getPromptConfig();
   const parts = [];
-  if (prefix.trim()) parts.push(prefix.trim());
-  parts.push(`以下是用户和角色"${characterName}"在 ${formatDayCN(dayKey)} 的对话记录：`);
+  if (prefix.trim()) {
+    parts.push(prefix.trim());
+    parts.push('');
+  }
+  parts.push('<historical_conversation>');
   parts.push(dayLines.join('\n'));
+  parts.push('</historical_conversation>');
   parts.push('');
-  parts.push('请按下面的格式输出，两部分都要给：');
+  parts.push(`<historical_conversation>是用户和你在 ${formatDayCN(dayKey)} 扮演各自角色所创作的故事。其中带有括号的内容是用户和你的元交流，不带括号的内容是扮演各自角色的故事。需要对故事进行总结，对元交流提取记忆。`);
+  parts.push('');
+  parts.push('请按下面的格式输出[总结]和[记忆]：');
   parts.push('[总结]');
-  parts.push('（不超过100字总结这天聊了什么；内容太多压不进100字就列几个要点，不需要覆盖所有细节，不要加"总结："前缀，不要用分点符号）');
+  parts.push('（不超100字总结<historical_conversation>里的故事；按时间顺序列出关键事件，平铺直叙，不用比喻（内容太多压不进100字就列几个要点）；不要加"总结："前缀，不要用分点符号）');
   parts.push('[记忆]');
-  parts.push('（这天对话里出现的、值得长期记住的用户偏好/重要设定，浓缩成标签风格的关键词/短语，不要写完整句子，一行一条，每条不超过20字；有时效性的约定/日程不算，没有就只写"无"）');
+  parts.push('（给<historical_conversation>里的用户做形象标签，提炼用户发送的内容中出现的值得长期记忆的 设定/要求，转化成用户画像，一条一行，每条不超过20字；没有就只写"无"）');
   return parts.join('\n');
 }
 

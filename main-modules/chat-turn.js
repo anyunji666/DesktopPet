@@ -14,7 +14,6 @@ const {
 } = require('./chat-store');
 const { getApiConfig, buildPromptText, buildSummaryPrompt } = require('./llm');
 const {
-  stripMetaForHistory,
   splitTurnSummary,
   extractStoryTime,
   dayKeyOf,
@@ -67,7 +66,7 @@ async function runChatTurnInner(characterName, text, imageDataURL, imageHolder, 
   // 总结落盘后把锁切到"等待回复"阶段，界面提示随之切换。
   if (summaryPlan) {
     const { dayToSummarize, dayLines } = summaryPlan;
-    const summaryPrompt = buildSummaryPrompt(characterName, dayToSummarize, dayLines);
+    const summaryPrompt = buildSummaryPrompt(dayToSummarize, dayLines);
     const rawSummary = await callLLM(
       [{ role: 'user', content: summaryPrompt }],
       `总结生成 - ${characterName}`
@@ -109,20 +108,19 @@ async function runChatTurnInner(characterName, text, imageDataURL, imageHolder, 
   const reply = stripTones(characterName, replyBody);
 
   // === 落盘 ===
-  // 只过滤"落档/回填给模型下一轮"这份记录：括号包裹的元指令/元回复属于 OOC 内容，不算剧情，
-  // 不应该沉淀进长期聊天记录、也不该在后续轮次里当成故事历史又发回模型。
-  // 本轮气泡显示（下面的 reply）、TTS 朗读、这次 IPC 的返回值都仍然用未过滤的原文，用户照常能看到。
-  const userContentForHistory = stripMetaForHistory(text);
-  const replyTextForHistory = stripMetaForHistory(reply);
+  // 括号包裹的元指令/元回复不再在落档时过滤：聊天记录、聊天窗口、回填给模型的历史都保留原文。
+  // "括号里的元交流不要总结进摘要"改由每回合摘要块的提示词约束（llm.js 的 SUMMARY_FOOTER）。
+  const userContentForHistory = text;
+  const replyTextForHistory = reply;
   // 摘要块重新拼回存档内容末尾——flattenChatHistory 做轮次压缩要靠它才能把老轮次换成摘要；
   // 语气【】不拼回去，跟现在的设计一致：语气只给 TTS 用，不落档、也不发回模型
   const replyContentForHistory = summaryBlock ? `${replyTextForHistory}\n${summaryBlock}` : replyTextForHistory;
   // committed 是这轮"实际落盘"的消息（给聊天记录窗口用，内容和 get-chat-history 返回的一致：
-  // 已过滤 OOC、已去掉摘要块），startIndex 是它们在记录数组里的起始下标
+  // 已去掉摘要块），startIndex 是它们在记录数组里的起始下标
   const startIndex = history.length;
   const committed = [];
-  let assistantTs = null; // 这轮 AI 回复落盘消息的 ts：朗读合成好的语音按它存到这条消息名下；没存回复（纯 OOC）时为 null
-  // 过滤后文字和图片都没有了，说明这一条整个是纯元指令/元回复的 OOC 对话，不值得占历史一条，直接跳过不存
+  let assistantTs = null; // 这轮 AI 回复落盘消息的 ts：朗读合成好的语音按它存到这条消息名下；没存回复时为 null
+  // 文字和图片都没有（空消息）就不占历史一条，直接跳过不存
   if (userContentForHistory || imageFile) {
     const ts = Date.now();
     history.push({ role: 'user', content: userContentForHistory, image: imageFile, ts });

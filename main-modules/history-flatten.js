@@ -1,20 +1,10 @@
 // ---------- 聊天历史处理：文本清洗 / 按天封存 / 摊平成 prompt 文本 ----------
-// 只管"历史怎么变成一段文本"：括号元指令过滤、<story_overview> 摘要块拆分、自然日分组、封存天总结预算、
+// 只管"历史怎么变成一段文本"：<story_overview> 摘要块拆分、自然日分组、封存天总结预算、
 // 轮次压缩、跨天总结的解析。不碰 API 配置、不碰 prompt 模板、不发请求。
 // 依赖方向：本文件只依赖 chat-store / date-detect，被 llm.js（拼 prompt）和 chat-turn.js（一轮对话流程）引用，
 // 不能反过来 require llm.js，否则会循环依赖。
 const { loadDaySummary, loadOpenedDay, saveOpenedDay } = require('./chat-store');
 const { extractMentionedDayKeys } = require('./date-detect');
-
-// 约定：元指令 / 元回复用（半角或全角）括号包裹，属于 OOC（出戏）内容，不算"剧情"。
-// 只用于"存历史/回填下一轮 prompt"这条链路，不影响本轮气泡显示、TTS 朗读、IPC 返回值。
-// 简单起见按"非嵌套括号对"整体删除；不处理嵌套括号（约定用法下不会出现嵌套）。
-const META_BRACKETS = /[（(][^（）()]*[）)]/g;
-
-function stripMetaForHistory(content) {
-  if (typeof content !== 'string') return content;
-  return content.replace(META_BRACKETS, '').replace(/[ \t]{2,}/g, ' ').trim();
-}
 
 // SUMMARY_FOOTER 要求模型在回复末尾输出的摘要块标签（<story_overview>故事时间/概述</story_overview>）。
 // 用带闭合标签的正则匹配，而不是简单地"从某个标记切到字符串末尾"——这样即使标签前后顺序有变化
@@ -90,12 +80,20 @@ function computeLastPastDayKey(history, refDayKey) {
 
 // 摊平某一天的原始对话为 "speaker: content" 文本行，不带时间戳/日期分组——只给"生成这天的总结"这个场景用，
 // 和 flattenChatHistory 里发给正式回复 prompt 的格式（带时间戳、按天分组）是两回事。
+// AI 回复只取正文，去掉存档末尾拼着的 <story_overview> 摘要块，只在行尾留一个 [故事时间:…]
+// （跟聊天记录窗口气泡末尾的时间标签一致；用方括号而不是圆括号，圆括号在这套约定里是元指令）。
 function flattenDayLines(characterName, history, dayKey) {
   const lines = [];
   for (const h of history) {
     if (typeof h.ts !== 'number' || dayKeyOf(h.ts) !== dayKey) continue;
     const imageTag = h.image ? `[图片:${h.image}]` : '';
-    const content = imageTag ? (h.content ? `${imageTag} ${h.content}` : imageTag) : h.content;
+    let text = h.content;
+    if (h.role === 'assistant') {
+      text = splitTurnSummary(h.content).body;
+      const storyTime = extractStoryTime(h.content);
+      if (storyTime) text = `${text} [故事时间:${storyTime}]`;
+    }
+    const content = imageTag ? (text ? `${imageTag} ${text}` : imageTag) : text;
     const speaker = h.role === 'user' ? '用户' : '你';
     lines.push(`${speaker}: ${content}`);
   }
@@ -309,7 +307,6 @@ function flattenChatHistory(characterName, history, currentInputText) {
 }
 
 module.exports = {
-  stripMetaForHistory,
   splitTurnSummary,
   extractStoryTime,
   formatMinuteTime,
