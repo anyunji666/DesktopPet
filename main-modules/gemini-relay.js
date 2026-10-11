@@ -6,9 +6,11 @@ const http = require('http');
 const { isAllowedHost, readBodyLimited, safeEqual, createRateLimiter, redact } = require('./security');
 
 // 安全相关参数
-const MAX_BODY_BYTES = 8 * 1024 * 1024; // 请求体上限（聊天历史很长时也够用）
+const MAX_BODY_BYTES = 12 * 1024 * 1024; // 请求体上限（聊天历史很长、又随消息带图时也够用；上游 Google 是 20 MB，别越过它）
 const RATE_LIMIT_MAX = 30; // 每分钟最多处理的请求数（桌宠正常使用远低于此）
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+// Gemini inline_data 官方支持的图片格式（gif 等不在其中，发过去会整条请求 400）
+const SUPPORTED_IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/heic', 'image/heif']);
 const MODEL_ID_RE = /^[A-Za-z0-9._-]{1,100}$/; // 模型名会拼进上游 URL 路径，只允许安全字符
 const rateLimiter = createRateLimiter(RATE_LIMIT_MAX, RATE_LIMIT_WINDOW_MS);
 
@@ -134,20 +136,64 @@ async function getModelList() {
   throw lastErr || { status: 500, body: '无法获取模型列表' };
 }
 
+// 拿一条消息的文字部分：content 可能是字符串，也可能是 OpenAI 视觉数组（桌宠开识图时发的那种）
+function contentToText(content) {
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => (typeof part === 'string' ? part : part && part.type === 'text' ? part.text || '' : ''))
+      .filter(Boolean)
+      .join('\n');
+  }
+  return typeof content === 'string' ? content : content == null ? '' : String(content);
+}
+
+// OpenAI content 数组里的单个 part -> Gemini parts
+// 文本 -> { text }；图片 -> { inline_data: { mime_type, data } }（Gemini 的图片必须直接带 base64 数据，
+// 只认 dataURL，http(s) 链接这种 inline_data 收不了，直接丢掉——prompt 里本来就带 [图片:文件名] 占位；
+// 格式也只放行 SUPPORTED_IMAGE_MIMES 里的，gif 等不支持的格式同样丢掉）
+function toGeminiParts(content) {
+  if (!Array.isArray(content)) return [{ text: contentToText(content) }];
+  const parts = [];
+  for (const part of content) {
+    if (typeof part === 'string') {
+      parts.push({ text: part });
+    } else if (part && part.type === 'text') {
+      if (part.text) parts.push({ text: String(part.text) });
+    } else if (part && part.type === 'image_url') {
+      const match = /^data:([^;,]+);base64,(.+)$/i.exec((part.image_url && part.image_url.url) || '');
+      if (match) {
+        let mime = match[1].toLowerCase();
+        if (mime === 'image/jpg') mime = 'image/jpeg';
+        if (SUPPORTED_IMAGE_MIMES.has(mime)) {
+          parts.push({ inline_data: { mime_type: mime, data: match[2] } });
+        } else {
+          log(`图片格式 ${mime} 不被 Gemini 支持，已丢弃这张图（文字部分照常发送）`);
+        }
+      }
+    }
+  }
+  return parts;
+}
+
 // OpenAI 风格 messages 数组 -> Gemini contents 格式
 function toGeminiContents(messages) {
   const contents = [];
   let systemText = '';
   for (const m of messages || []) {
     if (m.role === 'system') {
-      systemText += (systemText ? '\n' : '') + (m.content || '');
+      systemText += (systemText ? '\n' : '') + contentToText(m.content);
       continue;
     }
     const role = m.role === 'assistant' ? 'model' : 'user';
-    contents.push({ role, parts: [{ text: m.content || '' }] });
+    const parts = toGeminiParts(m.content);
+    if (!parts.length) continue; // 空消息（比如只有图片却没带上 base64）不占一条 content
+    contents.push({ role, parts });
   }
   if (systemText && contents.length && contents[0].role === 'user') {
-    contents[0].parts[0].text = systemText + '\n\n' + contents[0].parts[0].text;
+    // system 拼进第一条 user：那条可能是视觉数组，文字 part 不一定在 parts[0]，得找出来
+    const textPart = contents[0].parts.find((p) => typeof p.text === 'string');
+    if (textPart) textPart.text = systemText + '\n\n' + textPart.text;
+    else contents[0].parts.unshift({ text: systemText });
   } else if (systemText && !contents.length) {
     contents.push({ role: 'user', parts: [{ text: systemText }] });
   }
@@ -185,10 +231,19 @@ async function tryAllKeysOnce(model, contents) {
 
     if (!resp.ok) {
       const bodyText = await resp.text();
-      // 5xx（模型过载等）值得整体重试；4xx（参数错误/地区限制）重试也没用
-      const retryable = resp.status >= 500;
+      // 5xx / 408 值得整体重试；其余 4xx 重试也没用
+      const retryable = resp.status >= 500 || resp.status === 408;
       lastErr = { status: resp.status, body: bodyText, retryable };
-      continue;
+      // 只有"这个 Key 本身有问题"才换下一个 Key：401/403，或 400 里明确说 Key 无效
+      // 其它错误（请求体格式、模型不存在等）换 Key 结果一样，立刻中止，别白耗每个 Key 的额度和限频
+      const keySpecific =
+        resp.status === 401 || resp.status === 403 || (resp.status === 400 && /API_KEY_INVALID|API key not valid/i.test(bodyText));
+      if (retryable || keySpecific) {
+        if (keySpecific) log(`Key #${idx + 1} 疑似无效或无权限 (status=${resp.status})，换下一个`);
+        continue;
+      }
+      log(`请求本身有问题 (status=${resp.status})，换 Key 也不会好，直接中止`);
+      throw lastErr;
     }
 
     log(`Key #${idx + 1} 请求成功 (model=${model})`);
@@ -244,11 +299,24 @@ async function handleChatCompletions(payload, res) {
   try {
     const geminiResp = await callGemini(model, contents);
     const data = await geminiResp.json();
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const cand = data?.candidates?.[0];
+    // 拼接所有文字 part（跳过思考摘要 thought），不再只取 parts[0]
+    const text = ((cand && cand.content && cand.content.parts) || [])
+      .filter((p) => p && typeof p.text === 'string' && !p.thought)
+      .map((p) => p.text)
+      .join('');
+    if (!text) {
+      // 被安全过滤 / 提示词被拒 / 其它原因没出文字：把原因带回去，别静默返回空气泡
+      const blockReason = data && data.promptFeedback && data.promptFeedback.blockReason;
+      const finishReason = cand && cand.finishReason;
+      const reason = blockReason ? `提示词被拦截 (${blockReason})` : finishReason ? `生成中止 (${finishReason})` : '没有返回任何内容';
+      log('Gemini 返回空文本:', reason);
+      return sendJson(res, 502, { error: { message: 'Gemini 未返回文本：' + reason } });
+    }
     sendJson(res, 200, {
       id: 'chatcmpl-relay',
       object: 'chat.completion',
-      choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: 'stop' }],
+      choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: cand && cand.finishReason === 'MAX_TOKENS' ? 'length' : 'stop' }],
       usage: data.usageMetadata || {},
     });
   } catch (err) {
