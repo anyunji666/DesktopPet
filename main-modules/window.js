@@ -131,6 +131,21 @@ function openSettingsWindow() {
   });
 }
 
+function historyWindowUrl(characterName) {
+  return `http://127.0.0.1:${state.serverPort}/public/history.html?character=${encodeURIComponent(characterName)}`;
+}
+
+// 切换角色时让已打开的聊天记录窗口原地换成新角色：窗口位置/大小保持不变，只重新加载页面内容。
+// 没有打开的聊天记录窗口就什么都不做。页面（history/*.js）所有状态都按 URL 里的角色名初始化，
+// 整页重新加载等于一次干净的重建，不会残留旧角色的消息、临时气泡或输入框草稿。
+function retargetHistoryWindow(characterName) {
+  const w = state.historyWin;
+  if (!w || w.isDestroyed() || state.historyWinCharacter === characterName) return;
+  state.historyWinCharacter = characterName;
+  w.setTitle('聊天记录 - ' + characterName);
+  w.loadURL(historyWindowUrl(characterName));
+}
+
 function openHistoryWindow(characterName) {
   if (state.historyWin && !state.historyWin.isDestroyed()) state.historyWin.close();
   state.historyWinCharacter = characterName;
@@ -144,7 +159,7 @@ function openHistoryWindow(characterName) {
     // 见 openSettingsWindow 里的同名调用注释
     state.historyWin.webContents.setBackgroundThrottling(false);
     state.historyWin.setMenu(null);
-    state.historyWin.loadURL(`http://127.0.0.1:${state.serverPort}/public/history.html?character=${encodeURIComponent(characterName)}`);
+    state.historyWin.loadURL(historyWindowUrl(characterName));
     return state.historyWin;
   }, { resumeOn: 'content-ready', signalChannel: 'history-content-ready' });
 }
@@ -424,6 +439,7 @@ function switchCharacter(index) {
   updateConfig({ lastCharacter: state.characters[state.currentIndex].name });
   state.menu = buildMenu();
   cancelSpeaking(); // 旧角色还在合成的语音作废，不然会用旧角色的声音说话
+  retargetHistoryWindow(state.characters[index].name); // 已打开的聊天记录窗口跟着换成新角色
   send('switch-character', currentCharacterPayload());
 }
 
