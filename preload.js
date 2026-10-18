@@ -45,7 +45,7 @@ contextBridge.exposeInMainWorld('petAPI', {
   getPersona: (characterName) => ipcRenderer.invoke('get-persona', characterName),
   savePersona: (characterName, system, storyBackground) =>
     ipcRenderer.invoke('save-persona', characterName, system, storyBackground),
-  // 指定角色的印象标签（memory index）读取 / 保存（设置窗口用）
+  // 指定角色的附加要求（memory index）读取 / 保存（设置窗口用）
   getMemoryIndex: (characterName) => ipcRenderer.invoke('get-memory-index', characterName),
   saveMemoryIndex: (characterName, text) => ipcRenderer.invoke('save-memory-index', characterName, text),
   fetchModelList: (apiUrl, apiKey) => ipcRenderer.invoke('fetch-model-list', apiUrl, apiKey),

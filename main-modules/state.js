@@ -10,7 +10,7 @@ const state = {
   currentSceneName: null, // null = 无场景（保持透明背景）
   serverPort: null, // 本地静态服务器端口，设置窗口/历史记录窗口也用它加载页面
   settingsWin: null, // API 设置窗口
-  settingsWinCharacter: null, // API 设置窗口当前打开的角色名（世界背景 / 角色资料 / 印象标签编辑的是这个角色）
+  settingsWinCharacter: null, // API 设置窗口当前打开的角色名（世界背景 / 角色资料 / 附加要求编辑的是这个角色）
   historyWin: null, // 聊天记录窗口
   historyWinCharacter: null, // 聊天记录窗口当前打开的角色名
   chatPending: null, // 正在等 LLM 回复的那一轮对话（chat-lock.js 维护）；null = 空闲。{ character, source: 'main'|'history', user, imageDataURL, ts, phase: 'summarizing'|'waiting', summaryDay: 被总结的日期(YYYY-MM-DD)|null }

@@ -255,7 +255,7 @@ function buildSummaryPrompt(dayKey, dayLines) {
   parts.push('[总结]');
   parts.push('（不超100字总结<historical_conversation>里的故事；按时间顺序列出关键事件，平铺直叙，不用比喻（内容太多压不进100字就列几个要点）；不要加"总结："前缀，不要用分点符号）');
   parts.push('[记忆]');
-  parts.push('（给<historical_conversation>里的用户做形象标签，提炼元交流中出现的值得长期记忆的 设定/要求，转化成用户画像，一条一行，每条不超过20字；没有就只写"无"）');
+  parts.push('（提炼元交流中出现的值得长期记忆的 设定/要求，作为附加要求，一条一行，每条不超过20字；没有就只写"无"）');
   return parts.join('\n');
 }
 
@@ -285,7 +285,7 @@ function buildPromptText(characterName, history, text) {
   if (readerInfo.trim()) {
     parts.push(`<user_persona>\n<!-- 用户所扮演的角色设定资料 -->\n${readerInfo.trim()}\n</user_persona>`);
   }
-  // hot 记忆索引：常驻的、只存"用户偏好/重要设定"这类没有时效性的长期结论的小索引，由跨天总结/滚动总结
+  // hot 记忆索引：常驻的、只存没有时效性的附加要求的小索引，由跨天总结/滚动总结
   // 那次 LLM 调用顺带产出并追加，不需要每轮从全量历史里现猜。没内容就不发这一段
   const memoryIndex = loadMemoryIndex(characterName);
   if (memoryIndex.trim()) {

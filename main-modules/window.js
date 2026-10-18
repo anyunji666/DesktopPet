@@ -109,7 +109,7 @@ function withRenderPause(createFn, { resumeOn = 'load', signalChannel } = {}) {
 }
 
 // API 设置窗口：每次只开一个，跟音色设置一样按角色打开——API 本身是全局共用的，
-// 世界背景 / 角色资料 / 印象标签编辑的是 characterName 这个角色，不用先切换桌宠当前角色。
+// 世界背景 / 角色资料 / 附加要求编辑的是 characterName 这个角色，不用先切换桌宠当前角色。
 // 点的还是已经打开的那个角色就直接聚焦（保住没保存的编辑），点另一个角色就换成那个角色。
 function openSettingsWindow(characterName) {
   if (state.settingsWin && !state.settingsWin.isDestroyed()) {
@@ -399,7 +399,7 @@ function buildMenu() {
     { label: '🔊 静音 / 取消静音', click: () => send('menu-action', { type: 'mute' }) },
     { type: 'separator' },
     {
-      // 一级：角色列表；点某个角色 -> 弹出 API 设置窗口（API / Prompt 模板全局共用，世界背景 / 角色资料 / 印象标签是该角色的）
+      // 一级：角色列表；点某个角色 -> 弹出 API 设置窗口（API / Prompt 模板全局共用，世界背景 / 角色资料 / 附加要求是该角色的）
       label: '⚙ API 设置（对话功能）',
       submenu: state.characters.map((c) => ({ label: c.name, click: () => openSettingsWindow(c.name) })),
     },

@@ -674,15 +674,15 @@ ipcMain.handle('save-persona', (_e, characterName, system, storyBackground) => {
   });
   return true;
 });
-// ---------- IPC：指定角色的印象标签（memory index）编辑（设置窗口用，按窗口打开的角色，不跟桌宠当前角色） ----------
-// 印象标签 = 跨天总结时 AI 自动提炼的"关于用户的长期记忆"，这里允许用户手动增删改。每个角色各一份。
+// ---------- IPC：指定角色的附加要求（memory index）编辑（设置窗口用，按窗口打开的角色，不跟桌宠当前角色） ----------
+// 附加要求 = 跨天总结时 AI 从元交流里自动提炼的长期设定/要求，这里允许用户手动增删改。每个角色各一份。
 ipcMain.handle('get-memory-index', (_e, characterName) => {
   if (!validCharacter(characterName)) throw new Error('未知角色');
   return { characterName, text: loadMemoryIndex(characterName), maxChars: MEMORY_MAX_CHARS };
 });
 ipcMain.handle('save-memory-index', (_e, characterName, text) => {
   if (!validCharacter(characterName)) throw new Error('未知角色');
-  // 这个角色正在等回复 / 做跨天总结时，总结那次调用可能马上要往这份标签里追加，此时手动保存会互相覆盖，直接拦下
+  // 这个角色正在等回复 / 做跨天总结时，总结那次调用可能马上要往这份附加要求里追加，此时手动保存会互相覆盖，直接拦下
   assertHistoryEditable(characterName);
   saveMemoryIndexManual(characterName, text);
   return true;
