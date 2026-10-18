@@ -178,6 +178,13 @@
   const CUSTOM = '__custom__';
 
   let cloneAudio = null; // { file, name, mime, size } | null
+
+  // 加载完整成功之前不允许试听 / 保存：加载失败（或中途出错）时表单是空的或只填了一半，
+  // 这时保存会把半截表单当成用户的设置覆盖进去（连带清空各角色共用的服务商密钥）
+  $('save-btn').disabled = true;
+  $('test-btn').disabled = true;
+  // 语音识别配置单独记：读取失败时保存就跳过它，不把空值写回成默认 Resource-Id
+  let asrLoaded = false;
   let doubaoVoiceList = []; // 豆包预置音色的当前生效列表：[{ name, speakerId, resourceId, note }]
   let testAudio = null;
   let testUrl = null;
@@ -298,7 +305,8 @@
     try {
       const asrCfg = await window.petAPI.asrGetConfig();
       $('asr_resource_id').value = asrCfg.resourceId;
-    } catch { /* 拿不到就留空，不影响其它设置照常用 */ }
+      asrLoaded = true;
+    } catch { /* 读取失败不拦其它设置，load() 末尾会提示，保存时跳过它 */ }
 
     // MiMo
     $('mimo_api_key').value = providers.mimo.api_key;
@@ -309,6 +317,11 @@
     renderClone();
 
     refreshPanels();
+
+    // 走到这里才算加载完整，放开试听 / 保存
+    $('save-btn').disabled = false;
+    $('test-btn').disabled = false;
+    if (!asrLoaded) setStatus('语音识别配置读取失败，本次保存不会修改它', 'err');
   }
 
   // 表单 -> 与主进程 ttsConfig 同结构的对象（主进程会再规整一遍）
@@ -427,7 +440,7 @@
     setStatus('保存中…', 'busy');
     try {
       await window.petAPI.ttsSaveConfig(character, collect());
-      await window.petAPI.asrSaveConfig({ resourceId: $('asr_resource_id').value });
+      if (asrLoaded) await window.petAPI.asrSaveConfig({ resourceId: $('asr_resource_id').value });
       // 保存成功：不需要绿色"已保存"文案停留，直接关闭音色设置窗口
       window.close();
     } catch (err) {

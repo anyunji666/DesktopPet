@@ -233,9 +233,12 @@
 
 <script>
   const $ = (id) => document.getElementById(id);
-  // 当前角色的人设状态：null = 还没加载到（不该出现）
+  // 这个窗口编辑的角色：菜单里点哪个角色就是哪个（API / Prompt 模板是全局的，不受它影响）
+  const character = new URLSearchParams(location.search).get('character') || '';
+  document.title = 'API 设置 - ' + character;
+  // 该角色的人设状态：null = 还没加载到（加载失败时会提示，此时保存不会动人设）
   let personaLoaded = null;
-  // 当前角色的印象标签：加载时记下原文与上限，保存时只有改过才提交
+  // 该角色的印象标签：加载时记下原文与上限，保存时只有改过才提交
   let memoryLoaded = null;
 
   // 与后端 normalizeMemoryText 同一口径：每行去首尾空白、丢空行
@@ -414,21 +417,21 @@
     $('prompt_prefix').value = promptCfg.prefix || '';
     $('prompt_reader_info').value = promptCfg.readerInfo || '';
 
-    const persona = await window.petAPI.getPersona();
-    if (persona) {
+    try {
+      const persona = await window.petAPI.getPersona(character);
       personaLoaded = persona;
       $('persona-character').textContent = '· ' + persona.characterName;
       $('storybg-character').textContent = '· ' + persona.characterName;
       $('persona_system').value = persona.system || '';
       $('story_background').value = persona.storyBackground || '';
-    }
 
-    const memory = await window.petAPI.getMemoryIndex();
-    if (memory) {
+      const memory = await window.petAPI.getMemoryIndex(character);
       memoryLoaded = { characterName: memory.characterName, original: normalizeMemory(memory.text), maxChars: memory.maxChars };
       $('memory-character').textContent = '· ' + memory.characterName;
       $('memory_index').value = memory.text || '';
       updateMemoryCount();
+    } catch (err) {
+      setStatus('加载角色资料失败：' + (err && err.message ? err.message : String(err)), 'err');
     }
   }
 

@@ -108,25 +108,32 @@ function withRenderPause(createFn, { resumeOn = 'load', signalChannel } = {}) {
   return win;
 }
 
-function openSettingsWindow() {
+// API 设置窗口：每次只开一个，跟音色设置一样按角色打开——API 本身是全局共用的，
+// 世界背景 / 角色资料 / 印象标签编辑的是 characterName 这个角色，不用先切换桌宠当前角色。
+// 点的还是已经打开的那个角色就直接聚焦（保住没保存的编辑），点另一个角色就换成那个角色。
+function openSettingsWindow(characterName) {
   if (state.settingsWin && !state.settingsWin.isDestroyed()) {
-    state.settingsWin.show();
-    state.settingsWin.focus();
-    return;
+    if (state.settingsWinCharacter === characterName) {
+      state.settingsWin.show();
+      state.settingsWin.focus();
+      return;
+    }
+    state.settingsWin.close();
   }
+  state.settingsWinCharacter = characterName;
   withRenderPause(() => {
     state.settingsWin = new BrowserWindow({
       width: 420,
       height: 540,
       resizable: false,
-      title: 'API 设置',
+      title: 'API 设置 - ' + characterName,
       webPreferences: securePrefs(),
     });
     // 桌面模式下宠物主窗口纵向展开且常驻置顶，会让新开的子窗口被 Chromium 判定为遮挡/后台，
     // 首帧渲染被节流，导致内容要等用户点一下（真正的输入事件）才画出来；关掉节流从根源避免
     state.settingsWin.webContents.setBackgroundThrottling(false);
     state.settingsWin.setMenu(null);
-    state.settingsWin.loadURL(`http://127.0.0.1:${state.serverPort}/public/settings.html`);
+    state.settingsWin.loadURL(`http://127.0.0.1:${state.serverPort}/public/settings.html?character=${encodeURIComponent(characterName)}`);
     return state.settingsWin;
   });
 }
@@ -164,9 +171,18 @@ function openHistoryWindow(characterName) {
   }, { resumeOn: 'content-ready', signalChannel: 'history-content-ready' });
 }
 
-// 音色设置窗口：每次只开一个，点另一个角色就换成那个角色的
+// 音色设置窗口：每次只开一个，点另一个角色就换成那个角色的；
+// 点的还是已经打开的那个角色就直接聚焦（保住没保存的编辑）
 function openVoiceWindow(characterName) {
-  if (state.voiceWin && !state.voiceWin.isDestroyed()) state.voiceWin.close();
+  if (state.voiceWin && !state.voiceWin.isDestroyed()) {
+    if (state.voiceWinCharacter === characterName) {
+      state.voiceWin.show();
+      state.voiceWin.focus();
+      return;
+    }
+    state.voiceWin.close();
+  }
+  state.voiceWinCharacter = characterName;
   withRenderPause(() => {
     state.voiceWin = new BrowserWindow({
       width: 440,
@@ -382,7 +398,11 @@ function buildMenu() {
     { type: 'separator' },
     { label: '🔊 静音 / 取消静音', click: () => send('menu-action', { type: 'mute' }) },
     { type: 'separator' },
-    { label: '⚙ API 设置（对话功能）', click: () => openSettingsWindow() },
+    {
+      // 一级：角色列表；点某个角色 -> 弹出 API 设置窗口（API / Prompt 模板全局共用，世界背景 / 角色资料 / 印象标签是该角色的）
+      label: '⚙ API 设置（对话功能）',
+      submenu: state.characters.map((c) => ({ label: c.name, click: () => openSettingsWindow(c.name) })),
+    },
     {
       // 一级：角色列表；点某个角色 -> 弹出该角色的语音配置窗口（先选服务商，再配音色）
       label: '🎙 音色设置（语音功能）',

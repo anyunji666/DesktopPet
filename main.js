@@ -443,14 +443,13 @@ ipcMain.handle('get-relay-status', () => geminiRelay.getStatus());
 ipcMain.handle('get-prompt-config', () => getPromptConfig());
 ipcMain.handle('save-prompt-config', (_e, patch) => savePromptConfig(patch && typeof patch === 'object' ? patch : {}));
 
-// ---------- IPC：当前角色的资料（persona）编辑（设置窗口用） ----------
-// 返回当前角色已填写的人设文本（没填就是空字符串）
-ipcMain.handle('get-persona', () => {
-  const c = state.characters[state.currentIndex];
-  if (!c) return null;
-  const { system, storyBackground } = readPersonaFile(c.name);
+// ---------- IPC：指定角色的资料（persona）编辑（设置窗口用，按窗口打开的角色，不跟桌宠当前角色） ----------
+// 返回该角色已填写的人设文本（没填就是空字符串）
+ipcMain.handle('get-persona', (_e, characterName) => {
+  if (!validCharacter(characterName)) throw new Error('未知角色');
+  const { system, storyBackground } = readPersonaFile(characterName);
   return {
-    characterName: c.name,
+    characterName,
     system,
     storyBackground,
   };
@@ -463,12 +462,11 @@ ipcMain.handle('save-persona', (_e, characterName, system, storyBackground) => {
   });
   return true;
 });
-// ---------- IPC：当前角色的印象标签（memory index）编辑（设置窗口用） ----------
+// ---------- IPC：指定角色的印象标签（memory index）编辑（设置窗口用，按窗口打开的角色，不跟桌宠当前角色） ----------
 // 印象标签 = 跨天总结时 AI 自动提炼的"关于用户的长期记忆"，这里允许用户手动增删改。每个角色各一份。
-ipcMain.handle('get-memory-index', () => {
-  const c = state.characters[state.currentIndex];
-  if (!c) return null;
-  return { characterName: c.name, text: loadMemoryIndex(c.name), maxChars: MEMORY_MAX_CHARS };
+ipcMain.handle('get-memory-index', (_e, characterName) => {
+  if (!validCharacter(characterName)) throw new Error('未知角色');
+  return { characterName, text: loadMemoryIndex(characterName), maxChars: MEMORY_MAX_CHARS };
 });
 ipcMain.handle('save-memory-index', (_e, characterName, text) => {
   if (!validCharacter(characterName)) throw new Error('未知角色');

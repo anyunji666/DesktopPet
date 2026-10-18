@@ -10,10 +10,12 @@ const state = {
   currentSceneName: null, // null = 无场景（保持透明背景）
   serverPort: null, // 本地静态服务器端口，设置窗口/历史记录窗口也用它加载页面
   settingsWin: null, // API 设置窗口
+  settingsWinCharacter: null, // API 设置窗口当前打开的角色名（世界背景 / 角色资料 / 印象标签编辑的是这个角色）
   historyWin: null, // 聊天记录窗口
   historyWinCharacter: null, // 聊天记录窗口当前打开的角色名
   chatPending: null, // 正在等 LLM 回复的那一轮对话（chat-lock.js 维护）；null = 空闲。{ character, source: 'main'|'history', user, imageDataURL, ts, phase: 'summarizing'|'waiting', summaryDay: 被总结的日期(YYYY-MM-DD)|null }
   voiceWin: null, // 音色设置（语音功能）窗口
+  voiceWinCharacter: null, // 音色设置窗口当前打开的角色名
   llmLogWin: null, // LLM 调用记录窗口（审查用，替代原来 cmd 窗口里打印的方式）
   aboutWin: null, // 关于窗口（连续点版本号 6 次可切换下面的 showDevEntries）
   showDevEntries: false, // 右键菜单里是否显示"LLM记录"/"开发者工具"；默认隐藏，启动时从 config.json 恢复
