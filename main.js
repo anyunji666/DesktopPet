@@ -146,6 +146,177 @@ function getInteractiveLogonTimeMs() {
   });
 }
 
+// 查"本次系统启动"的真实时间点，返回毫秒时间戳；查不到返回 null。
+// 为什么不能只用 os.uptime()：Windows 开着「快速启动」时，点"关机"其实是内核休眠 + 注销用户，
+// 内核运行时间不会清零，os.uptime() 会从上次真正重启起累计（可能好几天），
+// 拿它推出来的"开机时间点"会停在几天前，再减登录时间就得到几万分钟的离谱数字。
+// 系统事件日志里，每次启动（含快速启动恢复）都会记一条：
+//   Microsoft-Windows-Kernel-General  ID 12（操作系统已启动）
+//   Microsoft-Windows-Kernel-Boot     ID 27（启动类型：0=完整启动，1=快速启动，2=休眠恢复）
+// 取这两类里最新的一条作为本次启动时间点。普通用户即可读 System 日志，不需要管理员权限。
+function getLatestBootEventTimeMs() {
+  return new Promise((resolve) => {
+    if (process.platform !== 'win32') return resolve(null);
+    const script =
+      "$t = @(); " +
+      "$t += Get-WinEvent -FilterHashtable @{LogName='System';ProviderName='Microsoft-Windows-Kernel-General';Id=12} -MaxEvents 1 -ErrorAction SilentlyContinue; " +
+      "$t += Get-WinEvent -FilterHashtable @{LogName='System';ProviderName='Microsoft-Windows-Kernel-Boot';Id=27} -MaxEvents 1 -ErrorAction SilentlyContinue; " +
+      '$e = $t | Where-Object { $_ } | Sort-Object TimeCreated -Descending | Select-Object -First 1; ' +
+      'if ($e) { [DateTimeOffset]$e.TimeCreated | ForEach-Object { $_.ToUnixTimeMilliseconds() } }';
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', script],
+      { timeout: 8000, windowsHide: true },
+      (err, stdout) => {
+        if (err) return resolve(null);
+        const ms = parseInt(String(stdout).trim(), 10);
+        resolve(Number.isFinite(ms) && ms > 0 ? ms : null);
+      }
+    );
+  });
+}
+
+// 算出来/读出来的"开机用时"超过这个值就认为不可信（快速启动下的假数据 / 异常值），不展示
+const MAX_PLAUSIBLE_BOOT_SEC = 600;
+
+// 读系统自己统计的开机耗时：Diagnostics-Performance 日志（任务管理器"启动"页背后就是这套数据）
+// 里事件 ID 100（Windows 启动）的 BootTime 字段，单位毫秒，是 Windows 自己度量的
+// "从按下电源到启动完成"的总耗时，最接近"系统本身有多快"。
+// 快速启动（混合关机）恢复时不会写这条事件，读不到是常态。返回 null 的情况：
+// 查不到事件、事件不属于本次启动（时间点对不上，多半是上一次完整启动留下的旧记录）、数值异常。
+// bootAtMs 传"本次启动时间点"，用来校验事件归属。
+// 读系统自己统计的启动总结（Diagnostics-Performance 日志里事件 ID 100「Windows 启动」，
+// 任务管理器"启动"页背后就是这套数据）。返回 { bootTimeMs, numStartupApps, trend, trendDeltaMs }：
+// bootTimeMs = Windows 自己度量的"从内核启动到整场就绪"总耗时（BootTime 字段，毫秒），
+// 最接近"系统本身有多快"；numStartupApps = 本次跑的自启动应用数（可能缺失）；
+// trend = 系统拿本场启动和近几次开机的历史基线比出来的就绪时间趋势：
+// 'slower'（BootIsDegradation=true，变慢）/ 'faster'（BootImprovementDelta>0，变快）/ 'flat'（无明显变动），
+// trendDeltaMs = 对应的变化量（毫秒，可能缺失）。
+// 快速启动（混合关机）恢复时不会写这条事件，读不到是常态。返回 null 的情况：
+// 查不到事件、事件不属于本次启动（时间点对不上，多半是上一次完整启动留下的旧记录）、数值异常。
+// bootAtMs 传"本次启动时间点"，用来校验事件归属。
+function getDiagnosticsBootInfo(bootAtMs, nowMs) {
+  return new Promise((resolve) => {
+    if (process.platform !== 'win32') return resolve(null);
+    const script =
+      "$e = Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-Diagnostics-Performance/Operational';Id=100} -MaxEvents 1 -ErrorAction SilentlyContinue; " +
+      'if ($e) { ' +
+      '$x = [xml]$e.ToXml(); ' +
+      "function Get-Data($n) { $d = $x.Event.EventData.Data | Where-Object { $_.Name -eq $n }; if ($d) { $d.'#text' } }; " +
+      "$b = Get-Data 'BootTime'; " +
+      'if ($b) { ' +
+      '$ms = [DateTimeOffset]$e.TimeCreated | ForEach-Object { $_.ToUnixTimeMilliseconds() }; ' +
+      "($b, $ms, (Get-Data 'BootNumStartupApps'), (Get-Data 'BootIsDegradation'), (Get-Data 'BootImprovementDelta'), (Get-Data 'BootDegradationDelta')) -join ',' " +
+      '} }';
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', script],
+      { timeout: 8000, windowsHide: true },
+      (err, stdout) => {
+        if (err) return resolve(null);
+        const [bootMsStr, evMsStr, appsStr, degradStr, improveStr, degradDeltaStr] = String(stdout).trim().split(',');
+        const bootTimeMs = parseInt(bootMsStr, 10);
+        const eventAtMs = parseInt(evMsStr, 10);
+        const sane =
+          Number.isFinite(bootTimeMs) && bootTimeMs > 0 && bootTimeMs <= MAX_PLAUSIBLE_BOOT_SEC * 1000 &&
+          Number.isFinite(eventAtMs) && eventAtMs >= bootAtMs && eventAtMs <= nowMs;
+        if (!sane) return resolve(null);
+        const numStartupApps = parseInt(appsStr, 10);
+        const improvementDeltaMs = parseInt(improveStr, 10);
+        const degradationDeltaMs = parseInt(degradDeltaStr, 10);
+        const trend = String(degradStr).toLowerCase() === 'true'
+          ? 'slower'
+          : Number.isFinite(improvementDeltaMs) && improvementDeltaMs > 0 ? 'faster' : 'flat';
+        const trendDeltaMs = trend === 'slower' ? degradationDeltaMs : trend === 'faster' ? improvementDeltaMs : null;
+        resolve({
+          bootTimeMs,
+          numStartupApps: Number.isFinite(numStartupApps) && numStartupApps >= 0 ? numStartupApps : null,
+          trend,
+          trendDeltaMs,
+        });
+      }
+    );
+  });
+}
+
+// 系统自统计的 BootTime 要等整场启动结束、系统趋于空闲后才写入日志（实测通常在开机后
+// 一两分钟，慢机器更久），本程序随登录自启时读到的还是上一次开机的旧记录（归属校验会
+// 把它拒掉）。这里轮询等本次启动的事件出现，超时返回 null。
+const BOOT_EVENT_POLL_TIMEOUT_MS = 5 * 60 * 1000;
+const BOOT_EVENT_POLL_INTERVAL_MS = 10 * 1000;
+
+async function pollDiagnosticsBootInfo(bootAtMs) {
+  const deadline = Date.now() + BOOT_EVENT_POLL_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const info = await getDiagnosticsBootInfo(bootAtMs, Date.now());
+    if (info != null) return info;
+    await new Promise((r) => setTimeout(r, BOOT_EVENT_POLL_INTERVAL_MS));
+  }
+  return null;
+}
+
+// 兜底口径：登录完成时间 − 开机时间，返回秒数；不可用返回 null。
+// 注意它只量到"登录完成"，不含登录后系统后台就绪的那段，可能比真实开机耗时少十几秒。
+async function getLoginFallbackBootSec(bootAtMs, eventBootValid, nowMs) {
+  const loginAtMs = await getInteractiveLogonTimeMs();
+  // 登录时间要落在"开机之后、现在之前"才算有效，否则（查不到 / 系统时钟被调过导致的异常值）视为不可用
+  let valid = loginAtMs != null && loginAtMs >= bootAtMs && loginAtMs <= nowMs;
+  // 没读到启动事件时（bootAtMs 来自 os.uptime() 推算），用时过长基本就是快速启动导致的假数据，不展示
+  if (valid && !eventBootValid && (loginAtMs - bootAtMs) / 1000 > MAX_PLAUSIBLE_BOOT_SEC) valid = false;
+  return valid ? (loginAtMs - bootAtMs) / 1000 : null;
+}
+
+// 读"上次开机"的主板自检（POST）耗时，返回毫秒；读不到或数值离谱返回 null。
+// 来源：UEFI 固件把从上电到交给 Windows 的耗时通过 ACPI FPDT 表上报，内核每次开机写进注册表，
+// 任务管理器"上次 BIOS 所用时间"读的就是同一处。普通用户权限可读。
+// 本程序随登录自启时读到的一定是本次开机的值；主板固件实现不规范时可能报 0 或离谱值，做上限校验。
+const MAX_PLAUSIBLE_POST_MS = 300 * 1000;
+
+function getFwPostTimeMs() {
+  return new Promise((resolve) => {
+    if (process.platform !== 'win32') return resolve(null);
+    execFile(
+      'reg.exe',
+      ['query', 'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power', '/v', 'FwPostTime'],
+      { timeout: 5000, windowsHide: true },
+      (err, stdout) => {
+        if (err) return resolve(null);
+        // 输出形如 "    FwPostTime    REG_DWORD    0x42ca"
+        const m = /FwPostTime\s+REG_DWORD\s+0x([0-9a-f]+)/i.exec(String(stdout));
+        if (!m) return resolve(null);
+        const ms = parseInt(m[1], 16);
+        resolve(Number.isFinite(ms) && ms > 0 && ms <= MAX_PLAUSIBLE_POST_MS ? ms : null);
+      }
+    );
+  });
+}
+
+// 拼开机耗时的气泡文案。postMs（主板自检）读得到时，计时起点提前到"按下电源"并分段列出；
+// 读不到就按"内核启动"起算。mainSec 是系统段耗时，mainLabel 描述系统段终点：
+// "系统"=启动到就绪（系统自统计 BootTime），"系统到登录"=只到登录完成（兜底估算）。
+function bootTimeText(postMs, mainSec, mainLabel) {
+  if (postMs == null) {
+    return `${mainLabel === '系统' ? '本次开机用时' : '本次开机到登录用时'}${formatBootDuration(mainSec)}`;
+  }
+  if (mainLabel === '系统') {
+    return `系统准备就绪用时${formatBootDuration(postMs / 1000 + mainSec)}（主板自检${formatBootDuration(postMs / 1000)}，系统加载到空闲${formatBootDuration(mainSec)}）`;
+  }
+  return `系统登录完成用时${formatBootDuration(postMs / 1000 + mainSec)}（主板自检${formatBootDuration(postMs / 1000)}，系统到登录${formatBootDuration(mainSec)}）`;
+}
+
+// 拼启动总结里"自启动应用数 + 与历史基线相比的就绪时间趋势"的文案，返回以"，"开头的尾巴
+// （没读到总结事件时返回空串）。趋势和变化量都是系统拿本场启动与近几次开机比出来的。
+function startupSummaryText(info) {
+  if (!info) return '';
+  const parts = [];
+  if (info.numStartupApps != null) parts.push(`自启动程序${info.numStartupApps}个`);
+  const delta = Number.isFinite(info.trendDeltaMs) && info.trendDeltaMs > 0
+    ? formatBootDuration(info.trendDeltaMs / 1000) : '';
+  if (info.trend === 'slower') parts.push(`系统就绪时间增长${delta}`);
+  else if (info.trend === 'faster') parts.push(`系统就绪时间缩短${delta}`);
+  else parts.push('系统就绪时间无明显变动');
+  return parts.length ? `，${parts.join('，')}` : '';
+}
 
 // 上次关闭时记的位置是否还能用：显示器插拔/分辨率变化后，坐标可能落在当前所有屏幕范围之外，
 // 那种情况下用它会导致窗口开到看不见的地方，宁可放弃、退回默认居中
@@ -287,16 +458,20 @@ setLlmLogListener((call) => {
 // 模型刚出现在屏幕上（渲染进程通知）：算一次启动用时气泡。
 // 「程序启动用时」= 从这个进程真正起跑（APP_PROCESS_START_MS）到模型出现，跟开机/登录/
 // 手动打开的时机都无关，是真实的程序启动耗时，每次都算。
-// 「开机用时」= 登录完成时间 − 开机时间，纯粹是 Windows 系统本身加载到能登录的耗时，
-// 只在"这场开机第一次启动本程序"时才报一次，之后同一场开机内重开就不重复报了。
+// 「开机用时」= 按电源 → 系统就绪：主板自检（UEFI 上报的 POST 耗时）+ 系统自统计的 BootTime
+// （Diagnostics-Performance 事件 ID 100）。哪一段读不到就把起点/终点相应收窄（最窄为
+// "内核启动 → 登录完成"），并在措辞上如实标注，只在"这场开机第一次启动本程序"时报一次。
 ipcMain.on('model-ready', async () => {
   if (bootTimerReported) return;
   bootTimerReported = true;
 
   const now = Date.now();
   const programStartSec = (now - APP_PROCESS_START_MS) / 1000;
-  const uptimeSec = os.uptime();
-  const bootAtMs = now - uptimeSec * 1000;
+  // 开机时间点：优先用事件日志里的真实启动时间（快速启动下也准确）；
+  // 读不到再退回 now - os.uptime()（快速启动下会偏早，后面有上限兜底）
+  const eventBootAtMs = await getLatestBootEventTimeMs();
+  const eventBootValid = eventBootAtMs != null && eventBootAtMs <= now;
+  const bootAtMs = eventBootValid ? eventBootAtMs : now - os.uptime() * 1000;
 
   const cfg = loadConfig();
   const sameBoot = Number.isFinite(cfg.lastBootAtMs) && Math.abs(bootAtMs - cfg.lastBootAtMs) <= SAME_BOOT_TOLERANCE_MS;
@@ -307,15 +482,52 @@ ipcMain.on('model-ready', async () => {
     return;
   }
 
-  // 这场开机第一次启动：查登录完成时间，算出纯 Windows 加载耗时
-  const loginAtMs = await getInteractiveLogonTimeMs();
-  // 登录时间要落在"开机之后、现在之前"才算有效，否则（查不到 / 系统时钟被调过导致的异常值）
-  // 开机用时那部分就报不精确，但程序启动用时依然是精确值
-  const valid = loginAtMs != null && loginAtMs >= bootAtMs && loginAtMs <= now;
-  const text = valid
-    ? `你好啊~本次开机用时${formatBootDuration((loginAtMs - bootAtMs) / 1000)}，程序启动用时${formatBootDuration(programStartSec)}。`
-    : `你好啊~本次开机用时未能精确获取，程序启动用时${formatBootDuration(programStartSec)}。`;
-  send('boot-timer-bubble', text);
+  // 这场开机第一次启动：算"开机用时"
+  // 主板自检（POST）耗时读得到时，计时起点提前到"按下电源"，并分段列出；
+  // 系统段优先用系统自己统计的 BootTime（Diagnostics-Performance 事件 ID 100，系统启动到完全就绪）。
+  // 但这条总结事件要等整场启动结束、系统趋于空闲后才写入日志（通常在开机后一两分钟），
+  // 本程序随登录自启时大概率还没写好；它需要可靠的"本次启动时间点"做归属校验
+  // （防止拿到上一次完整启动留下的旧记录），所以只在读到了启动事件时才走这条路。
+  const postMs = await getFwPostTimeMs();
+  if (eventBootValid) {
+    let diagInfo = await getDiagnosticsBootInfo(bootAtMs, now);
+    if (diagInfo != null) {
+      // 开机很久后才手动打开程序的情况：事件早已写好，一声招呼报全两项
+      send('boot-timer-bubble', `你好啊~${bootTimeText(postMs, diagInfo.bootTimeMs / 1000, '系统')}${startupSummaryText(diagInfo)}，程序启动用时${formatBootDuration(programStartSec)}。`);
+      updateConfig({ lastBootAtMs: bootAtMs, bootIntroShown: true });
+      return;
+    }
+    // 事件还没写：先打招呼（只报程序启动用时），后台等系统写完事件再补报开机用时
+    send('boot-timer-bubble', `你好啊~程序启动用时${formatBootDuration(programStartSec)}。`);
+    updateConfig({ lastBootAtMs: bootAtMs, bootIntroShown: true });
+    diagInfo = await pollDiagnosticsBootInfo(bootAtMs);
+    if (diagInfo != null) {
+      send('boot-timer-bubble', `${bootTimeText(postMs, diagInfo.bootTimeMs / 1000, '系统')}${startupSummaryText(diagInfo)}。`);
+      return;
+    }
+    // 轮询超时：退到下面的兜底口径，只补报兜底结果
+  }
+
+  // 兜底口径：系统自统计读不到（快速启动没有这条事件 / 权限不够 / 轮询超时），
+  // 用"登录完成时间 − 开机时间"估算。注意它只量到"登录完成"，不含登录后系统
+  // 后台就绪的那段（可能比真实开机耗时少十几秒），措辞上区分开。主板自检照样拼进去。
+  const fallbackSec = await getLoginFallbackBootSec(bootAtMs, eventBootValid, now);
+  let fallbackText;
+  if (fallbackSec != null) {
+    fallbackText = `${bootTimeText(postMs, fallbackSec, '系统到登录')}。`;
+  } else if (postMs != null) {
+    // 连登录时间都没读到：至少把读到的主板自检报出来
+    fallbackText = `本次主板自检用时${formatBootDuration(postMs / 1000)}，系统耗时未能精确获取。`;
+  } else {
+    fallbackText = '本次开机用时未能精确获取。';
+  }
+  if (eventBootValid) {
+    // 轮询超时后来到这里，第一声招呼已经打完，只补报兜底结果
+    send('boot-timer-bubble', fallbackText);
+  } else {
+    // 连启动事件都没读到：招呼还没打，补上程序启动用时
+    send('boot-timer-bubble', `你好啊~${fallbackText}程序启动用时${formatBootDuration(programStartSec)}。`);
+  }
   updateConfig({ lastBootAtMs: bootAtMs, bootIntroShown: true });
 });
 
