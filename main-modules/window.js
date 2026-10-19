@@ -3,7 +3,7 @@ const { app, BrowserWindow, Menu, dialog, shell, screen, ipcMain } = require('el
 const path = require('path');
 const { state } = require('./state');
 const { loadConfig, updateConfig } = require('./config');
-const { loadQuotes, loadVoices, loadMaterialFixes } = require('./character');
+const { loadQuotes, loadVoices, loadDrinkReminders, loadMaterialFixes } = require('./character');
 const { scanDances } = require('./dance');
 const { scanScenes, getAdjust, setAdjust, ADJUST_DEFAULT } = require('./scene');
 const { cancelSpeaking } = require('./tts');
@@ -291,6 +291,8 @@ function currentCharacterPayload() {
     characterName: c.name,
     quotes: q.lines,
     voices: loadVoices(c.name, q.lines),
+    drinkReminders: loadDrinkReminders(c.name),
+    drinkReminderEnabled: loadConfig().drinkReminderEnabled !== false,
     bubbleColor: q.color,
     materialFixes: loadMaterialFixes(c.name),
   };
@@ -377,14 +379,6 @@ function buildMenu() {
       })),
     },
     { type: 'separator' },
-    {
-      // 勾选样式跟"开机自启动"保持一致：不用原生 checkbox，靠 label 后缀 ✅ 表示当前状态。
-      // 勾选＝桌面模式已开启：窗口在纵向上展开（给气泡留空间），场景/背景对鼠标点击穿透，
-      // 只有角色模型本体和展开的对话框能截获点击；再点一下即退出桌面模式、恢复原样
-      label: '🖥️ 桌面模式' + (!state.bgMouseInteraction ? '  ✅' : ''),
-      click: () => toggleBgMouseInteraction(),
-    },
-    { type: 'separator' },
     { label: '🔄 重置模型朝向', click: () => send('menu-action', { type: 'resetYaw' }) },
     { label: '⏸ 待机（停止跳舞）', click: () => send('menu-action', { type: 'idle' }) },
     { type: 'separator' },
@@ -395,8 +389,6 @@ function buildMenu() {
         label: '💃 ' + d.name,
         click: () => send('menu-action', { type: 'dance', index: i }),
       })),
-    { type: 'separator' },
-    { label: '🔊 静音 / 取消静音', click: () => send('menu-action', { type: 'mute' }) },
     { type: 'separator' },
     {
       // 一级：角色列表；点某个角色 -> 弹出 API 设置窗口（API / Prompt 模板全局共用，世界背景 / 角色资料 / 附加要求是该角色的）
@@ -409,27 +401,70 @@ function buildMenu() {
       submenu: state.characters.map((c) => ({ label: c.name, click: () => openVoiceWindow(c.name) })),
     },
     { type: 'separator' },
+    // 父菜单按当前状态后缀 ✅，两个子选项用 ✓ 前缀标出当前选择；声音 / 喝水提醒 / 开机自启动各自独立一格
+    {
+      // 声音开关（舞蹈音乐 + 角色语音一起静音/恢复）。实际开关在渲染进程，这里发 setMute 让它应用，
+      // 它应用完再通过 mute-changed 上报回来更新 state.muted（菜单据此显示勾选）
+      label: '🔊 声音' + (!state.muted ? '  ✅' : ''),
+      submenu: [
+        {
+          label: (!state.muted ? '✓ ' : '') + '开启声音',
+          click: () => send('menu-action', { type: 'setMute', muted: false }),
+        },
+        { type: 'separator' },
+        {
+          label: (state.muted ? '✓ ' : '') + '关闭声音',
+          click: () => send('menu-action', { type: 'setMute', muted: true }),
+        },
+      ],
+    },
+    { type: 'separator' },
+    {
+      // 喝水提醒读 Character/<角色>/Time report/ 下的语音（没有该目录的角色不提醒），
+      // 只在有语音的时间点提醒（不是每个整点都有）；开关状态记在 config.json，重启后保持
+      label: '💧 喝水提醒' + (drinkReminderOn() ? '  ✅' : ''),
+      submenu: [
+        {
+          label: (drinkReminderOn() ? '✓ ' : '') + '开启喝水提醒',
+          click: () => setDrinkReminderEnabled(true),
+        },
+        { type: 'separator' },
+        {
+          label: (!drinkReminderOn() ? '✓ ' : '') + '关闭喝水提醒',
+          click: () => setDrinkReminderEnabled(false),
+        },
+      ],
+    },
     // 开机自启动依赖 setLoginItemSettings 的 path/args 参数精确指定启动方式，该参数仅 Windows 支持，
     // mac/linux 上这个 API 要么不生效要么只能注册裸的 electron 本身，索性不在这两个平台显示这个入口
     ...(process.platform === 'win32'
       ? [
+          { type: 'separator' },
           {
             label: '🚀 开机自启动' + (getAutoLaunchMode() !== 'off' ? '  ✅' : ''),
             submenu: [
               {
-                label: (getAutoLaunchMode() === 'pet' ? '✓ ' : '') + '宠物自启动',
+                label: (getAutoLaunchMode() === 'pet' ? '✓ ' : '') + '开启程序自启动',
                 click: () => applyAutoLaunchMode('pet'),
               },
               { type: 'separator' },
               {
-                label: (getAutoLaunchMode() === 'off' ? '✓ ' : '') + '关闭开机自启动',
+                label: (getAutoLaunchMode() === 'off' ? '✓ ' : '') + '关闭程序自启动',
                 click: () => applyAutoLaunchMode('off'),
               },
             ],
           },
-          { type: 'separator' },
         ]
       : []),
+    { type: 'separator' },
+    {
+      // 勾选样式跟"开机自启动"保持一致：不用原生 checkbox，靠 label 后缀 ✅ 表示当前状态。
+      // 勾选＝桌面模式已开启：窗口在纵向上展开（给气泡留空间），场景/背景对鼠标点击穿透，
+      // 只有角色模型本体和展开的对话框能截获点击；再点一下即退出桌面模式、恢复原样
+      label: '🖥️ 桌面模式' + (!state.bgMouseInteraction ? '  ✅' : ''),
+      click: () => toggleBgMouseInteraction(),
+    },
+    { type: 'separator' },
     { label: 'ℹ️ 关于', click: () => openAboutWindow() },
     { type: 'separator' },
     { label: '❌ 退出', click: () => app.quit() },
@@ -583,6 +618,25 @@ function toggleBgMouseInteraction() {
   if (state.bgMouseInteraction) enterDesktopMode();
   else exitDesktopMode();
 }
+
+// ---------- 喝水提醒开关 ----------
+function drinkReminderOn() {
+  return loadConfig().drinkReminderEnabled !== false;
+}
+
+function setDrinkReminderEnabled(enabled) {
+  updateConfig({ drinkReminderEnabled: !!enabled });
+  state.menu = buildMenu();
+  send('drink-reminder-enabled', !!enabled);
+}
+
+// ---------- 声音开关状态 ----------
+// 静音/恢复的实际开关在渲染进程（audio.muted / voiceAudio.muted），它应用后通过 mute-changed 上报回来，
+// 主进程记在 state.muted，右键菜单"声音"据此显示 ✅ / ✓
+ipcMain.on('mute-changed', (_e, muted) => {
+  state.muted = !!muted;
+  state.menu = buildMenu();
+});
 
 module.exports = {
   securePrefs,

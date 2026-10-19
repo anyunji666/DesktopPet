@@ -69,3 +69,6 @@ export function initTtsPlayback() {
     runClips(clips, runId);
   });
 }
+
+// 是否有 AI 回复语音队列正在跑（等待停顿或播放中）。喝水提醒用它避让：正在播回复时先不插话
+export const isTtsPlaying = () => wakeCurrent !== null;

@@ -7,6 +7,7 @@ import { stopDance, playIdle, playDance, playExitThen, PHYSICS_ENGAGE_WARMUP_STE
 import { applyScene, zoomSceneBy, moveSceneDepth, panSceneBy, orbitSceneBy, resetSceneAdjust } from './modules/scene.js';
 import { showChatBox, hideChatBox } from './modules/chat.js';
 import { initTtsPlayback } from './modules/tts.js';
+import { initDrinkReminder, setDrinkReminders, setDrinkReminderEnabled } from './modules/drink-reminder.js';
 
 // ---------------- 挂载渲染器 ----------------
 const app = document.getElementById('app');
@@ -370,6 +371,8 @@ window.petAPI.onShowBubble((text) => showBubble(text, 5000));
 window.petAPI.onBootTimerBubble((text) => showBubble(text, 16000));
 // AI 回复的语音合成好了：播放，并把气泡延长到语音结束
 initTtsPlayback();
+// 喝水提醒：到点播 Time report/ 下的语音 + 头顶气泡
+initDrinkReminder();
 
 // ---------------- 滚轮：Shift 缩放背景 / Ctrl 前后移动背景 ----------------
 // 只有按住修饰键才响应，单独滚轮不做任何事，避免误操作
@@ -403,9 +406,12 @@ window.petAPI.onAction((action) => {
     }
   }
   else if (action.type === 'dance') { if (!state.exitInProgress) playDance(action.index); }
-  else if (action.type === 'mute') {
-    audio.muted = !audio.muted;
+  else if (action.type === 'setMute') {
+    // 右键菜单"声音"的开启/关闭：舞蹈音乐和角色语音一起静音/恢复，
+    // 应用完上报主进程，菜单里的 ✅ / ✓ 才能跟着变
+    audio.muted = !!action.muted;
     voiceAudio.muted = audio.muted;
+    window.petAPI.notifyMuteChanged(audio.muted);
   }
   else if (action.type === 'resetYaw') {
     // 防御性清一下拖拽状态：万一是在旋转过程中点的菜单，避免残留的
@@ -425,6 +431,8 @@ window.petAPI.onInit((data) => {
   state.bubbleColor = data.bubbleColor || null;
   state.characterName = data.characterName || null;
   state.materialFixes = data.materialFixes || null;
+  setDrinkReminders(data.drinkReminders);
+  setDrinkReminderEnabled(data.drinkReminderEnabled);
   applyScene(data.scene || null);
   if (data.bgMouseInteraction === false) {
     enterDesktopModeUI(data.desktopViewport || fullWindowRect());
@@ -442,6 +450,7 @@ window.petAPI.onSwitchCharacter((data) => {
     state.bubbleColor = data.bubbleColor || null;
     state.characterName = data.characterName || null;
     state.materialFixes = data.materialFixes || null;
+    setDrinkReminders(data.drinkReminders); // 切角色不会重置"这个小时已提醒过"的记录，避免新旧角色连报两次
     hideChatBox(); // 切角色时把可能开着的对话输入框收起来
     stopVoice(); // 停掉旧角色还没播完的语音（同时恢复被压低的舞蹈音乐）
     disposeModel();

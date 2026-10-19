@@ -23,6 +23,7 @@ const state = {
 
   // ---- 背景鼠标互动开关（桌面模式）----
   bgMouseInteraction: true, // true=现状（背景可拖拽/手势）；false=桌面模式（点击穿透，只有模型和展开的对话框可交互）
+  muted: false, // 全局静音（舞蹈音乐 + 角色语音）当前状态；实际开关在渲染进程，这里只用来给右键菜单"声音"显示勾选
   normalWinBounds: null, // 进入桌面模式前，真实窗口的位置/大小，退出时原样恢复
   clickThroughIgnore: true, // 桌面模式下渲染进程最近一次要求的"是否穿透"（drag-guard.js 用它在子窗口拖完后恢复）
   desktopTransitioning: false, // 正在进出桌面模式（等渲染进程隐藏视口 → 改窗口几何 → 下发新视口），期间忽略重复切换

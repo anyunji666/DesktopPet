@@ -28,6 +28,10 @@ contextBridge.exposeInMainWorld('petAPI', {
   onResumeRender: (cb) => ipcRenderer.on('resume-render', () => cb()),
   // 主进程推送角色切换数据（新模型路径 + 新角色专属舞蹈列表）
   onSwitchCharacter: (cb) => ipcRenderer.on('switch-character', (_e, data) => cb(data)),
+  // 主进程推送：右键菜单切换"喝水提醒"开关后的新状态（随 init / switch-character 下发的 drinkReminderEnabled 之外单独走这里）
+  onDrinkReminderEnabled: (cb) => ipcRenderer.on('drink-reminder-enabled', (_e, enabled) => cb(enabled)),
+  // 右键菜单"声音"点了开启/关闭后，主进程下发 setMute；渲染进程应用完静音状态再上报回来给菜单显示勾选
+  notifyMuteChanged: (muted) => ipcRenderer.send('mute-changed', muted),
   // 主进程推送场景切换数据（场景描述对象；null 表示回到"无场景"）
   onSwitchScene: (cb) => ipcRenderer.on('switch-scene', (_e, data) => cb(data)),
   // 保存某个场景的手动调整（大小 / 位置）；主进程要求重置时推送 scene-adjust

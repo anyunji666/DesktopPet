@@ -98,6 +98,61 @@ function loadVoices(characterName, lines) {
   return voices;
 }
 
+// ---------- 喝水提醒语音（Character/<角色名>/Time report/ 下的音频文件） ----------
+// 文件名就是提醒台词（标点可省略，如「上午八点了，记得多喝水.wav」），
+// 按下面的提醒表匹配到对应的小时，随角色 payload 下发给渲染进程到点播放。
+// 只在有语音的时间点提醒（不是每个整点都有），所以叫"喝水提醒"而不是"整点报时"
+const TIME_REPORT_DIR_RE = /^time\s*report$/i;
+const DRINK_REMINDER_LINES = [
+  { hour: 8, text: '上午八点了，记得多喝水。' },
+  { hour: 9, text: '上午九点了，你要喝点水吗？' },
+  { hour: 10, text: '上午十点了，去喝点水吧~' },
+  { hour: 11, text: '上午十一点了，你要喝点水吗？' },
+  { hour: 14, text: '下午二点了，去喝点水吧~' },
+  { hour: 15, text: '下午三点了，你要喝点水吗？' },
+  { hour: 16, text: '下午四点了，去喝点水吧~' },
+  { hour: 17, text: '下午五点了，你要喝点水吗？' },
+  { hour: 20, text: '晚八点了，去喝点水吧~' },
+  { hour: 21, text: '晚九点了，你要喝点水吗？' },
+  { hour: 22, text: '晚十点了，要早点休息哦~' },
+];
+
+function loadDrinkReminders(characterName) {
+  const charDir = path.join(CHARACTER_ROOT, characterName);
+  let dirName = null;
+  try {
+    dirName = fs
+      .readdirSync(charDir)
+      .find((f) => TIME_REPORT_DIR_RE.test(f) && fs.statSync(path.join(charDir, f)).isDirectory());
+  } catch {
+    return [];
+  }
+  if (!dirName) return [];
+  let files;
+  try {
+    files = fs.readdirSync(path.join(charDir, dirName)).filter((f) => VOICE_RE.test(f));
+  } catch {
+    return [];
+  }
+  if (!files.length) return [];
+  const base = `/Character/${encodeURIComponent(characterName)}/${encodeURIComponent(dirName)}/`;
+  const stems = files.map((f) => ({
+    file: f,
+    stem: f.replace(/\.[^.]+$/, '').replace(/[^\p{L}\p{N}]+/gu, ''),
+  }));
+  const used = new Set();
+  const reminders = [];
+  for (const { hour, text } of DRINK_REMINDER_LINES) {
+    const key = text.replace(/[^\p{L}\p{N}]+/gu, '');
+    const hit = stems.find(({ file, stem }) => !used.has(file) && stem && key.startsWith(stem));
+    if (hit) {
+      used.add(hit.file);
+      reminders.push({ hour, text, url: base + encodeURIComponent(hit.file) });
+    }
+  }
+  return reminders;
+}
+
 // ---------- 读取角色材质修正（Character/<角色名>/fixes.json） ----------
 // 个别模型的材质参数在 three.js 里显示不佳（如银狼脸部 diffuse 被作者压成 0.753 灰色，
 // 脸会比身体暗一圈显得发灰），按角色配置修正：
@@ -122,5 +177,6 @@ module.exports = {
   scanCharacters,
   loadQuotes,
   loadVoices,
+  loadDrinkReminders,
   loadMaterialFixes,
 };
