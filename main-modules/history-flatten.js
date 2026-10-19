@@ -46,6 +46,28 @@ function extractTurnSummary(content) {
     .trim();
 }
 
+// 从 assistant 内容的摘要块里取"概述"（"概述:"之后的全部内容，可多行）。没有摘要块 / 没写概述返回空串。
+// 聊天记录窗口编辑 AI 消息时，摘要拆成"故事时间 / 概述"两个输入框，各自从这里和 extractStoryTime 取值。
+const OVERVIEW_RE = /概述\s*[:：]\s*([\s\S]*)/;
+function extractOverview(content) {
+  const inner = extractTurnSummary(content);
+  if (!inner) return '';
+  const m = OVERVIEW_RE.exec(inner);
+  return m ? m[1].trim() : '';
+}
+
+// 用"故事时间 / 概述"重新拼出摘要块（格式和 SUMMARY_FOOTER 要求模型输出的一致）。两项都为空返回空串（= 这条消息没有摘要）。
+// 空的那一项整行省略，不写"故事时间: "这种空行。
+function buildSummaryBlock(storyTime, overview) {
+  const t = (storyTime || '').trim();
+  const o = (overview || '').trim();
+  if (!t && !o) return '';
+  const lines = [];
+  if (t) lines.push(`故事时间: ${t}`);
+  if (o) lines.push(`概述: ${o}`);
+  return `<story_overview>\n${lines.join('\n')}\n</story_overview>`;
+}
+
 // 把 epoch 毫秒格式化成 "YYYY年M月D日 HH:mm"（精确到分钟，本地时区；月/日不补零，与 formatDayCN 一致，时分补零）
 function formatMinuteTime(ts) {
   const d = new Date(ts);
@@ -309,6 +331,8 @@ function flattenChatHistory(characterName, history, currentInputText) {
 module.exports = {
   splitTurnSummary,
   extractStoryTime,
+  extractOverview,
+  buildSummaryBlock,
   formatMinuteTime,
   dayKeyOf,
   formatDayCN,

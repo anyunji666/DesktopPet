@@ -84,11 +84,16 @@ function buildMsgEl(role, content, ts, imageDataURL, temp, storyTime) {
   return div;
 }
 
-export function appendMsg(role, content, ts, imageDataURL, storyTime) {
+export function appendMsg(role, content, ts, imageDataURL, storyTime, summaryOverview) {
   emptyEl.style.display = 'none';
   const div = buildMsgEl(role, content, ts, imageDataURL, false, storyTime);
   div.dataset.index = view.msgCount++;
   div.dataset.text = content || '';
+  // 摘要两项（仅 AI 消息）：平时不显示，编辑时作为两个摘要输入框的初始值；故事时间同时用来在气泡上打 🕰 标签
+  if (role !== 'user') {
+    div.dataset.storyTime = storyTime || '';
+    div.dataset.overview = summaryOverview || '';
+  }
   if (Number.isFinite(ts)) div.dataset.ts = ts; // 消息时间戳：双击气泡重听时按它去取这条消息缓存的语音（见 voice-player.js）
   list.appendChild(div);
   window.scrollTo(0, document.body.scrollHeight);
@@ -122,7 +127,7 @@ export async function load() {
     emptyEl.style.display = 'block';
     return;
   }
-  for (const m of history) appendMsg(m.role, m.content, m.ts, m.imageDataURL, m.storyTime);
+  for (const m of history) appendMsg(m.role, m.content, m.ts, m.imageDataURL, m.storyTime, m.summaryOverview);
 }
 
 // 全量重绘（编辑/删除后调用）；keepScroll 时恢复原滚动位置，避免编辑中间的消息后跳到底部

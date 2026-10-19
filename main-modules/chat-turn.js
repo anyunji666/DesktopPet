@@ -16,6 +16,7 @@ const { getApiConfig, buildPromptText, buildSummaryPrompt } = require('./llm');
 const {
   splitTurnSummary,
   extractStoryTime,
+  extractOverview,
   dayKeyOf,
   computeLastPastDayKey,
   flattenDayLines,
@@ -131,7 +132,7 @@ async function runChatTurnInner(characterName, text, imageDataURL, imageHolder, 
     assistantTs = ts;
     history.push({ role: 'assistant', content: replyContentForHistory, ts });
     // storyTime：摘要块里的故事时间，聊天记录窗口据此在气泡末尾打标签；摘要块没写就是空串
-    committed.push({ role: 'assistant', content: replyTextForHistory, ts, storyTime: extractStoryTime(replyContentForHistory) });
+    committed.push({ role: 'assistant', content: replyTextForHistory, ts, storyTime: extractStoryTime(replyContentForHistory), summaryOverview: extractOverview(replyContentForHistory) });
   }
   saveChatHistory(characterName, history);
   imageHolder.file = null; // 已经写进聊天记录，之后再出任何问题都不能删这张图

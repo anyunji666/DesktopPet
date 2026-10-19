@@ -40,7 +40,7 @@ window.petAPI.onChatSettled(async (data) => {
     }
     return;
   }
-  for (const m of data.committed) appendMsg(m.role, m.content, m.ts, m.imageDataURL, m.storyTime);
+  for (const m of data.committed) appendMsg(m.role, m.content, m.ts, m.imageDataURL, m.storyTime, m.summaryOverview);
 });
 
 // ---------------- 首次加载 ----------------

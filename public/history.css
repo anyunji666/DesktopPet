@@ -245,6 +245,26 @@ body.edit-locked .msg-more, body.edit-locked .msg-actions { display: none !impor
   background: rgba(255, 255, 255, 0.95);
   color: #333;
 }
+/* AI 消息编辑态的摘要区：故事时间 / 概述 两个输入框，比正文淡一点，和正文区分开 */
+.edit-summary { margin-top: 6px; padding-top: 6px; border-top: 1px dashed rgba(0, 0, 0, 0.15); display: flex; flex-direction: column; gap: 4px; }
+.edit-summary-field { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: #999; }
+.edit-summary-field input,
+.edit-summary-field textarea {
+  box-sizing: border-box;
+  width: 100%;
+  border: none;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  resize: none;
+  overflow: hidden;
+  outline: none;
+  background: rgba(255, 255, 255, 0.95);
+  color: #555;
+}
+.edit-summary-hint { font-size: 10px; color: #aaa; }
 /* 编辑态：取消/保存 顶替底部的"时间戳 + ⋯"那一行 */
 .msg.editing .msg-foot { display: none; }
 .edit-btns { display: flex; gap: 6px; margin-top: 3px; }

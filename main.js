@@ -57,7 +57,7 @@ const {
   getPromptConfig,
   savePromptConfig,
 } = require('./main-modules/llm');
-const { splitTurnSummary, extractStoryTime } = require('./main-modules/history-flatten');
+const { splitTurnSummary, extractStoryTime, extractOverview, buildSummaryBlock } = require('./main-modules/history-flatten');
 const { fetchModelList, setLlmLogListener, getLatestLlmCall } = require('./main-modules/llm-client');
 const {
   securePrefs,
@@ -702,6 +702,8 @@ ipcMain.handle('get-chat-history', (_e, characterName) => {
     content: m.role === 'assistant' ? splitTurnSummary(m.content).body : m.content,
     // AI 消息的故事时间（取自被剥掉的那个摘要块），记录窗口拿去在气泡末尾打标签；摘要里没有就是空串，不显示
     storyTime: m.role === 'assistant' ? extractStoryTime(m.content) : '',
+    // 摘要的"概述"部分：平时不显示，只在编辑 AI 消息时和故事时间一起出现在两个摘要输入框里
+    summaryOverview: m.role === 'assistant' ? extractOverview(m.content) : '',
     // 图片消息附带 dataURL 供记录窗口直接渲染缩略图；文件丢了就当纯文字消息
     imageDataURL: m.image ? readChatImageDataURL(characterName, m.image) : undefined,
   }));
@@ -829,7 +831,9 @@ function validCharacter(characterName) {
   return typeof characterName === 'string' && isSafeName(characterName) && state.characters.some((c) => c.name === characterName);
 }
 
-ipcMain.handle('edit-chat-message', (_e, characterName, index, content) => {
+// summary：{ storyTime, overview }，仅 assistant 消息有效。传了就用它重建末尾的 <story_overview> 摘要块（两项都空 = 去掉摘要块，
+// 轮次压缩时这一轮退回发原文）；不传就原样保留原来的摘要块——以前直接覆盖 content 会把摘要块丢掉。
+ipcMain.handle('edit-chat-message', (_e, characterName, index, content, summary) => {
   if (!validCharacter(characterName)) throw new Error('未知角色');
   assertHistoryEditable(characterName); // 正在等这个角色的回复时不允许改记录
   if (!Number.isInteger(index) || index < 0) throw new Error('无效的消息索引');
@@ -838,7 +842,23 @@ ipcMain.handle('edit-chat-message', (_e, characterName, index, content) => {
 
   const history = loadChatHistory(characterName);
   if (index >= history.length) throw new Error('无效的消息索引');
-  history[index].content = text;
+  const target = history[index];
+  if (target.role === 'assistant') {
+    // 正文里不能带摘要标签，否则会和末尾拼接的摘要块混在一起、解析错位
+    if (/<\/?story_overview>/.test(text)) throw new Error('正文里不能包含 <story_overview> 标签');
+    let block;
+    if (summary && typeof summary === 'object') {
+      const t = typeof summary.storyTime === 'string' ? summary.storyTime.trim() : '';
+      const o = typeof summary.overview === 'string' ? summary.overview.trim() : '';
+      if (/<\/?story_overview>/.test(t + o)) throw new Error('摘要里不能包含 <story_overview> 标签');
+      block = buildSummaryBlock(t, o);
+    } else {
+      block = splitTurnSummary(target.content).summaryBlock; // 没传摘要：保留原来的
+    }
+    target.content = block ? `${text}\n${block}` : text;
+  } else {
+    target.content = text;
+  }
   saveChatHistory(characterName, history);
   return true;
 });

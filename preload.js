@@ -73,7 +73,7 @@ contextBridge.exposeInMainWorld('petAPI', {
   // 主进程推送（仅聊天记录窗口）：这轮结束了。ok=true 时带上实际落盘的消息 committed 和起始下标 startIndex
   onChatSettled: (cb) => ipcRenderer.on('chat-settled', (_e, data) => cb(data)),
   // 聊天记录窗口的消息编辑 / 添加 / 删除 / 清空
-  editChatMessage: (characterName, index, content) => ipcRenderer.invoke('edit-chat-message', characterName, index, content),
+  editChatMessage: (characterName, index, content, summary) => ipcRenderer.invoke('edit-chat-message', characterName, index, content, summary),
   addChatMessage: (characterName, role, content) => ipcRenderer.invoke('add-chat-message', characterName, role, content),
   deleteChatMessage: (characterName, index) => ipcRenderer.invoke('delete-chat-message', characterName, index),
   truncateChatHistory: (characterName, fromIndex) => ipcRenderer.invoke('truncate-chat-history', characterName, fromIndex),
