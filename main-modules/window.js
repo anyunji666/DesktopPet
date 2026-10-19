@@ -379,9 +379,6 @@ function buildMenu() {
       })),
     },
     { type: 'separator' },
-    { label: '🔄 重置模型朝向', click: () => send('menu-action', { type: 'resetYaw' }) },
-    { label: '⏸ 待机（停止跳舞）', click: () => send('menu-action', { type: 'idle' }) },
-    { type: 'separator' },
     ...dances
       .map((d, i) => ({ d, i }))
       .filter(({ d }) => !SPECIAL_DANCE_NAMES.has(d.name))
@@ -389,6 +386,9 @@ function buildMenu() {
         label: '💃 ' + d.name,
         click: () => send('menu-action', { type: 'dance', index: i }),
       })),
+    { type: 'separator' },
+    { label: '🔄 重置模型朝向', click: () => send('menu-action', { type: 'resetYaw' }) },
+    { label: '⏸ 待机（停止跳舞）', click: () => send('menu-action', { type: 'idle' }) },
     { type: 'separator' },
     {
       // 一级：角色列表；点某个角色 -> 弹出 API 设置窗口（API / Prompt 模板全局共用，世界背景 / 角色资料 / 附加要求是该角色的）
