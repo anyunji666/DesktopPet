@@ -19,7 +19,7 @@ fi
 echo "正在启动桌面宠物..."
 
 # Electron 运行程序是 npm install 时自动下载的，但官方源在国内经常下载失败导致装不上。
-# 这里跟 windows第一次启动点这个.bat 一样做个兜底：没检测到 Electron 二进制就换国内镜像单独重试一次下载。
+# 这里跟 start-windows.bat 一样做个兜底：没检测到 Electron 二进制就换国内镜像单独重试一次下载。
 # mac 下是 .app 包，linux 下是普通可执行文件，两种路径都要判断到。
 ELECTRON_BIN="node_modules/electron/dist/electron"
 ELECTRON_APP="node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"
@@ -29,7 +29,7 @@ if [ ! -f "$ELECTRON_BIN" ] && [ ! -f "$ELECTRON_APP" ]; then
   export ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"
   (cd node_modules/electron && node install.js)
   if [ $? -ne 0 ]; then
-    echo "[错误] Electron 下载失败，请检查网络后重新运行 mac或linux启动.sh。"
+    echo "[错误] Electron 下载失败，请检查网络后重新运行 start-mac-linux.sh。"
     read -p "按回车键退出..."
     exit 1
   fi

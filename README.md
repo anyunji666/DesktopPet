@@ -16,7 +16,7 @@ npm install
 npm start
 ```
 
-Windows 用户也可以直接双击根目录下的 `windows第一次启动点这个.bat`（首次会自动装依赖）；
+Windows 用户也可以直接双击根目录下的 `start-windows.bat`（首次会自动装依赖）；
 之后日常启动用 `启动宠物.vbs`（后台静默运行，不弹命令行窗口）。
 macOS / Linux 用户用 `mac或linux启动.sh`。
 
