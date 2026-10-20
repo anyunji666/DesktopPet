@@ -18,7 +18,7 @@ npm start
 
 Windows 用户也可以直接双击根目录下的 `start-windows.bat`（首次会自动装依赖）；
 之后日常启动用 `启动宠物.vbs`（后台静默运行，不弹命令行窗口）。
-macOS / Linux 用户用 `mac或linux启动.sh`。
+macOS / Linux 用户运行 `bash start-mac-linux.sh`（ZIP 解压后没有执行权限，用 bash 运行即可）。
 
 ## 目录说明
 
