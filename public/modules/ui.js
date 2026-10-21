@@ -39,35 +39,62 @@ export function setVoiceCancelHook(fn) {
   voiceCancelHook = fn;
 }
 
+// 当前这条语音的"被打断"回调（opts.onInterrupt）：被下一条 playVoice / stopVoice 掐掉时触发一次，正常播完 / 出错则不触发。
+// 喝水提醒靠它知道"没播完"，从而不把这个小时算作已提醒、并收起提醒气泡
+let interruptCb = null;
+let voiceSeq = 0; // 每次 playVoice / stopVoice 递增：过期的 play() 失败回调据此识别自己已经不是当前语音
+function fireInterrupt() {
+  const cb = interruptCb;
+  interruptCb = null;
+  if (cb) cb();
+}
+
+// 返回 true = 确实开始播了；false = 被 canPlayVoice 等条件拦下，什么都没发生
 export function playVoice(url, opts = {}) {
-  if (!url || !canPlayVoice()) return;
+  if (!url || !canPlayVoice()) return false;
   if (!opts.keepQueue && voiceCancelHook) voiceCancelHook();
+  fireInterrupt(); // 上一条还没播完的语音在这里被掐掉
+  const seq = ++voiceSeq;
   voiceAudio.pause();
   voiceAudio.onended = voiceAudio.onerror = voiceAudio.onloadedmetadata = null;
   voiceAudio.src = url;
-  const ducking = !audio.paused;
-  if (ducking) duckMusic();
+  if (!audio.paused) duckMusic();
   else unduckMusic(); // 上一条语音被打断时留下的压低状态，在这里一并恢复
-  if (ducking || opts.onEnd) {
-    voiceAudio.onended = voiceAudio.onerror = () => {
-      unduckMusic();
-      if (opts.onEnd) opts.onEnd();
-    };
-  }
+  interruptCb = opts.onInterrupt || null;
+  const finish = () => {
+    if (seq !== voiceSeq) return;
+    interruptCb = null;
+    unduckMusic();
+    if (opts.onEnd) opts.onEnd();
+  };
+  voiceAudio.onended = voiceAudio.onerror = finish;
   if (opts.onMetadata) voiceAudio.onloadedmetadata = () => opts.onMetadata(voiceAudio.duration);
-  voiceAudio.play().catch(() => {});
+  // play() 被拒绝（解码失败等）：按"播完"收尾，否则 onEnd 永远不来。
+  // 被后续 pause() 打断产生的 AbortError 也会走到这里，但那时 seq 已变，finish 自会忽略
+  voiceAudio.play().catch(finish);
+  return true;
 }
 
 // 立刻停掉当前语音（切角色 / 退场 / 开始跳舞时用），同时恢复被压低的舞蹈音乐
 export function stopVoice() {
   if (voiceCancelHook) voiceCancelHook();
+  fireInterrupt();
+  voiceSeq++;
   voiceAudio.pause();
   voiceAudio.onended = voiceAudio.onerror = voiceAudio.onloadedmetadata = null;
   unduckMusic();
 }
 
+// 语音通道是否正在出声（点击台词 / 喝水提醒 / AI 回复的某一段）
+export const isVoicePlaying = () => !voiceAudio.paused && !voiceAudio.ended;
+
 // ---------------- 气泡 ----------------
 let bubbleTimer = null;
+// 气泡是单例，加"低优先级"概念：喝水提醒这类主动插话传 opts.low，不能顶掉正在显示的普通气泡
+// （等待回复提示 / AI 回复 / 点击台词 / 开机计时）；返回 false = 被占着没显示，调用方稍后再试。
+// 普通气泡照旧随时覆盖任何气泡（包括低优先级的）
+let bubbleShown = false;
+let bubbleLow = false;
 // #rrggbb -> rgba()，用于气泡阴影
 function hexToRgba(hex, alpha) {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
@@ -75,7 +102,8 @@ function hexToRgba(hex, alpha) {
   const n = parseInt(m[1], 16);
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
 }
-export function showBubble(text, ms = 3000) {
+export function showBubble(text, ms = 3000, opts = {}) {
+  if (opts.low && bubbleShown && !bubbleLow) return false;
   const el = document.getElementById('bubble');
   const shadow = state.bubbleColor && hexToRgba(state.bubbleColor, 0.25);
   if (state.bubbleColor && shadow) {
@@ -89,8 +117,24 @@ export function showBubble(text, ms = 3000) {
   }
   el.textContent = text;
   el.classList.add('show');
+  bubbleShown = true;
+  bubbleLow = !!opts.low;
   clearTimeout(bubbleTimer);
-  bubbleTimer = setTimeout(() => el.classList.remove('show'), ms);
+  bubbleTimer = setTimeout(() => {
+    el.classList.remove('show');
+    bubbleShown = false;
+    bubbleLow = false;
+  }, ms);
+  return true;
+}
+
+// 只收起低优先级气泡（喝水提醒被打断时用）；当前若已被普通气泡顶替，则什么都不做
+export function hideLowBubble() {
+  if (!bubbleShown || !bubbleLow) return;
+  clearTimeout(bubbleTimer);
+  document.getElementById('bubble').classList.remove('show');
+  bubbleShown = false;
+  bubbleLow = false;
 }
 
 // ---------------- 点击命中检测 ----------------

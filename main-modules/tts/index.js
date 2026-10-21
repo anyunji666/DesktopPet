@@ -84,10 +84,19 @@ function currentCharacterName() {
   return c ? c.name : null;
 }
 
+// 告诉宠物窗口"AI 回复语音是否正在合成"：合成期间渲染进程既没在播也没排队，喝水提醒据此避让，
+// 否则提醒刚开口、回复语音就到了，会被硬切。以 currentCtrl 是否存在为准，新旧请求交替时不会误报 false
+function notifySynthState() {
+  try {
+    if (state.win && !state.win.isDestroyed()) state.win.webContents.send('tts-synth-state', !!currentCtrl);
+  } catch {}
+}
+
 function cancelSpeaking() {
   if (currentCtrl) {
     currentCtrl.abort();
     currentCtrl = null;
+    notifySynthState();
   }
 }
 
@@ -134,6 +143,7 @@ async function speakReply(characterName, reply, msgTs = null) {
     cancelSpeaking();
     ctrl = new AbortController();
     currentCtrl = ctrl;
+    notifySynthState();
 
     // 每个「」一次请求，SEGMENT_CONCURRENCY 路并发；结果按原文顺序放进 results 缓存
     const results = new Array(segments.length).fill(null);
@@ -152,7 +162,7 @@ async function speakReply(characterName, reply, msgTs = null) {
     };
     await Promise.all(Array.from({ length: Math.min(SEGMENT_CONCURRENCY, segments.length) }, worker));
     if (ctrl.signal.aborted) return;
-    currentCtrl = null;
+    currentCtrl = null; // 状态在 finally 里统一通知（此时 play-tts 已先于通知推出，渲染端不会出现空档）
     // 合成期间可能已经切了角色
     if (currentCharacterName() !== characterName) return;
 
@@ -183,6 +193,7 @@ async function speakReply(characterName, reply, msgTs = null) {
     console.warn('[pet] 语音合成失败:', err && err.message ? err.message : err);
   } finally {
     if (ctrl && currentCtrl === ctrl) currentCtrl = null;
+    if (ctrl) notifySynthState();
   }
 }
 

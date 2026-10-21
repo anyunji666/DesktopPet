@@ -99,6 +99,8 @@ contextBridge.exposeInMainWorld('petAPI', {
   // 主进程推送：AI 回复合成好了，宠物窗口据此播放并把气泡延长到语音结束
   getChatVoice: (characterName, ts) => ipcRenderer.invoke('get-chat-voice', characterName, ts),
   onPlayTts: (cb) => ipcRenderer.on('play-tts', (_e, data) => cb(data)),
+  // 主进程推送：AI 回复语音是否正在合成（true/false）。合成期间喝水提醒避让
+  onTtsSynthState: (cb) => ipcRenderer.on('tts-synth-state', (_e, v) => cb(!!v)),
   // 音色设置窗口：读取 / 保存某角色的语音配置，试听（用表单当前值），选择音色复刻的参考音频
   ttsGetConfig: (characterName) => ipcRenderer.invoke('tts-get-config', characterName),
   ttsSaveConfig: (characterName, payload) => ipcRenderer.invoke('tts-save-config', characterName, payload),

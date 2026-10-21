@@ -61,8 +61,20 @@ async function runClips(clips, id) {
   }
 }
 
+// 主进程在合成 AI 回复语音期间通知 true（此时队列还没到、什么都没在播），推出 clips 后通知 false。
+// 加一道超时保险：万一 false 的通知丢了，90 秒后自动当作合成结束，别让喝水提醒永远被挡住
+const SYNTH_SAFETY_MS = 90000;
+let synthPending = false;
+let synthTimer = null;
+function setSynthPending(v) {
+  synthPending = v;
+  clearTimeout(synthTimer);
+  if (v) synthTimer = setTimeout(() => (synthPending = false), SYNTH_SAFETY_MS);
+}
+
 export function initTtsPlayback() {
   setVoiceCancelHook(cancelQueue);
+  window.petAPI.onTtsSynthState(setSynthPending);
   window.petAPI.onPlayTts(({ clips }) => {
     cancelQueue(); // 上一条回复没播完的部分作废
     if (!Array.isArray(clips) || !clips.length || !canPlayVoice()) return;
@@ -70,5 +82,5 @@ export function initTtsPlayback() {
   });
 }
 
-// 是否有 AI 回复语音队列正在跑（等待停顿或播放中）。喝水提醒用它避让：正在播回复时先不插话
-export const isTtsPlaying = () => wakeCurrent !== null;
+// 是否有 AI 回复语音正在"合成中 / 排队等待停顿 / 播放中"。喝水提醒用它避让：回复语音在路上时先不插话
+export const isTtsPlaying = () => synthPending || wakeCurrent !== null;

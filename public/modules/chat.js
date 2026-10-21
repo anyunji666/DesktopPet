@@ -20,6 +20,9 @@ let remoteBusy = false;
 let pendingPhase = null;
 let pendingSummaryDay = null; // 总结阶段被总结的那天（YYYY-MM-DD），提示里要写具体日期
 const isBusy = () => localSending || remoteBusy;
+// 给喝水提醒用：正在等回复（含跨天总结）/ 正在语音输入时，提醒先不插话
+export const isChatBusy = () => isBusy();
+export const isVoiceInputActive = () => voiceState !== 'idle';
 
 // 各阶段给人看的提示：气泡 / 输入框 placeholder（总结阶段写具体日期，不写"上一日"——被总结的通常比昨天更早）
 const currentPhase = () => (pendingPhase === 'summarizing' ? 'summarizing' : 'waiting');
