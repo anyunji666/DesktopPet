@@ -45,7 +45,7 @@ contextBridge.exposeInMainWorld('petAPI', {
   deleteApiProfile: (url) => ipcRenderer.invoke('delete-api-profile', url),
   getPromptConfig: () => ipcRenderer.invoke('get-prompt-config'),
   savePromptConfig: (cfg) => ipcRenderer.invoke('save-prompt-config', cfg),
-  // 指定角色的设定（persona.json：世界背景 / 角色资料 / 别名 / 你的资料）读取 / 保存（角色设定窗口用）
+  // 指定角色的设定（persona.json：世界背景 / 角色资料 / 别名 / 你的资料）读取 / 保存（角色与音色设置窗口用）
   getPersona: (characterName) => ipcRenderer.invoke('get-persona', characterName),
   savePersona: (characterName, data) => ipcRenderer.invoke('save-persona', characterName, data),
   // 附加要求（memory index，全局共用）读取 / 保存（API 与全局设置窗口用）
@@ -100,7 +100,11 @@ contextBridge.exposeInMainWorld('petAPI', {
   onPlayTts: (cb) => ipcRenderer.on('play-tts', (_e, data) => cb(data)),
   // 主进程推送：AI 回复语音是否正在合成（true/false）。合成期间喝水提醒避让
   onTtsSynthState: (cb) => ipcRenderer.on('tts-synth-state', (_e, v) => cb(!!v)),
-  // 音色设置窗口：读取 / 保存某角色的语音配置，试听（用表单当前值），选择音色复刻的参考音频
+  // 角色与音色设置窗口的音色设置区：读取 / 保存某角色的语音配置，试听（用表单当前值），选择音色复刻的参考音频
+  // 角色与音色设置窗口：主进程要求换角色时通知页面（页面自己判断有没有未保存的修改），
+  // 用户在浮层里确认"放弃修改"后再回调主进程真正换角色
+  onCharacterVoiceSwitchAsk: (cb) => ipcRenderer.on('character-voice-switch-ask', (_e, name) => cb(name)),
+  characterVoiceSwitch: (characterName) => ipcRenderer.send('character-voice-switch-confirm', characterName),
   ttsGetConfig: (characterName) => ipcRenderer.invoke('tts-get-config', characterName),
   ttsSaveConfig: (characterName, payload) => ipcRenderer.invoke('tts-save-config', characterName, payload),
   ttsTest: (characterName, payload, text) => ipcRenderer.invoke('tts-test', characterName, payload, text),

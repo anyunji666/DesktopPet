@@ -51,7 +51,7 @@ function importCloneAudio(characterName, srcPath) {
 // 读参考音频并拼成 MiMo 要求的 data:audio/...;base64,... 。file 只允许是纯文件名（防路径穿越）
 function readCloneAudioDataURL(file) {
   if (typeof file !== 'string' || !file || path.basename(file) !== file) {
-    throw new Error('请先在音色设置里选择复刻用的参考音频');
+    throw new Error('请先在角色与音色设置的音色设置区里选择复刻用的参考音频');
   }
   let buf;
   try {

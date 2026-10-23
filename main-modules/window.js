@@ -1,5 +1,5 @@
 // ---------- 窗口管理：主窗口消息下发 / 设置窗口 & 聊天记录窗口 / 右键菜单 / 角色与场景切换 ----------
-const { app, BrowserWindow, Menu, dialog, shell, screen, ipcMain } = require('electron');
+const { app, BrowserWindow, Menu, shell, screen, ipcMain } = require('electron');
 const path = require('path');
 const { state } = require('./state');
 const { loadConfig, updateConfig } = require('./config');
@@ -53,7 +53,7 @@ const WIN_H = 540;
 const WIN_MIN_W = 320;
 const WIN_MAX_W = 1800;
 
-// ---------- API 与全局设置窗口 / 角色设定窗口 / 聊天记录窗口（独立普通窗口，跟"开发者工具"一样 detach） ----------
+// ---------- API 与全局设置窗口 / 角色与音色设置窗口 / 聊天记录窗口（独立普通窗口，跟"开发者工具"一样 detach） ----------
 // 桌面模式下宠物窗口纵向展开（通常接近整个屏幕高度）、又是持续渲染的透明覆盖层，新开一个子窗口时
 // 会跟它的首次绘制抢 GPU/合成资源，表现为"窗口本身出来了，但里面内容半天不出来"。
 // 开子窗口前先通知宠物暂停渲染，子窗口内容加载完（或超时兜底，防止事件没触发导致渲染永久暂停）
@@ -133,32 +133,69 @@ function openSettingsWindow() {
   });
 }
 
-// 角色设定窗口：每次只开一个，跟音色设置一样按角色打开——世界背景 / 角色资料 / 别名 / 你的资料
+function characterVoicePageUrl(characterName) {
+  return `http://127.0.0.1:${state.serverPort}/public/character-voice-settings.html?character=${encodeURIComponent(characterName)}`;
+}
+
+// 不关窗口就地换角色：位置 / 大小保持不变，只按新角色重载页面（跟聊天记录窗口同一套做法）。
+// 页面状态全部按 URL 里的角色名初始化，重载等于一次干净的重建，不会残留上一个角色的编辑。
+function retargetCharacterVoiceWindow(characterName) {
+  const win = state.characterVoiceWin;
+  if (!win || win.isDestroyed()) return;
+  state.characterVoiceWinCharacter = characterName;
+  win.setTitle('角色与音色设置 - ' + characterName);
+  win.loadURL(characterVoicePageUrl(characterName));
+}
+
+// 页面在浮层里确认"放弃修改并切换"之后回调：这时页面已经放行 beforeunload，直接重载成目标角色
+function confirmCharacterVoiceSwitch(characterName) {
+  if (typeof characterName !== 'string') return;
+  if (!state.characters.some((c) => c.name === characterName)) return;
+  retargetCharacterVoiceWindow(characterName);
+}
+
+// 角色与音色设置窗口：每次只开一个，按角色打开——同一页上下两段分别是
+// 角色设定（世界背景 / 角色资料 / 别名 / 你的资料）和音色设置（先选服务商，再配音色）。
 // 编辑的是 characterName 这个角色，不用先切换桌宠当前角色。
-// 点的还是已经打开的那个角色就直接聚焦（保住没保存的编辑），点另一个角色就换成那个角色。
-function openCharacterWindow(characterName) {
-  if (state.characterWin && !state.characterWin.isDestroyed()) {
-    if (state.characterWinCharacter === characterName) {
-      state.characterWin.show();
-      state.characterWin.focus();
+// 点的还是已经打开的那个角色就直接聚焦（保住没保存的编辑）；点另一个角色时不再关窗重开，
+// 而是交给页面判断：没有未保存的修改就立刻原地换成新角色，有的话页面弹自己的确认浮层
+//（用户选"放弃修改并切换"后再回调 confirmCharacterVoiceSwitch）。
+function openCharacterVoiceWindow(characterName) {
+  const win = state.characterVoiceWin;
+  if (win && !win.isDestroyed()) {
+    if (state.characterVoiceWinCharacter === characterName) {
+      win.show();
+      win.focus();
       return;
     }
-    state.characterWin.close();
+    win.show();
+    win.focus();
+    win.webContents.send('character-voice-switch-ask', characterName);
+    return;
   }
-  state.characterWinCharacter = characterName;
+  state.characterVoiceWinCharacter = characterName;
   withRenderPause(() => {
-    state.characterWin = new BrowserWindow({
-      width: 420,
-      height: 600,
+    state.characterVoiceWin = new BrowserWindow({
+      width: 440,
+      height: 720,
       resizable: false,
-      title: '角色设定 - ' + characterName,
+      title: '角色与音色设置 - ' + characterName,
       webPreferences: securePrefs(),
     });
     // 见 openSettingsWindow 里的同名调用注释
-    state.characterWin.webContents.setBackgroundThrottling(false);
-    state.characterWin.setMenu(null);
-    state.characterWin.loadURL(`http://127.0.0.1:${state.serverPort}/public/character-settings.html?character=${encodeURIComponent(characterName)}`);
-    return state.characterWin;
+    state.characterVoiceWin.webContents.setBackgroundThrottling(false);
+    state.characterVoiceWin.setMenu(null);
+    const created = state.characterVoiceWin;
+    // 页面有未保存修改时会拦住关闭（beforeunload），这里只把窗口提到前面，让页面自己的确认浮层能被看到；
+    // 确认框一律不用系统对话框（见页面里的 #confirm-overlay）。不调 preventDefault = 关闭保持被取消。
+    // 注意：这个事件的 Event 对象上没有 sender（拿 e.sender 会抛 TypeError），窗口引用直接从闭包拿
+    created.webContents.on('will-prevent-unload', () => {
+      if (created.isDestroyed()) return;
+      created.show();
+      created.focus();
+    });
+    created.loadURL(characterVoicePageUrl(characterName));
+    return created;
   });
 }
 
@@ -193,33 +230,6 @@ function openHistoryWindow(characterName) {
     state.historyWin.loadURL(historyWindowUrl(characterName));
     return state.historyWin;
   }, { resumeOn: 'content-ready', signalChannel: 'history-content-ready' });
-}
-
-// 音色设置窗口：每次只开一个，点另一个角色就换成那个角色的；
-// 点的还是已经打开的那个角色就直接聚焦（保住没保存的编辑）
-function openVoiceWindow(characterName) {
-  if (state.voiceWin && !state.voiceWin.isDestroyed()) {
-    if (state.voiceWinCharacter === characterName) {
-      state.voiceWin.show();
-      state.voiceWin.focus();
-      return;
-    }
-    state.voiceWin.close();
-  }
-  state.voiceWinCharacter = characterName;
-  withRenderPause(() => {
-    state.voiceWin = new BrowserWindow({
-      width: 440,
-      height: 700,
-      title: '音色设置 - ' + characterName,
-      webPreferences: securePrefs(),
-    });
-    // 见 openSettingsWindow 里的同名调用注释
-    state.voiceWin.webContents.setBackgroundThrottling(false);
-    state.voiceWin.setMenu(null);
-    state.voiceWin.loadURL(`http://127.0.0.1:${state.serverPort}/public/voice-settings.html?character=${encodeURIComponent(characterName)}`);
-    return state.voiceWin;
-  });
 }
 
 // ---------- 关于窗口 ----------
@@ -420,14 +430,10 @@ function buildMenu() {
       click: () => openSettingsWindow(),
     },
     {
-      // 一级：角色列表；点某个角色 -> 弹出该角色的设定窗口（世界背景 / 角色资料 / 别名 / 你的资料）
-      label: '📖 角色设定',
-      submenu: state.characters.map((c) => ({ label: c.name, click: () => openCharacterWindow(c.name) })),
-    },
-    {
-      // 一级：角色列表；点某个角色 -> 弹出该角色的语音配置窗口（先选服务商，再配音色）
-      label: '🎙 音色设置（语音功能）',
-      submenu: state.characters.map((c) => ({ label: c.name, click: () => openVoiceWindow(c.name) })),
+      // 一级：角色列表；点某个角色 -> 弹出该角色的"角色与音色设置"窗口
+      //（角色设定：世界背景 / 角色资料 / 别名 / 你的资料；音色设置：先选服务商，再配音色）
+      label: '📝 角色与音色设置',
+      submenu: state.characters.map((c) => ({ label: c.name, click: () => openCharacterVoiceWindow(c.name) })),
     },
     { type: 'separator' },
     // 父菜单按当前状态后缀 ✅，两个子选项用 ✓ 前缀标出当前选择；声音 / 喝水提醒 / 开机自启动各自独立一格
@@ -678,9 +684,9 @@ module.exports = {
   exitDesktopMode,
   toggleBgMouseInteraction,
   openSettingsWindow,
-  openCharacterWindow,
+  openCharacterVoiceWindow,
+  confirmCharacterVoiceSwitch,
   openHistoryWindow,
-  openVoiceWindow,
   openLlmLogWindow,
   openAboutWindow,
   getAboutInfo,

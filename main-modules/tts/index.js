@@ -126,7 +126,7 @@ function persistVoice(characterName, msgTs, clips) {
 }
 
 // 不返回 Promise 给调用方等待：文字气泡照常立即显示，语音合成好了再推给渲染进程。
-// 任何失败都只打日志，不能影响文字对话（具体错误可在音色设置窗口的"试听"里看到）
+// 任何失败都只打日志，不能影响文字对话（具体错误可在角色与音色设置窗口音色设置区的"试听"里看到）
 // reply：带逐句语气的正文原文（每个「」开头的【语气】由 splitSpeechSegments 拆成各段自己的 tone，每段请求带自己那一条；
 //   气泡 / 聊天记录用的是摘掉语气后的正文，见 chat-turn.js）
 // msgTs：这条 AI 消息在聊天记录里的 ts，合成好的语音按它缓存；缺省（null）只播放、不缓存
@@ -134,7 +134,7 @@ function persistVoice(characterName, msgTs, clips) {
 //   splitSpeechSegments 按全部角色名把每段的 speaker 拆出来，这里再按 speaker 取各角色自己的
 //   TTS 配置分段合成——同一回合的语音可以来自不同服务商/音色，播放/缓存流程不变。
 //   没标注的段落默认当前角色；说话者没配置语音（off）的段落整段不读（用别人的音色读更违和，
-//   想读就在音色设置里给那个角色配一个）。称呼可以是角色名或别名（persona.json 的 aliases）。
+//   想读就在角色与音色设置里给那个角色配一个）。称呼可以是角色名或别名（persona.json 的 aliases）。
 //   当前角色自己没配语音、但回复里有别的角色配了语音的台词，那些台词照常朗读
 async function speakReply(characterName, reply, msgTs = null) {
   let ctrl = null;

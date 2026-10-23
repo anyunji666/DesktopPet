@@ -70,6 +70,7 @@ const {
   openRepoUrl,
   toggleDevEntries,
   openHistoryWindow,
+  confirmCharacterVoiceSwitch,
   send,
   currentCharacterPayload,
   currentScene,
@@ -655,7 +656,7 @@ ipcMain.handle('get-relay-status', () => geminiRelay.getStatus());
 ipcMain.handle('get-prompt-config', () => getPromptConfig());
 ipcMain.handle('save-prompt-config', (_e, patch) => savePromptConfig(patch && typeof patch === 'object' ? patch : {}));
 
-// ---------- IPC：指定角色的设定（persona）编辑（角色设定窗口用，按窗口打开的角色，不跟桌宠当前角色） ----------
+// ---------- IPC：指定角色的设定（persona）编辑（角色与音色设置窗口用，按窗口打开的角色，不跟桌宠当前角色） ----------
 // 返回该角色已填写的世界背景 / 角色资料 / 别名 / 你的资料（没填就是空字符串或空数组）
 ipcMain.handle('get-persona', (_e, characterName) => {
   if (!validCharacter(characterName)) throw new Error('未知角色');
@@ -720,10 +721,14 @@ ipcMain.handle('get-chat-voice', (_e, characterName, ts) => {
 ipcMain.on('open-history-window', (_e, characterName) => {
   if (typeof characterName === 'string') openHistoryWindow(characterName);
 });
+// 角色与音色设置窗口：页面在浮层里确认"放弃修改并切换"后，主进程把窗口原地重载成目标角色
+ipcMain.on('character-voice-switch-confirm', (_e, characterName) => {
+  confirmCharacterVoiceSwitch(characterName);
+});
 // LLM 调用记录窗口打开时，用这个拿一次"当前已有的最新一条"（窗口开着之后的新记录走上面的实时推送）
 ipcMain.handle('get-llm-log', () => getLatestLlmCall());
 
-// ---------- IPC：语音合成（音色设置窗口用） ----------
+// ---------- IPC：语音合成（角色与音色设置窗口的音色设置区用） ----------
 // 密钥是各角色共用的，音色参数按角色分开存；试听用表单当前值，不要求先保存
 ipcMain.handle('tts-get-config', (_e, characterName) => {
   if (!validCharacter(characterName)) throw new Error('未知角色');
@@ -789,7 +794,7 @@ const asrSessions = new Map();
 ipcMain.handle('asr-start', (e) => {
   const cfg = getAsrConfig();
   if (!cfg.appId || !cfg.accessKey) {
-    throw new Error('尚未配置豆包的 App ID / Access Key，请先在"音色设置"里填好（语音识别复用这套凭据）');
+    throw new Error('尚未配置豆包的 App ID / Access Key，请先在"角色与音色设置"的音色设置里填好（语音识别复用这套凭据）');
   }
   const sessionId = crypto.randomUUID();
   const sender = e.sender;
