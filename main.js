@@ -16,7 +16,7 @@ const { hardenWebContents, hardenSession, guardIpc, isSafeName, maskSecret } = r
 const { state } = require('./main-modules/state');
 const { constrainMove, constrainResize } = require('./main-modules/win-limit');
 const { requestClickThrough } = require('./main-modules/drag-guard');
-const { beginChat, endChat, getChatPending, assertHistoryEditable } = require('./main-modules/chat-lock');
+const { beginChat, endChat, getChatPending, assertHistoryEditable, assertGlobalMemoryEditable } = require('./main-modules/chat-lock');
 const { planCrossDaySummary, runChatTurn } = require('./main-modules/chat-turn');
 const { exportToFile, importFromFile } = require('./main-modules/chat-transfer');
 const { loadConfig, updateConfig, migrateSecrets } = require('./main-modules/config');
@@ -34,7 +34,6 @@ const {
   deleteChatVoice,
   clearChatVoices,
   clearDaySummaries,
-  clearMemoryIndex,
   loadMemoryIndex,
   saveMemoryIndexManual,
   MEMORY_MAX_CHARS,
@@ -57,6 +56,7 @@ const {
   getPromptConfig,
   savePromptConfig,
 } = require('./main-modules/llm');
+const { stripSpeakers } = require('./main-modules/tts/tone');
 const { splitTurnSummary, extractStoryTime, extractOverview, buildSummaryBlock } = require('./main-modules/history-flatten');
 const { fetchModelList, setLlmLogListener, getLatestLlmCall } = require('./main-modules/llm-client');
 const {
@@ -655,36 +655,37 @@ ipcMain.handle('get-relay-status', () => geminiRelay.getStatus());
 ipcMain.handle('get-prompt-config', () => getPromptConfig());
 ipcMain.handle('save-prompt-config', (_e, patch) => savePromptConfig(patch && typeof patch === 'object' ? patch : {}));
 
-// ---------- IPC：指定角色的资料（persona）编辑（设置窗口用，按窗口打开的角色，不跟桌宠当前角色） ----------
-// 返回该角色已填写的人设文本（没填就是空字符串）
+// ---------- IPC：指定角色的设定（persona）编辑（角色设定窗口用，按窗口打开的角色，不跟桌宠当前角色） ----------
+// 返回该角色已填写的世界背景 / 角色资料 / 别名 / 你的资料（没填就是空字符串或空数组）
 ipcMain.handle('get-persona', (_e, characterName) => {
   if (!validCharacter(characterName)) throw new Error('未知角色');
-  const { system, storyBackground } = readPersonaFile(characterName);
+  const { system, storyBackground, aliases, readerInfo } = readPersonaFile(characterName);
   return {
     characterName,
     system,
     storyBackground,
+    aliases,
+    readerInfo,
   };
 });
-ipcMain.handle('save-persona', (_e, characterName, system, storyBackground) => {
+ipcMain.handle('save-persona', (_e, characterName, data) => {
   if (!validCharacter(characterName)) throw new Error('未知角色');
+  const d = data && typeof data === 'object' ? data : {};
   savePersonaFile(characterName, {
-    system: typeof system === 'string' ? system.trim() : '',
-    storyBackground: typeof storyBackground === 'string' ? storyBackground.trim() : '',
+    system: typeof d.system === 'string' ? d.system.trim() : '',
+    storyBackground: typeof d.storyBackground === 'string' ? d.storyBackground.trim() : '',
+    aliases: d.aliases, // 数组或分隔字符串，savePersonaFile 里统一清洗
+    readerInfo: typeof d.readerInfo === 'string' ? d.readerInfo.trim() : '',
   });
   return true;
 });
-// ---------- IPC：指定角色的附加要求（memory index）编辑（设置窗口用，按窗口打开的角色，不跟桌宠当前角色） ----------
-// 附加要求 = 跨天总结时 AI 从元交流里自动提炼的长期设定/要求，这里允许用户手动增删改。每个角色各一份。
-ipcMain.handle('get-memory-index', (_e, characterName) => {
-  if (!validCharacter(characterName)) throw new Error('未知角色');
-  return { characterName, text: loadMemoryIndex(characterName), maxChars: MEMORY_MAX_CHARS };
-});
-ipcMain.handle('save-memory-index', (_e, characterName, text) => {
-  if (!validCharacter(characterName)) throw new Error('未知角色');
-  // 这个角色正在等回复 / 做跨天总结时，总结那次调用可能马上要往这份附加要求里追加，此时手动保存会互相覆盖，直接拦下
-  assertHistoryEditable(characterName);
-  saveMemoryIndexManual(characterName, text);
+// ---------- IPC：附加要求（memory index）编辑（API 与全局设置窗口用） ----------
+// 附加要求 = 跨天总结时 AI 从元交流里自动提炼的长期设定/要求，这里允许用户手动增删改。全局共用一份，不区分角色。
+ipcMain.handle('get-memory-index', () => ({ text: loadMemoryIndex(), maxChars: MEMORY_MAX_CHARS }));
+ipcMain.handle('save-memory-index', (_e, text) => {
+  // 任何角色正在等回复 / 做跨天总结时，总结那次调用可能马上要往这份附加要求里追加，此时手动保存会互相覆盖，直接拦下
+  assertGlobalMemoryEditable();
+  saveMemoryIndexManual(text);
   return true;
 });
 ipcMain.handle('fetch-model-list', (_e, apiUrl, apiKey) => {
@@ -699,7 +700,10 @@ ipcMain.handle('get-chat-history', (_e, characterName) => {
     ...m,
     // assistant 消息存盘时末尾拼了 <story_overview> 摘要块（给轮次压缩用），聊天记录窗口只是给人看的，
     // 这个标签用户不需要看到——只处理这个接口的返回值，磁盘上的历史文件本身不受影响
-    content: m.role === 'assistant' ? splitTurnSummary(m.content).body : m.content,
+    // 说话者前缀（多角色语音用）也只在显示时摘掉，存档里保留
+    content: m.role === 'assistant' ? stripSpeakers(splitTurnSummary(m.content).body) : m.content,
+    // 编辑框用的完整原文（带说话者前缀 + 末尾的摘要块）：气泡显示摘了这些，编辑时要看到存档里的真实内容
+    rawContent: m.content,
     // AI 消息的故事时间（取自被剥掉的那个摘要块），记录窗口拿去在气泡末尾打标签；摘要里没有就是空串，不显示
     storyTime: m.role === 'assistant' ? extractStoryTime(m.content) : '',
     // 摘要的"概述"部分：平时不显示，只在编辑 AI 消息时和故事时间一起出现在两个摘要输入框里
@@ -831,9 +835,12 @@ function validCharacter(characterName) {
   return typeof characterName === 'string' && isSafeName(characterName) && state.characters.some((c) => c.name === characterName);
 }
 
-// summary：{ storyTime, overview }，仅 assistant 消息有效。传了就用它重建末尾的 <story_overview> 摘要块（两项都空 = 去掉摘要块，
-// 轮次压缩时这一轮退回发原文）；不传就原样保留原来的摘要块——以前直接覆盖 content 会把摘要块丢掉。
-ipcMain.handle('edit-chat-message', (_e, characterName, index, content, summary) => {
+// 编辑消息。AI 消息的 content 是"完整原文"：正文 + 末尾的 <story_overview> 摘要块（和存档里的格式一致，编辑框里直接显示，
+// 摘要不再单独拆成输入框）。保存时在这里校验摘要块：
+//   · 没有摘要块 = 去掉摘要，这一轮在历史里发原文、不压缩（和以前"两项都留空"一致）
+//   · 有摘要块就必须成对、只有一个、在末尾，且里面至少有"故事时间:"或"概述:"一行有内容；块里完全是空的就当去掉摘要
+// 返回 { display, raw, storyTime }：气泡该显示的文字（AI 消息摘掉说话者前缀）、编辑框下次要显示的原文、故事时间标签
+ipcMain.handle('edit-chat-message', (_e, characterName, index, content) => {
   if (!validCharacter(characterName)) throw new Error('未知角色');
   assertHistoryEditable(characterName); // 正在等这个角色的回复时不允许改记录
   if (!Number.isInteger(index) || index < 0) throw new Error('无效的消息索引');
@@ -844,23 +851,34 @@ ipcMain.handle('edit-chat-message', (_e, characterName, index, content, summary)
   if (index >= history.length) throw new Error('无效的消息索引');
   const target = history[index];
   if (target.role === 'assistant') {
-    // 正文里不能带摘要标签，否则会和末尾拼接的摘要块混在一起、解析错位
-    if (/<\/?story_overview>/.test(text)) throw new Error('正文里不能包含 <story_overview> 标签');
-    let block;
-    if (summary && typeof summary === 'object') {
-      const t = typeof summary.storyTime === 'string' ? summary.storyTime.trim() : '';
-      const o = typeof summary.overview === 'string' ? summary.overview.trim() : '';
-      if (/<\/?story_overview>/.test(t + o)) throw new Error('摘要里不能包含 <story_overview> 标签');
-      block = buildSummaryBlock(t, o);
-    } else {
-      block = splitTurnSummary(target.content).summaryBlock; // 没传摘要：保留原来的
+    const opens = (text.match(/<story_overview>/g) || []).length;
+    const closes = (text.match(/<\/story_overview>/g) || []).length;
+    let body = text;
+    let block = '';
+    if (opens || closes) {
+      const sp = splitTurnSummary(text);
+      if (opens !== 1 || closes !== 1 || !sp.summaryBlock) throw new Error('摘要块格式不对：<story_overview> 和 </story_overview> 必须成对出现，且只能有一个');
+      if (!text.endsWith('</story_overview>')) throw new Error('摘要块必须放在消息的最末尾');
+      body = sp.body;
+      const inner = sp.summaryBlock.replace(/^<story_overview>|<\/story_overview>$/g, '').trim();
+      if (inner) {
+        const t = extractStoryTime(sp.summaryBlock);
+        const o = extractOverview(sp.summaryBlock);
+        if (!t && !o) throw new Error('摘要块里要写"故事时间: …"或"概述: …"（至少一行有内容），不需要摘要就整块删掉');
+        block = sp.summaryBlock;
+      }
     }
-    target.content = block ? `${text}\n${block}` : text;
+    if (!body) throw new Error('正文不能为空');
+    target.content = block ? `${body}\n${block}` : body;
   } else {
     target.content = text;
   }
   saveChatHistory(characterName, history);
-  return true;
+  if (target.role === 'assistant') {
+    const sp = splitTurnSummary(target.content);
+    return { display: stripSpeakers(sp.body), raw: target.content, storyTime: extractStoryTime(target.content), overview: extractOverview(target.content) };
+  }
+  return { display: text, raw: text, storyTime: '', overview: '' };
 });
 
 ipcMain.handle('add-chat-message', (_e, characterName, role, content) => {
@@ -948,7 +966,6 @@ ipcMain.handle('clear-chat-history', (_e, characterName) => {
   clearChatImages(characterName); // 图片文件夹整个清掉
   clearChatVoices(characterName); // 回复语音文件夹也整个清掉
   clearDaySummaries(characterName); // 按天总结缓存也一起清掉
-  clearMemoryIndex(characterName); // hot 记忆索引是从这些对话里提炼出来的，聊天记录都没了就一起清空
   clearOpenedDay(characterName); // 当前打开的封印包也跟着清掉，避免指向已经不存在的历史
   return true;
 });

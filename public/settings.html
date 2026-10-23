@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8" />
-<title>API 设置</title>
+<title>API 与全局设置</title>
 <style>
   body {
     font-family: "Microsoft YaHei", sans-serif;
@@ -156,28 +156,14 @@
 </style>
 </head>
 <body>
-  <div class="section-title">🌍 世界背景 <span id="storybg-character" style="font-weight: normal; color: #999;"></span></div>
-
-  <textarea id="story_background" style="min-height: 90px" placeholder="角色所处世界的描述及设定"></textarea>
-
-  <div class="section-title">🎭 角色资料 <span id="persona-character" style="font-weight: normal; color: #999;"></span></div>
-
-  <label>角色的个人资料</label>
-  <textarea id="persona_system" style="min-height: 110px" placeholder="写角色的身份、性格、说话风格、和你的关系…&#10;例如：凛是一只傲娇的猫娘，嘴上总嫌弃你其实很黏人，说话简短带刺但会脸红…"></textarea>
-  <p class="tip">保存后 生成/更新 角色的 persona.json 文件。世界背景和角色资料都清空后保存 = 不发送这两项。</p>
-
-  <div class="section-title">🏷️ 附加要求 <span id="memory-character" style="font-weight: normal; color: #999;"></span></div>
-
-  <textarea id="memory_index" style="min-height: 90px" placeholder="一行一条&#10;例如：&#10;故事保持轻松日常节奏&#10;战斗场景略写不细描&#10;不要突然跳过时间线"></textarea>
-  <p class="tip"><span id="memory-count">0 / 200</span>　跨天总结时 AI 会自动从元交流中提炼并追加，你也可以在这里增删修改；建议每条 20 字内，总量上限 200 字，超出无法保存。</p>
-
   <div class="section-title">📝 Prompt 模板（全局生效，不区分角色）</div>
 
   <label>用户自定义前置文本</label>
   <textarea id="prompt_prefix" placeholder="设定AI的前置背景 身份/职务，和 ta 的工作要求。（可用于回复用户发送的元指令，元指令内容需要用括号包裹）"></textarea>
 
-  <label>你的资料</label>
-  <textarea id="prompt_reader_info" placeholder="写你的身份、和角色的关系…&#10;例如：姓名安运，男，21岁，是角色的老板；表面是默契的雇佣关系，实际更有种相互依赖的感觉…"></textarea>
+  <label>附加要求</label>
+  <textarea id="memory_index" style="min-height: 90px" placeholder="一行一条&#10;例如：&#10;故事保持轻松日常节奏&#10;战斗场景略写不细描&#10;不要突然跳过时间线"></textarea>
+  <p class="tip"><span id="memory-count">0 / 200</span>　所有角色共用。跨天总结时 AI 会自动从元交流中提炼并追加，你也可以在这里增删修改；建议每条 20 字内，总量上限 200 字，超出无法保存。</p>
 
   <div class="section-title">⚙ 对话功能 · API 设置（全局生效，不区分角色）</div>
   <p class="tip">通用 OpenAI 兼容接口配置，支持任意兼容平台（OpenAI / DeepSeek / 各类中转等）</p>
@@ -231,12 +217,7 @@
 
 <script>
   const $ = (id) => document.getElementById(id);
-  // 这个窗口编辑的角色：菜单里点哪个角色就是哪个（API / Prompt 模板是全局的，不受它影响）
-  const character = new URLSearchParams(location.search).get('character') || '';
-  document.title = 'API 设置 - ' + character;
-  // 该角色的人设状态：null = 还没加载到（加载失败时会提示，此时保存不会动人设）
-  let personaLoaded = null;
-  // 该角色的附加要求：加载时记下原文与上限，保存时只有改过才提交
+  // 附加要求（全局共用）：加载时记下原文与上限，保存时只有改过才提交
   let memoryLoaded = null;
 
   // 与后端 normalizeMemoryText 同一口径：每行去首尾空白、丢空行
@@ -413,23 +394,14 @@
 
     const promptCfg = await window.petAPI.getPromptConfig();
     $('prompt_prefix').value = promptCfg.prefix || '';
-    $('prompt_reader_info').value = promptCfg.readerInfo || '';
 
     try {
-      const persona = await window.petAPI.getPersona(character);
-      personaLoaded = persona;
-      $('persona-character').textContent = '· ' + persona.characterName;
-      $('storybg-character').textContent = '· ' + persona.characterName;
-      $('persona_system').value = persona.system || '';
-      $('story_background').value = persona.storyBackground || '';
-
-      const memory = await window.petAPI.getMemoryIndex(character);
-      memoryLoaded = { characterName: memory.characterName, original: normalizeMemory(memory.text), maxChars: memory.maxChars };
-      $('memory-character').textContent = '· ' + memory.characterName;
+      const memory = await window.petAPI.getMemoryIndex();
+      memoryLoaded = { original: normalizeMemory(memory.text), maxChars: memory.maxChars };
       $('memory_index').value = memory.text || '';
       updateMemoryCount();
     } catch (err) {
-      setStatus('加载角色资料失败：' + (err && err.message ? err.message : String(err)), 'err');
+      setStatus('加载附加要求失败：' + (err && err.message ? err.message : String(err)), 'err');
     }
   }
 
@@ -453,17 +425,12 @@
       });
       await window.petAPI.savePromptConfig({
         prefix: $('prompt_prefix').value,
-        readerInfo: $('prompt_reader_info').value,
       });
-      // 角色资料 / 世界背景：直接保存——两项都清空 = 删除文件，之后不再发送
-      if (personaLoaded) {
-        await window.petAPI.savePersona(personaLoaded.characterName, $('persona_system').value, $('story_background').value);
-      }
-      // 附加要求：没改动就不提交（避免覆盖设置窗口开着期间 AI 自动追加的内容，也不会在角色等回复时被锁误拦）
+      // 附加要求：没改动就不提交（避免覆盖设置窗口开着期间 AI 自动追加的内容，也不会在有角色等回复时被锁误拦）
       if (memoryLoaded) {
         const cur = normalizeMemory($('memory_index').value);
         if (cur !== memoryLoaded.original) {
-          await window.petAPI.saveMemoryIndex(memoryLoaded.characterName, cur);
+          await window.petAPI.saveMemoryIndex(cur);
         }
       }
       // 保存成功：不需要绿色"已保存"文案停留，直接关闭设置窗口

@@ -1,5 +1,5 @@
 // ---------- 主进程运行时共享状态 ----------
-// 主窗口 / 设置窗口 / 聊天记录窗口，以及当前角色/场景的选择，都是跨模块（window.js 的窗口管理
+// 主窗口 / API 与全局设置窗口 / 角色设定窗口 / 聊天记录窗口，以及当前角色/场景的选择，都是跨模块（window.js 的窗口管理
 // 和 main.js 的 IPC 处理）共用的可变状态，收拢在这一个对象里，避免散落成一堆模块级全局变量。
 const state = {
   win: null, // 主宠物窗口
@@ -9,8 +9,9 @@ const state = {
   scenes: [], // scanScenes() 结果
   currentSceneName: null, // null = 无场景（保持透明背景）
   serverPort: null, // 本地静态服务器端口，设置窗口/历史记录窗口也用它加载页面
-  settingsWin: null, // API 设置窗口
-  settingsWinCharacter: null, // API 设置窗口当前打开的角色名（世界背景 / 角色资料 / 附加要求编辑的是这个角色）
+  settingsWin: null, // API 与全局设置窗口（全局唯一，不区分角色）
+  characterWin: null, // 角色设定窗口（世界背景 / 角色资料 / 别名 / 你的资料，跟随角色）
+  characterWinCharacter: null, // 角色设定窗口当前打开的角色名
   historyWin: null, // 聊天记录窗口
   historyWinCharacter: null, // 聊天记录窗口当前打开的角色名
   chatPending: null, // 正在等 LLM 回复的那一轮对话（chat-lock.js 维护）；null = 空闲。{ character, source: 'main'|'history', user, imageDataURL, ts, phase: 'summarizing'|'waiting', summaryDay: 被总结的日期(YYYY-MM-DD)|null }

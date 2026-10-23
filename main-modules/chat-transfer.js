@@ -1,5 +1,5 @@
 // ---------- 聊天记录导入 / 导出 ----------
-// 导出成一个 JSON 文件：消息（图片以 dataURL 内嵌）+ 按天总结 + 长期记忆索引，方便备份 / 换电脑迁移。
+// 导出成一个 JSON 文件：消息（图片以 dataURL 内嵌）+ 按天总结，方便备份 / 换电脑迁移。
 // 导入是"整份覆盖"：先把文件完整校验一遍，确认没问题才动现有数据，坏文件不会把原来的记录弄丢。
 // 不导出"打开的封印包槽位"：它只是当天有效的临时状态，导入时反而要清掉，避免指向被覆盖掉的历史。
 // 回复语音也不导出（体积大），导入覆盖时把旧的语音一并清掉。
@@ -10,9 +10,6 @@ const {
   loadDaySummaries,
   saveDaySummary,
   clearDaySummaries,
-  loadMemoryIndex,
-  saveMemoryIndex,
-  clearMemoryIndex,
   clearOpenedDay,
   saveChatImage,
   readChatImageDataURL,
@@ -43,7 +40,6 @@ function buildExport(characterName) {
     exportedAt: new Date().toISOString(),
     messages,
     daySummaries: loadDaySummaries(characterName),
-    memoryIndex: loadMemoryIndex(characterName),
   };
 }
 
@@ -54,11 +50,10 @@ function exportToFile(characterName, filePath) {
 }
 
 // ---------- 导入：校验 ----------
-// 返回清洗后的 { messages, daySummaries, memoryIndex }；格式不对直接抛错（此时还没动任何数据）
+// 返回清洗后的 { messages, daySummaries }；格式不对直接抛错（此时还没动任何数据）
 function parseImport(data) {
   let rawMessages;
   let rawSummaries = {};
-  let rawMemory = '';
   if (Array.isArray(data)) {
     rawMessages = data; // 兼容只有消息数组的简化文件
   } else if (data && typeof data === 'object') {
@@ -70,7 +65,7 @@ function parseImport(data) {
     if (data.daySummaries && typeof data.daySummaries === 'object' && !Array.isArray(data.daySummaries)) {
       rawSummaries = data.daySummaries;
     }
-    if (typeof data.memoryIndex === 'string') rawMemory = data.memoryIndex;
+    // 旧版导出文件里的 memoryIndex（当时附加要求跟随角色）直接忽略：附加要求现在是全局共用的，不随单个角色的聊天记录导入导出
   } else {
     throw new Error('不是桌宠导出的聊天记录文件');
   }
@@ -100,18 +95,17 @@ function parseImport(data) {
   for (const [k, v] of Object.entries(rawSummaries)) {
     if (DAY_KEY_RE.test(k) && typeof v === 'string' && v) daySummaries[k] = v;
   }
-  return { messages, daySummaries, memoryIndex: rawMemory, skipped };
+  return { messages, daySummaries, skipped };
 }
 
 // ---------- 导入：落盘 ----------
 function applyImport(characterName, data) {
-  const { messages, daySummaries, memoryIndex, skipped } = parseImport(data);
+  const { messages, daySummaries, skipped } = parseImport(data);
 
   // 校验通过，才开始动现有数据：整份覆盖，跟"清空对话"清掉的东西保持一致
   clearChatImages(characterName);
   clearChatVoices(characterName);
   clearDaySummaries(characterName);
-  clearMemoryIndex(characterName);
   clearOpenedDay(characterName);
 
   const history = [];
@@ -130,7 +124,6 @@ function applyImport(characterName, data) {
   }
   saveChatHistory(characterName, history);
   for (const [k, v] of Object.entries(daySummaries)) saveDaySummary(characterName, k, v);
-  if (memoryIndex.trim()) saveMemoryIndex(characterName, memoryIndex);
 
   return { count: history.length, skipped, imageFailed };
 }

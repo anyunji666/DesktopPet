@@ -24,7 +24,7 @@ const {
 } = require('./history-flatten');
 const { callLLM } = require('./llm-client');
 const { speakReply } = require('./tts');
-const { stripTones } = require('./tts/tone');
+const { stripTones, stripSpeakers } = require('./tts/tone');
 
 // 一轮对话的完整流程：跨天总结 -> 存图 -> 拼 prompt -> 调 LLM -> 落盘 -> 触发 TTS。
 // 成功返回 { reply, committed, startIndex }；任何一步抛错都不会落历史。
@@ -74,7 +74,7 @@ async function runChatTurnInner(characterName, text, imageDataURL, imageHolder, 
     );
     const { summary, memoryLines } = parseSummaryAndMemory(rawSummary);
     saveDaySummary(characterName, dayToSummarize, summary || rawSummary.trim());
-    if (memoryLines.length) appendMemoryLines(characterName, memoryLines);
+    if (memoryLines.length) appendMemoryLines(memoryLines);
     setChatPhase('waiting');
   }
 
@@ -106,13 +106,14 @@ async function runChatTurnInner(characterName, text, imageDataURL, imageHolder, 
   const { body: replyBody, summaryBlock } = splitTurnSummary(rawReply);
   // 摘要块 / 语气都不该进气泡、聊天记录、IPC 返回值：reply 是摘掉所有语气后的干净正文，气泡 / 返回值 / 落档都用它；
   // replyBody 还带着逐句语气，只给朗读用（TTS 按「」拆出每段自己的语气）
-  const reply = stripTones(characterName, replyBody);
+  const replyKeepSpeakers = stripTones(characterName, replyBody); // 去了语气、还带说话者前缀：落档 / 回传给模型用
+  const reply = stripSpeakers(replyKeepSpeakers); // 再去掉说话者前缀：气泡 / 聊天记录窗口 / IPC 返回值显示用
 
   // === 落盘 ===
   // 括号包裹的元指令/元回复不再在落档时过滤：聊天记录、聊天窗口、回填给模型的历史都保留原文。
   // "括号里的元交流不要总结进摘要"改由每回合摘要块的提示词约束（llm.js 的 SUMMARY_FOOTER）。
   const userContentForHistory = text;
-  const replyTextForHistory = reply;
+  const replyTextForHistory = replyKeepSpeakers; // 存档保留说话者前缀：模型看到历史里带前缀，才会继续标注
   // 摘要块重新拼回存档内容末尾——flattenChatHistory 做轮次压缩要靠它才能把老轮次换成摘要；
   // 语气【】不拼回去，跟现在的设计一致：语气只给 TTS 用，不落档、也不发回模型
   const replyContentForHistory = summaryBlock ? `${replyTextForHistory}\n${summaryBlock}` : replyTextForHistory;
@@ -132,7 +133,7 @@ async function runChatTurnInner(characterName, text, imageDataURL, imageHolder, 
     assistantTs = ts;
     history.push({ role: 'assistant', content: replyContentForHistory, ts });
     // storyTime：摘要块里的故事时间，聊天记录窗口据此在气泡末尾打标签；摘要块没写就是空串
-    committed.push({ role: 'assistant', content: replyTextForHistory, ts, storyTime: extractStoryTime(replyContentForHistory), summaryOverview: extractOverview(replyContentForHistory) });
+    committed.push({ role: 'assistant', content: reply, rawContent: replyContentForHistory, ts, storyTime: extractStoryTime(replyContentForHistory), summaryOverview: extractOverview(replyContentForHistory) });
   }
   saveChatHistory(characterName, history);
   imageHolder.file = null; // 已经写进聊天记录，之后再出任何问题都不能删这张图

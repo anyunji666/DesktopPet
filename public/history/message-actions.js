@@ -9,7 +9,7 @@ import { showToast } from './toast.js';
 
 // 退出编辑态：去掉输入框和按钮行，恢复文字/时间行，清掉进入编辑时设置的气泡最小宽度
 function endEdit(row) {
-  row.querySelectorAll('.edit-input, .edit-summary, .edit-btns').forEach((el) => el.remove());
+  row.querySelectorAll('.edit-input, .edit-summary-hint, .edit-btns').forEach((el) => el.remove());
   const text = row.querySelector('.msg-text');
   if (text) text.style.display = '';
   row.style.minWidth = '';
@@ -58,52 +58,13 @@ function startEdit(row) {
   };
   ta.addEventListener('input', autosize);
 
-  // AI 消息：正文下面多出"摘要"区（平时不显示），故事时间 / 概述各一个输入框。
-  // 摘要是每轮回复末尾自带的 <story_overview> 块，老轮次发给模型时用它替换原文；两项都清空 = 这一轮发原文、不压缩
-  let timeInput = null;
-  let overviewInput = null;
+  // AI 消息：编辑框里是完整原文，末尾的 <story_overview> 摘要块也在里面（摘要用于压缩历史，整块删掉 = 这一轮在历史中发原文）；
+  // 保存时由主进程校验摘要块格式
   if (row.classList.contains('assistant')) {
-    const box = document.createElement('div');
-    box.className = 'edit-summary';
-    const mk = (label, value, placeholder, rows) => {
-      const wrap = document.createElement('label');
-      wrap.className = 'edit-summary-field';
-      const cap = document.createElement('span');
-      cap.textContent = label;
-      const inp = document.createElement(rows ? 'textarea' : 'input');
-      if (rows) inp.rows = rows;
-      inp.value = value;
-      inp.placeholder = placeholder;
-      wrap.appendChild(cap);
-      wrap.appendChild(inp);
-      box.appendChild(wrap);
-      return inp;
-    };
-    timeInput = mk('故事时间', row.dataset.storyTime || '', '例：2026年9月27日 21:40', 0);
-    overviewInput = mk('概述', row.dataset.overview || '', '本轮关键事件及角色的实际改变', 2);
     const hint = document.createElement('div');
     hint.className = 'edit-summary-hint';
-    hint.textContent = '摘要用于压缩历史。两项都留空 = 这一轮在历史中发送原文';
-    box.appendChild(hint);
-    const grow = () => {
-      overviewInput.style.height = '0px';
-      overviewInput.style.height = overviewInput.scrollHeight + 'px';
-    };
-    overviewInput.addEventListener('input', grow);
-    row.insertBefore(box, row.querySelector('.msg-story-time') || row.querySelector('.msg-foot'));
-    grow();
-    // 摘要框里 Enter 不触发保存（概述可以多行）；Esc 取消、Ctrl/Cmd+Enter 保存
-    box.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        endEdit(row);
-      } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault();
-        save.click();
-      } else if (e.key === 'Enter' && e.target === timeInput) {
-        e.preventDefault(); // 故事时间是单行
-      }
-    });
+    hint.textContent = '末尾 <story_overview> 是摘要块，用于压缩历史，整块删掉 = 这一轮发原文。Enter 保存，Shift+Enter 换行';
+    row.insertBefore(hint, row.querySelector('.msg-story-time') || row.querySelector('.msg-foot'));
   }
 
   const btns = document.createElement('div');
@@ -131,23 +92,22 @@ function startEdit(row) {
     if (editLocked()) return notifyEditLocked();
     save.disabled = true;
     try {
-      const summary = timeInput
-        ? { storyTime: timeInput.value.trim().replace(/\s*\n\s*/g, ' '), overview: overviewInput.value.trim() }
-        : undefined;
-      await window.petAPI.editChatMessage(characterName, +row.dataset.index, text, summary);
-      row.dataset.text = text;
-      if (summary) {
-        row.dataset.storyTime = summary.storyTime;
-        row.dataset.overview = summary.overview;
-        // 同步气泡末尾的 🕰 故事时间标签：有就更新/补上，清空就去掉
+      const res = await window.petAPI.editChatMessage(characterName, +row.dataset.index, text);
+      const shown = res && typeof res.display === 'string' ? res.display : text; // 气泡显示文字（AI 消息已摘掉说话者前缀和摘要块）
+      row.dataset.text = res && typeof res.raw === 'string' ? res.raw : text; // 编辑框下次要显示的完整原文
+      if (res && row.classList.contains('assistant')) {
+        const storyTime = res.storyTime || '';
+        row.dataset.storyTime = storyTime;
+        row.dataset.overview = res.overview || '';
+        // 同步气泡末尾的“故事时间”标签：有就更新/补上，没有就去掉
         let st = row.querySelector('.msg-story-time');
-        if (summary.storyTime) {
+        if (storyTime) {
           if (!st) {
             st = document.createElement('div');
             st.className = 'msg-story-time';
             row.insertBefore(st, row.querySelector('.msg-foot'));
           }
-          st.textContent = '🕰 ' + summary.storyTime;
+          st.textContent = '故事时间 · ' + storyTime;
         } else if (st) {
           st.remove();
         }
@@ -159,7 +119,7 @@ function startEdit(row) {
         t.className = 'msg-text';
         line.appendChild(t);
       }
-      t.textContent = text;
+      t.textContent = shown;
       endEdit(row);
     } catch (err) {
       alertError(err);

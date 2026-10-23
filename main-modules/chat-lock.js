@@ -66,4 +66,12 @@ function assertHistoryEditable(characterName) {
   }
 }
 
-module.exports = { beginChat, endChat, setChatPhase, getChatPending, assertHistoryEditable };
+// 修改全局共用的附加要求前调用：任何角色正在等回复 / 做跨天总结时都抛错。
+// 附加要求是全局一份，不管哪个角色的跨天总结都可能马上往里追加，手动保存会互相覆盖，所以不再按角色区分
+function assertGlobalMemoryEditable() {
+  if (state.chatPending) {
+    throw new Error('正在等待回复，暂时不能修改附加要求');
+  }
+}
+
+module.exports = { beginChat, endChat, setChatPhase, getChatPending, assertHistoryEditable, assertGlobalMemoryEditable };

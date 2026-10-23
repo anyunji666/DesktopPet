@@ -53,7 +53,7 @@ const WIN_H = 540;
 const WIN_MIN_W = 320;
 const WIN_MAX_W = 1800;
 
-// ---------- API 设置窗口 / 聊天记录窗口（独立普通窗口，跟"开发者工具"一样 detach） ----------
+// ---------- API 与全局设置窗口 / 角色设定窗口 / 聊天记录窗口（独立普通窗口，跟"开发者工具"一样 detach） ----------
 // 桌面模式下宠物窗口纵向展开（通常接近整个屏幕高度）、又是持续渲染的透明覆盖层，新开一个子窗口时
 // 会跟它的首次绘制抢 GPU/合成资源，表现为"窗口本身出来了，但里面内容半天不出来"。
 // 开子窗口前先通知宠物暂停渲染，子窗口内容加载完（或超时兜底，防止事件没触发导致渲染永久暂停）
@@ -108,33 +108,57 @@ function withRenderPause(createFn, { resumeOn = 'load', signalChannel } = {}) {
   return win;
 }
 
-// API 设置窗口：每次只开一个，跟音色设置一样按角色打开——API 本身是全局共用的，
-// 世界背景 / 角色资料 / 附加要求编辑的是 characterName 这个角色，不用先切换桌宠当前角色。
-// 点的还是已经打开的那个角色就直接聚焦（保住没保存的编辑），点另一个角色就换成那个角色。
-function openSettingsWindow(characterName) {
+// API 与全局设置窗口：全局唯一，不区分角色——API / Prompt 前置文本 / 附加要求都是全局共用的。
+// 已经打开就直接聚焦（保住没保存的编辑）。
+function openSettingsWindow() {
   if (state.settingsWin && !state.settingsWin.isDestroyed()) {
-    if (state.settingsWinCharacter === characterName) {
-      state.settingsWin.show();
-      state.settingsWin.focus();
-      return;
-    }
-    state.settingsWin.close();
+    state.settingsWin.show();
+    state.settingsWin.focus();
+    return;
   }
-  state.settingsWinCharacter = characterName;
   withRenderPause(() => {
     state.settingsWin = new BrowserWindow({
       width: 420,
       height: 540,
       resizable: false,
-      title: 'API 设置 - ' + characterName,
+      title: 'API 与全局设置',
       webPreferences: securePrefs(),
     });
     // 桌面模式下宠物主窗口纵向展开且常驻置顶，会让新开的子窗口被 Chromium 判定为遮挡/后台，
     // 首帧渲染被节流，导致内容要等用户点一下（真正的输入事件）才画出来；关掉节流从根源避免
     state.settingsWin.webContents.setBackgroundThrottling(false);
     state.settingsWin.setMenu(null);
-    state.settingsWin.loadURL(`http://127.0.0.1:${state.serverPort}/public/settings.html?character=${encodeURIComponent(characterName)}`);
+    state.settingsWin.loadURL(`http://127.0.0.1:${state.serverPort}/public/settings.html`);
     return state.settingsWin;
+  });
+}
+
+// 角色设定窗口：每次只开一个，跟音色设置一样按角色打开——世界背景 / 角色资料 / 别名 / 你的资料
+// 编辑的是 characterName 这个角色，不用先切换桌宠当前角色。
+// 点的还是已经打开的那个角色就直接聚焦（保住没保存的编辑），点另一个角色就换成那个角色。
+function openCharacterWindow(characterName) {
+  if (state.characterWin && !state.characterWin.isDestroyed()) {
+    if (state.characterWinCharacter === characterName) {
+      state.characterWin.show();
+      state.characterWin.focus();
+      return;
+    }
+    state.characterWin.close();
+  }
+  state.characterWinCharacter = characterName;
+  withRenderPause(() => {
+    state.characterWin = new BrowserWindow({
+      width: 420,
+      height: 600,
+      resizable: false,
+      title: '角色设定 - ' + characterName,
+      webPreferences: securePrefs(),
+    });
+    // 见 openSettingsWindow 里的同名调用注释
+    state.characterWin.webContents.setBackgroundThrottling(false);
+    state.characterWin.setMenu(null);
+    state.characterWin.loadURL(`http://127.0.0.1:${state.serverPort}/public/character-settings.html?character=${encodeURIComponent(characterName)}`);
+    return state.characterWin;
   });
 }
 
@@ -391,9 +415,14 @@ function buildMenu() {
     { label: '⏸ 待机（停止跳舞）', click: () => send('menu-action', { type: 'idle' }) },
     { type: 'separator' },
     {
-      // 一级：角色列表；点某个角色 -> 弹出 API 设置窗口（API / Prompt 模板全局共用，世界背景 / 角色资料 / 附加要求是该角色的）
-      label: '⚙ API 设置（对话功能）',
-      submenu: state.characters.map((c) => ({ label: c.name, click: () => openSettingsWindow(c.name) })),
+      // 直接点开，没有二级：API / 前置文本 / 附加要求都是全局共用的
+      label: '⚙ API 与全局设置',
+      click: () => openSettingsWindow(),
+    },
+    {
+      // 一级：角色列表；点某个角色 -> 弹出该角色的设定窗口（世界背景 / 角色资料 / 别名 / 你的资料）
+      label: '📖 角色设定',
+      submenu: state.characters.map((c) => ({ label: c.name, click: () => openCharacterWindow(c.name) })),
     },
     {
       // 一级：角色列表；点某个角色 -> 弹出该角色的语音配置窗口（先选服务商，再配音色）
@@ -649,6 +678,7 @@ module.exports = {
   exitDesktopMode,
   toggleBgMouseInteraction,
   openSettingsWindow,
+  openCharacterWindow,
   openHistoryWindow,
   openVoiceWindow,
   openLlmLogWindow,

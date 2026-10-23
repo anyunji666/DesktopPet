@@ -2,8 +2,9 @@
 // 只管"发给模型的 prompt 长什么样"和"配置存取"。历史怎么摊平在 history-flatten.js，
 // 请求怎么发出去在 llm-client.js（它反过来依赖本文件的 getApiConfig，所以本文件不能 require 它）。
 const { loadConfig, updateConfig } = require('./config');
-const { loadPersona, loadStoryBackground, loadMemoryIndex } = require('./chat-store');
+const { loadPersona, loadStoryBackground, loadReaderInfo, loadMemoryIndex } = require('./chat-store');
 const { toneEnabled } = require('./tts/tone');
+const { getSpecialRoles, anyVoiceConfigured, NPC_LABEL, USER_LABEL } = require('./tts/config');
 const { flattenChatHistory, formatDayCN } = require('./history-flatten');
 const { buildFestivalBlock } = require('./holiday');
 const { generateToken, maskSecret, resolveSecretInput } = require('./security');
@@ -145,11 +146,12 @@ function deleteApiProfile(url) {
 }
 
 // ---------- Prompt 模板配置（存进 config.json 的 promptConfig 字段，全局生效，不区分角色） ----------
+// 目前只有用户自定义前置文本。"你的资料"已改为跟随角色（存在各角色的 persona.json 里），
+// config.json 里残留的旧 promptConfig.readerInfo 不再读取。
 function getPromptConfig() {
   const cfg = loadConfig().promptConfig;
   return {
     prefix: (cfg && typeof cfg.prefix === 'string') ? cfg.prefix : '',
-    readerInfo: (cfg && typeof cfg.readerInfo === 'string') ? cfg.readerInfo : '',
   };
 }
 
@@ -157,7 +159,6 @@ function savePromptConfig(patch) {
   const cur = getPromptConfig();
   const next = {
     prefix: typeof patch.prefix === 'string' ? patch.prefix : cur.prefix,
-    readerInfo: typeof patch.readerInfo === 'string' ? patch.readerInfo : cur.readerInfo,
   };
   updateConfig({ promptConfig: next });
   return next;
@@ -219,6 +220,20 @@ const OUTPUT_RULES_TONE = `## **必须遵守的强制性输出规则**
 - **语气描述：** 每个「对话」里面、台词的第一个字之前，先用【】包裹写一句该对话的语气指导（不超过 20 字）。要写成有画面感的具体描述，包含情绪和说话状态。每句只写它自己的语气，前后两句情绪有变化就要写出变化。【】只能写在「」里面、台词之前，其他地方不要使用。
 - 示例：「【嗔怪抗拒，语速偏快】你不要过来～」*怎么这样···*「【无奈带笑，尾音上扬】真是服了你了～」小拳拳锤了一下{{user}}的胸口，还是默许了{{user}}的行为。`;
 
+// 多角色语音的"说话者标注"规则：至少有一个角色配置了语音时，追加到输出规则后面（见 buildPromptText 的 footerParts）。
+// 要求模型给每句「对话」前面紧挨着写 `角色名：` 前缀，分三种：
+//   · <special_roles> 名单里的角色（名单含当前主角色在内的全部角色，不论是否配置了语音——
+//     没配置语音的角色台词同样要标注，朗读时才能按名字跳过，不会被当成主角色的台词用主角色的声音读）：写角色名原文
+//   · 不在名单里的人物（店员、路人、群演等）：统一写 NPC_LABEL（路人），整句不朗读
+//   · 用户扮演的角色：统一写 USER_LABEL（用户），整句不朗读
+// 前缀会留在正文里（气泡 / 聊天记录显示时再摘掉），朗读时由 text-clean.js 的 splitSpeechSegments 拆出来、
+// tts/index.js 据此路由到该角色自己的音色。没有前缀的台词解析时仍默认当前主角色（兼容模型漏标）。
+const SPEAKER_RULE = `- **说话者标注：** 每句「对话」前面都必须紧挨着写上说话者的\`角色名：\`。分三种：
+  - <special_roles>名单中的角色：只写名单里的角色名原文，不要写别名，不要加括号、"说道"等其他字。例：Saber：「【平静，带点关切】这个给你，别嫌弃呀」。
+  - 不在名单里的人物（店员、路人、群演等）：前面统一写\`${NPC_LABEL}：\`。即使这个人物有资料设定，只要不在名单里都写\`${NPC_LABEL}：\`。
+  - 用户扮演的角色：前面统一写\`${USER_LABEL}：\`。
+- 一句「对话」只能是一个角色说的，不要把两个角色的话写进同一个「」里。`;
+
 // 摘要模块：必须放在整个回复的最末尾（解析时先摘掉摘要块，剩下的才是正文）
 const SUMMARY_FOOTER = `- **摘要模块：** 对本轮的正文内容进行一次总结。每次回复必须以摘要块结尾，缺失=不合格
   - 输出格式：
@@ -264,7 +279,8 @@ function buildSummaryPrompt(dayKey, dayLines) {
 // --- 可变部分（<chat_history> + <user_input>）
 // --- 尾部固定说明（用户输入说明 + 必须遵守的强制性输出规则，两段都紧跟在最新内容后面，强化权重）
 function buildPromptText(characterName, history, text) {
-  const { prefix, readerInfo } = getPromptConfig();
+  const { prefix } = getPromptConfig();
+  const readerInfo = loadReaderInfo(characterName); // 你的资料：跟随角色
   const storyBackground = loadStoryBackground(characterName);
   const characterCard = loadPersona(characterName);
   const chatHistoryText = flattenChatHistory(characterName, history, text);
@@ -287,9 +303,19 @@ function buildPromptText(characterName, history, text) {
   }
   // hot 记忆索引：常驻的、只存没有时效性的附加要求的小索引，由跨天总结/滚动总结
   // 那次 LLM 调用顺带产出并追加，不需要每轮从全量历史里现猜。没内容就不发这一段
-  const memoryIndex = loadMemoryIndex(characterName);
+  const memoryIndex = loadMemoryIndex(); // 附加要求：全局共用，不区分角色
   if (memoryIndex.trim()) {
     parts.push(`<memory_index>\n<!-- 用户的长期设定与创作要求，来自元交流，需持续遵守 -->\n${memoryIndex.trim()}\n</memory_index>`);
+  }
+  // 多角色语音名单 <special_roles>：全部有专属设定的角色（含当前主角色），带别名（固定前缀区，只有增删角色 / 改别名才会变，
+  // 不影响前缀缓存）。名单只用来让模型标注说话者时对照角色名，不代表这些角色一定出现在当前故事里。
+  // 至少有一个角色配置了语音才发，同时输出规则里会追加 SPEAKER_RULE（见下面 footerParts）；
+  // 朗读时据此把台词路由到各自的音色，没配置语音的角色台词整句跳过
+  const speakerMode = anyVoiceConfigured(); // 一个角色都没配语音就不用标注说话者
+  const specialRoles = speakerMode ? getSpecialRoles() : [];
+  if (specialRoles.length) {
+    const lines = specialRoles.map((c) => (c.aliases.length ? `${c.name}（别名：${c.aliases.join('、')}）` : c.name));
+    parts.push(`<special_roles>\n<!-- 有专属设定的角色名单（括号里是别名，正文里别人可能这样称呼ta，但标注说话者时只写角色名）。名单只用来对照角色名，不代表这些角色一定出现在当前故事里 -->\n${lines.join('\n')}\n</special_roles>`);
   }
   parts.push('---');
   // ---- 以上是固定前缀，以下是每轮都会变化的内容 ----
@@ -308,8 +334,12 @@ function buildPromptText(characterName, history, text) {
   // 立刻看到"必须怎么写"，强化权重；代价是这段固定内容不再享受前缀缓存（见上面 parts 顺序的注释），
   // 换来的是更贴近生成位置、更不容易被中间的长历史冲淡。
   // 输出规则按当前角色的语音服务商二选一：支持语气指令（豆包 / MiMo）发 OUTPUT_RULES_TONE（要求每个「」里写【语气】），
-  // 否则发不提语气的 OUTPUT_RULES_PLAIN；后面都接摘要模块（和模型实际输出的顺序一致：正文 → 摘要块）
-  const footerParts = [toneEnabled(characterName) ? OUTPUT_RULES_TONE : OUTPUT_RULES_PLAIN, SUMMARY_FOOTER];
+  // 否则发不提语气的 OUTPUT_RULES_PLAIN；后面都接摘要模块（和模型实际输出的顺序一致：正文 → 摘要块）。
+  // 语气开关的判定已含多角色场景（见 tone.js）：别的已配置语音的角色是豆包/MiMo 时也发语气版。
+  // 多角色语音：至少有一个角色配置了语音时再追加"说话者标注"规则，末尾仍是摘要模块
+  const footerParts = [toneEnabled(characterName) ? OUTPUT_RULES_TONE : OUTPUT_RULES_PLAIN];
+  if (speakerMode) footerParts.push(SPEAKER_RULE);
+  footerParts.push(SUMMARY_FOOTER);
   parts.push(footerParts.join('\n'));
 
   return parts.join('\n\n');

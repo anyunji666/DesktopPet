@@ -14,21 +14,36 @@ function getChatDir() {
   return chatDirCache;
 }
 
-// 读取角色人设文件（Character/<角色名>/persona.json，可选，格式为 { "system": "……", "storyBackground": "……" }）
-// system = 角色的个人资料，storyBackground = 角色所处的世界背景，两者都跟随角色存档、非全局。
-// 返回 { system, storyBackground }，缺失/解析失败时两个字段都是空字符串。
+// 角色别名（多角色语音用）：用户在设置窗口里填的"这个角色的其他称呼"，比如角色文件夹叫 TohsakaRin，
+// 别名可以写 远坂凛、凛。接受数组或用 , ， 、 ; ； 换行 分隔的字符串，去空/去重/限长/限个数。
+function parseAliases(input) {
+  const list = Array.isArray(input) ? input : typeof input === 'string' ? input.split(/[,，、;；\n]+/) : [];
+  const out = [];
+  for (const a of list) {
+    if (typeof a !== 'string') continue;
+    const t = a.trim();
+    if (t && t.length <= 20 && !/[「」：:\n]/.test(t) && !out.includes(t)) out.push(t);
+    if (out.length >= 8) break;
+  }
+  return out;
+}
+
+// 读取角色人设文件（Character/<角色名>/persona.json，可选，格式为 { "system": "……", "storyBackground": "……", "aliases": ["……"], "readerInfo": "……" }）
+// system = 角色的个人资料，storyBackground = 角色所处的世界背景，aliases = 别名，readerInfo = 用户在这个角色面前扮演的身份（你的资料），都跟随角色存档、非全局。
+// 返回 { system, storyBackground, aliases, readerInfo }，缺失/解析失败时文本字段是空字符串、aliases 是空数组。
 function readPersonaFile(characterName) {
   const p = path.join(CHARACTER_ROOT, assertSafeName(characterName), 'persona.json');
   try {
     const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
     const system = data && typeof data.system === 'string' ? data.system.trim() : '';
     const storyBackground = data && typeof data.storyBackground === 'string' ? data.storyBackground.trim() : '';
-    return { system, storyBackground };
+    const readerInfo = data && typeof data.readerInfo === 'string' ? data.readerInfo.trim() : '';
+    return { system, storyBackground, aliases: parseAliases(data && data.aliases), readerInfo };
   } catch (err) {
     if (err.code !== 'ENOENT') {
       console.warn(`[pet] 角色 "${characterName}" 的 persona.json 解析失败: ${err.message}`);
     }
-    return { system: '', storyBackground: '' };
+    return { system: '', storyBackground: '', aliases: [], readerInfo: '' };
   }
 }
 
@@ -42,12 +57,19 @@ function loadStoryBackground(characterName) {
   return readPersonaFile(characterName).storyBackground;
 }
 
-// 保存角色人设 / 世界背景：两者都空时删除 persona.json（之后不再发送角色资料/世界背景）
-function savePersonaFile(characterName, { system, storyBackground } = {}) {
+// 读取拼进 prompt 的"你的资料"（<user_persona>）：跟随角色，没填就返回空字符串，调用方据此不发送
+function loadReaderInfo(characterName) {
+  return readPersonaFile(characterName).readerInfo;
+}
+
+// 保存角色人设 / 世界背景 / 别名 / 你的资料：四者都空时删除 persona.json（之后不再发送这些内容）
+function savePersonaFile(characterName, { system, storyBackground, aliases, readerInfo } = {}) {
   const p = path.join(CHARACTER_ROOT, assertSafeName(characterName), 'persona.json');
   const sys = typeof system === 'string' ? system.trim() : '';
   const bg = typeof storyBackground === 'string' ? storyBackground.trim() : '';
-  if (!sys && !bg) {
+  const al = parseAliases(aliases);
+  const reader = typeof readerInfo === 'string' ? readerInfo.trim() : '';
+  if (!sys && !bg && !al.length && !reader) {
     try {
       fs.unlinkSync(p);
     } catch (err) {
@@ -55,7 +77,7 @@ function savePersonaFile(characterName, { system, storyBackground } = {}) {
     }
     return;
   }
-  fs.writeFileSync(p, JSON.stringify({ system: sys, storyBackground: bg }, null, 2), 'utf-8');
+  fs.writeFileSync(p, JSON.stringify({ system: sys, storyBackground: bg, aliases: al, readerInfo: reader }, null, 2), 'utf-8');
 }
 
 function chatHistoryPath(characterName) {
@@ -171,7 +193,8 @@ function clearOpenedDay(characterName) {
   }
 }
 
-// ---------- Hot 记忆索引：chat-history/<角色名>-memory.md ----------
+// ---------- Hot 记忆索引（附加要求）：chat-history/__global-memory.md，全局共用、不区分角色 ----------
+// 文件名带双下划线开头，避免和某个叫 global 的角色的 <角色名>-xxx.md 文件撞名。
 // 常驻塞进每轮固定前缀区发给 LLM 的一份"指针型"记忆，只存"用户偏好/重要设定"这类没有时效性、需要长期
 // 记住的结论性信息，不存对话细节本身（细节走按天总结那条链路）。
 // 标签风格：一行一条，每条不超过 20 字，不是完整句子。总量上限 200 字——足够放约 10 条标签，
@@ -179,10 +202,10 @@ function clearOpenedDay(characterName) {
 const MEMORY_MAX_CHARS = 200;
 const MEMORY_TAG_MAX_CHARS = 20;
 
-function memoryPath(characterName) {
+function memoryPath() {
   const dir = getChatDir();
   fs.mkdirSync(dir, { recursive: true });
-  return path.join(dir, assertSafeName(characterName) + '-memory.md');
+  return path.join(dir, '__global-memory.md');
 }
 
 // 从头部整行丢弃直到不超过 maxChars，保留最新内容
@@ -193,20 +216,20 @@ function trimToCharLimit(text, maxChars) {
   return lines.join('\n');
 }
 
-function loadMemoryIndex(characterName) {
+function loadMemoryIndex() {
   try {
-    return fs.readFileSync(memoryPath(characterName), 'utf-8');
+    return fs.readFileSync(memoryPath(), 'utf-8');
   } catch (err) {
-    if (err.code !== 'ENOENT') console.warn(`[pet] 角色 "${characterName}" 的记忆索引读取失败: ${err.message}`);
+    if (err.code !== 'ENOENT') console.warn(`[pet] 附加要求（记忆索引）读取失败: ${err.message}`);
     return '';
   }
 }
 
 // 整份覆盖保存（预留给"设置"里手动编辑用），同样做字符上限截断
-function saveMemoryIndex(characterName, text) {
+function saveMemoryIndex(text) {
   const trimmed = trimToCharLimit(typeof text === 'string' ? text : '', MEMORY_MAX_CHARS);
   try {
-    fs.writeFileSync(memoryPath(characterName), trimmed, 'utf-8');
+    fs.writeFileSync(memoryPath(), trimmed, 'utf-8');
   } catch (err) {
     console.error(`[pet] 保存记忆索引失败: ${err.message}`);
   }
@@ -224,17 +247,17 @@ function normalizeMemoryText(text) {
 
 // 用户在设置页手动保存附加要求：跟自动追加不同，超过上限时不静默丢行，而是直接抛错让界面提示，
 // 免得用户改完发现少了几行。规整后为空 = 删除文件（之后不再发送 <memory_index>）。
-function saveMemoryIndexManual(characterName, text) {
+function saveMemoryIndexManual(text) {
   const normalized = normalizeMemoryText(text);
   if (normalized.length > MEMORY_MAX_CHARS) {
     throw new Error(`附加要求超过 ${MEMORY_MAX_CHARS} 字上限（当前 ${normalized.length} 字），请删减后再保存`);
   }
   if (!normalized) {
-    clearMemoryIndex(characterName);
+    clearMemoryIndex();
     return;
   }
   try {
-    fs.writeFileSync(memoryPath(characterName), normalized, 'utf-8');
+    fs.writeFileSync(memoryPath(), normalized, 'utf-8');
   } catch (err) {
     console.error(`[pet] 保存附加要求失败: ${err.message}`);
     throw new Error('保存附加要求失败：' + err.message);
@@ -243,20 +266,20 @@ function saveMemoryIndexManual(characterName, text) {
 
 // 追加若干条新记忆（去重：整行已经出现在现有内容里的直接跳过），单条超过 20 字就截断成标签长度，
 // 总量超限时自动从头部丢旧行。由跨天总结那次 LLM 调用顺带产出，不单独发起请求。
-function appendMemoryLines(characterName, newLines) {
+function appendMemoryLines(newLines) {
   if (!Array.isArray(newLines) || !newLines.length) return;
-  const cur = loadMemoryIndex(characterName);
+  const cur = loadMemoryIndex();
   const toAdd = newLines
     .map((l) => (typeof l === 'string' ? l.trim().slice(0, MEMORY_TAG_MAX_CHARS) : ''))
     .filter((l) => l && !cur.includes(l));
   if (!toAdd.length) return;
   const merged = (cur ? cur.replace(/\n+$/, '') + '\n' : '') + toAdd.join('\n') + '\n';
-  saveMemoryIndex(characterName, merged);
+  saveMemoryIndex(merged);
 }
 
-function clearMemoryIndex(characterName) {
+function clearMemoryIndex() {
   try {
-    fs.unlinkSync(memoryPath(characterName));
+    fs.unlinkSync(memoryPath());
   } catch (err) {
     if (err.code !== 'ENOENT') console.warn(`[pet] 清空记忆索引失败: ${err.message}`);
   }
@@ -401,8 +424,10 @@ function clearChatVoices(characterName) {
 module.exports = {
   getChatDir,
   readPersonaFile,
+  parseAliases,
   loadPersona,
   loadStoryBackground,
+  loadReaderInfo,
   savePersonaFile,
   chatHistoryPath,
   loadChatHistory,

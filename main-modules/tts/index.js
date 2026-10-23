@@ -8,7 +8,7 @@
 // （静音、压低舞蹈音乐等沿用台词语音的逻辑）。同时按这条 AI 消息的 ts 把整回合语音缓存到磁盘（chat-store 的 saveChatVoice），
 // 聊天记录窗口双击气泡可以重听；消息被删时语音跟着删，编辑不影响（ts 不变）。
 const { state } = require('../state');
-const { getTtsConfig, saveTtsConfig, normalizeProviders, normalizeVoice } = require('./config');
+const { getTtsConfig, saveTtsConfig, normalizeProviders, normalizeVoice, speakerNameMap, NPC_SPEAKER, USER_SPEAKER } = require('./config');
 const { prepareSpeechText, splitSpeechSegments } = require('./text-clean');
 const { loadChatHistory, saveChatVoice } = require('../chat-store');
 const { readCloneAudioDataURL } = require('./clone-store');
@@ -130,15 +130,41 @@ function persistVoice(characterName, msgTs, clips) {
 // reply：带逐句语气的正文原文（每个「」开头的【语气】由 splitSpeechSegments 拆成各段自己的 tone，每段请求带自己那一条；
 //   气泡 / 聊天记录用的是摘掉语气后的正文，见 chat-turn.js）
 // msgTs：这条 AI 消息在聊天记录里的 ts，合成好的语音按它缓存；缺省（null）只播放、不缓存
+// 多角色语音：回复里其他角色的台词由模型用 `角色名：「对话」` 标注（提示词见 llm.js 的 SPEAKER_RULE），
+//   splitSpeechSegments 按全部角色名把每段的 speaker 拆出来，这里再按 speaker 取各角色自己的
+//   TTS 配置分段合成——同一回合的语音可以来自不同服务商/音色，播放/缓存流程不变。
+//   没标注的段落默认当前角色；说话者没配置语音（off）的段落整段不读（用别人的音色读更违和，
+//   想读就在音色设置里给那个角色配一个）。称呼可以是角色名或别名（persona.json 的 aliases）。
+//   当前角色自己没配语音、但回复里有别的角色配了语音的台词，那些台词照常朗读
 async function speakReply(characterName, reply, msgTs = null) {
   let ctrl = null;
   try {
     // 只有当前展示的角色才开口（聊天记录窗口里和非当前角色聊天时，宠物不该用别人的声音说话）
     if (currentCharacterName() !== characterName) return;
-    const cfg = getTtsConfig(characterName);
-    if (cfg.voice.provider === 'off') return;
-    const segments = splitSpeechSegments(reply);
+    // 说话者识别表 = 全部角色的名字 + 别名（不限已配置语音的，路由时再各自判断）
+    const segments = splitSpeechSegments(reply, speakerNameMap());
     if (!segments.length) return;
+
+    // 每段按说话者解析各自的 TTS 配置（带缓存，同一说话者只取一次）
+    const cfgCache = new Map();
+    const SILENT_CFG = { voice: { provider: 'off' } };
+    const cfgFor = (speaker) => {
+      if (speaker === NPC_SPEAKER || speaker === USER_SPEAKER) return SILENT_CFG; // 路人 / 用户：不朗读
+      const name = speaker || characterName;
+      if (!cfgCache.has(name)) cfgCache.set(name, getTtsConfig(name));
+      return cfgCache.get(name);
+    };
+    // 没有任何一段能发给 TTS（当前角色和各说话者都没配置语音）就不动现有的播放
+    if (!segments.some((seg) => cfgFor(seg.speaker).voice.provider !== 'off')) return;
+
+    // 路由日志：看每句台词交给了谁 / 哪家服务商；认不出的"某某："也提示一下，方便排查别名没配的情况
+    console.log('[pet] 语音路由:', segments.map((seg, i) => {
+      const who = seg.speaker === NPC_SPEAKER ? '路人' : seg.speaker === USER_SPEAKER ? '用户' : seg.speaker || characterName;
+      return `#${i + 1} ${who}→${cfgFor(seg.speaker).voice.provider}`;
+    }).join('  '));
+    for (const seg of segments) {
+      if (seg.unknownLabel) console.warn(`[pet] 「」前的"${seg.unknownLabel}："不是已知角色名/别名，按当前角色 ${characterName} 朗读（如果这是某个角色，请在角色资料里给它加别名）`);
+    }
 
     cancelSpeaking();
     ctrl = new AbortController();
@@ -152,8 +178,10 @@ async function speakReply(characterName, reply, msgTs = null) {
       while (!ctrl.signal.aborted) {
         const i = next++;
         if (i >= segments.length) return;
+        const segCfg = cfgFor(segments[i].speaker);
+        if (segCfg.voice.provider === 'off') continue; // 说话者没配置语音：跳过（results[i] 保持 null，走既有的"失败跳过"路径）
         try {
-          results[i] = await synthesizeSegment(cfg, segments[i].text, ctrl.signal, segments[i].tone);
+          results[i] = await synthesizeSegment(segCfg, segments[i].text, ctrl.signal, segments[i].tone);
         } catch (err) {
           if (ctrl.signal.aborted) return;
           console.warn(`[pet] 语音合成失败（第 ${i + 1}/${segments.length} 段）:`, err && err.message ? err.message : err);

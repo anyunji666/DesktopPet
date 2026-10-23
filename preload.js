@@ -45,13 +45,12 @@ contextBridge.exposeInMainWorld('petAPI', {
   deleteApiProfile: (url) => ipcRenderer.invoke('delete-api-profile', url),
   getPromptConfig: () => ipcRenderer.invoke('get-prompt-config'),
   savePromptConfig: (cfg) => ipcRenderer.invoke('save-prompt-config', cfg),
-  // 指定角色的人设 + 世界背景（persona.json）读取 / 保存（设置窗口用）
+  // 指定角色的设定（persona.json：世界背景 / 角色资料 / 别名 / 你的资料）读取 / 保存（角色设定窗口用）
   getPersona: (characterName) => ipcRenderer.invoke('get-persona', characterName),
-  savePersona: (characterName, system, storyBackground) =>
-    ipcRenderer.invoke('save-persona', characterName, system, storyBackground),
-  // 指定角色的附加要求（memory index）读取 / 保存（设置窗口用）
-  getMemoryIndex: (characterName) => ipcRenderer.invoke('get-memory-index', characterName),
-  saveMemoryIndex: (characterName, text) => ipcRenderer.invoke('save-memory-index', characterName, text),
+  savePersona: (characterName, data) => ipcRenderer.invoke('save-persona', characterName, data),
+  // 附加要求（memory index，全局共用）读取 / 保存（API 与全局设置窗口用）
+  getMemoryIndex: () => ipcRenderer.invoke('get-memory-index'),
+  saveMemoryIndex: (text) => ipcRenderer.invoke('save-memory-index', text),
   fetchModelList: (apiUrl, apiKey) => ipcRenderer.invoke('fetch-model-list', apiUrl, apiKey),
   // Gemini 多 Key 轮询中转当前状态（是否在跑 / 端口），设置窗口打开时用来回显提示行
   getRelayStatus: () => ipcRenderer.invoke('get-relay-status'),
