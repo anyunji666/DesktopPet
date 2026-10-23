@@ -59,7 +59,8 @@ function checkHolidays(date) {
   return segments.length > 0 ? segments.join(' ') : null;
 }
 
-// 当天 + 提前 1 天 + 提前 2 天 的节日提示，拼成"（...）"括注；三天都没有节日返回空串。
+// 当天 + 提前 1 天 + 提前 2 天 的节日提示，拼成"[...]"括注；三天都没有节日返回空串。
+// 用方括号而不是圆括号——圆括号在这套提示词约定里是元指令（见 history-flatten.js 的同类注释）。
 // 不同天之间按 当天→1天后→2天后 的顺序、用顿号连接；每句都带具体月日，AI 能自己分辨是当天还是预告。
 function buildHolidaySuffix(date0) {
   const groups = [];
@@ -67,7 +68,7 @@ function buildHolidaySuffix(date0) {
     const seg = checkHolidays(addDays(date0, offset));
     if (seg) groups.push(seg);
   }
-  return groups.length > 0 ? `（${groups.join('、')}）` : '';
+  return groups.length > 0 ? `[${groups.join('、')}]` : '';
 }
 
 // 拼出完整标签；timeText 解析不出合法公历日期时返回 null。
@@ -81,7 +82,7 @@ function buildFestivalTag(timeText) {
   const monthDays = daysInMonth(parsed.year, parsed.month);
   const suffix = buildHolidaySuffix(date0);
 
-  return `<${TAG_NAME}>\n<!-- 上述最近的故事时间的星期，以及节日播报，仅供剧情参考 -->\n${parsed.year}年${parsed.month}月${parsed.day}日 是 星期${weekday}（本月共${monthDays}天）${suffix}\n</${TAG_NAME}>`;
+  return `<${TAG_NAME}>\n<!-- 上述最近的故事时间的星期，以及节日播报，仅供剧情参考 -->\n${parsed.year}年${parsed.month}月${parsed.day}日 是 星期${weekday} [本月共${monthDays}天] ${suffix}\n</${TAG_NAME}>`;
 }
 
 module.exports = { buildFestivalTag, parseStoryDate, buildHolidaySuffix, TAG_NAME };
