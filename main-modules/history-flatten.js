@@ -318,6 +318,13 @@ function flattenChatHistory(characterName, history, currentInputText) {
         const content = imageTag ? (rawContent ? `${imageTag} ${rawContent}` : imageTag) : rawContent;
         const speaker = h.role === 'user' ? '用户' : '你';
         lines.push(`${prefix}${speaker}: ${content}`);
+        // 每轮原文 assistant 回复后面跟一行它自己的故事时间（文案和聊天记录窗口气泡末尾的标签一致）：
+        // 摘要块不发，模型就看不到"故事走到什么时间"，估算本轮故事时间没有锚点。
+        // 逐轮贴在自己那条下面，最近两轮各有一行；压缩成摘要的轮次本来就在摘要里带着故事时间，不重复补。
+        if (h.role === 'assistant') {
+          const storyTime = extractStoryTime(h.content);
+          if (storyTime) lines.push(`故事时间 · ${storyTime}`);
+        }
       }
     } else {
       const summary = sendableSummary.get(block.dayKey);
