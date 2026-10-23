@@ -224,14 +224,14 @@ const OUTPUT_RULES_TONE = `## **必须遵守的强制性输出规则**
 // 要求模型给每句「对话」前面紧挨着写 `角色名：` 前缀，分三种：
 //   · <special_roles> 名单里的角色（名单含当前主角色在内的全部角色，不论是否配置了语音——
 //     没配置语音的角色台词同样要标注，朗读时才能按名字跳过，不会被当成主角色的台词用主角色的声音读）：写角色名原文
-//   · 不在名单里的人物（店员、路人、群演等）：统一写 NPC_LABEL（路人），整句不朗读
 //   · 用户扮演的角色：统一写 USER_LABEL（用户），整句不朗读
+//   · 其他店员、群演、路人等角色：统一写 NPC_LABEL（路人），整句不朗读
 // 前缀会留在正文里（气泡 / 聊天记录显示时再摘掉），朗读时由 text-clean.js 的 splitSpeechSegments 拆出来、
 // tts/index.js 据此路由到该角色自己的音色。没有前缀的台词解析时仍默认当前主角色（兼容模型漏标）。
 const SPEAKER_RULE = `- **说话者标注：** 每句「对话」前面都必须紧挨着写上说话者的\`角色名：\`。分三种：
   - <special_roles>名单中的角色：只写名单里的角色名原文，不要写别名，不要加括号、"说道"等其他字。例：Saber：「【平静，带点关切】这个给你，别嫌弃呀」。
-  - 不在名单里的人物（店员、路人、群演等）：前面统一写\`${NPC_LABEL}：\`。即使这个人物有资料设定，只要不在名单里都写\`${NPC_LABEL}：\`。
   - 用户扮演的角色：前面统一写\`${USER_LABEL}：\`。
+  - 其他店员、群演、路人等角色：前面统一写\`${NPC_LABEL}：\`。即使这个人物有资料设定，只要不属于上面二种都写\`${NPC_LABEL}：\`。
 - 一句「对话」只能是一个角色说的，不要把两个角色的话写进同一个「」里。`;
 
 // 摘要模块：必须放在整个回复的最末尾（解析时先摘掉摘要块，剩下的才是正文）
@@ -314,8 +314,11 @@ function buildPromptText(characterName, history, text) {
   const speakerMode = anyVoiceConfigured(); // 一个角色都没配语音就不用标注说话者
   const specialRoles = speakerMode ? getSpecialRoles() : [];
   if (specialRoles.length) {
-    const lines = specialRoles.map((c) => (c.aliases.length ? `${c.name}（别名：${c.aliases.join('、')}）` : c.name));
-    parts.push(`<special_roles>\n<!-- 有专属设定的角色名单（括号里是别名，正文里别人可能这样称呼ta，但标注说话者时只写角色名）。名单只用来对照角色名，不代表这些角色一定出现在当前故事里 -->\n${lines.join('\n')}\n</special_roles>`);
+    // 键值式排版：`角色名：Saber ；别名：阿尔托莉雅、Saber酱`（没别名就是 `角色名：TohsakaRin ；`），
+    // 模型输出的说话者前缀 `Saber：`/`Saber:` 由 text-clean.js 的 COLON_TAIL_RE 全角半角冒号都认，
+    // 名单块本身只给模型看、没有代码反向解析它
+    const lines = specialRoles.map((c) => (c.aliases.length ? `角色名：${c.name} ；别名：${c.aliases.join('、')}` : `角色名：${c.name} ；`));
+    parts.push(`<special_roles>\n<!-- 有专属设定的角色名单。名单只用来对照角色名，不代表这些角色一定出现在当前故事里。 -->\n${lines.join('\n')}\n</special_roles>`);
   }
   parts.push('---');
   // ---- 以上是固定前缀，以下是每轮都会变化的内容 ----
