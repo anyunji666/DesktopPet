@@ -93,6 +93,8 @@ let bubbleTimer = null;
 // 气泡是单例，加"低优先级"概念：喝水提醒这类主动插话传 opts.low，不能顶掉正在显示的普通气泡
 // （等待回复提示 / AI 回复 / 点击台词 / 开机计时）；返回 false = 被占着没显示，调用方稍后再试。
 // 普通气泡照旧随时覆盖任何气泡（包括低优先级的）
+// opts.onHide：这条气泡自己计时到了、真的收起来时回调（被新气泡顶替时不回调）——
+// 用来接"文字气泡消失之后才显示的下一条提示"（如 chat.js 的等待语音提示）
 let bubbleShown = false;
 let bubbleLow = false;
 // #rrggbb -> rgba()，用于气泡阴影
@@ -124,6 +126,7 @@ export function showBubble(text, ms = 3000, opts = {}) {
     el.classList.remove('show');
     bubbleShown = false;
     bubbleLow = false;
+    if (typeof opts.onHide === 'function') opts.onHide();
   }, ms);
   return true;
 }
@@ -133,6 +136,17 @@ export function hideLowBubble() {
   if (!bubbleShown || !bubbleLow) return;
   clearTimeout(bubbleTimer);
   document.getElementById('bubble').classList.remove('show');
+  bubbleShown = false;
+  bubbleLow = false;
+}
+
+// 只在当前显示的确实是这段文字时才收起：气泡已经被别的内容顶掉时不误收别人的
+export function hideBubbleIfText(text) {
+  if (!bubbleShown) return;
+  const el = document.getElementById('bubble');
+  if (el.textContent !== text) return;
+  clearTimeout(bubbleTimer);
+  el.classList.remove('show');
   bubbleShown = false;
   bubbleLow = false;
 }

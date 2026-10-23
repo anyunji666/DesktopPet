@@ -66,10 +66,16 @@ async function runClips(clips, id) {
 const SYNTH_SAFETY_MS = 90000;
 let synthPending = false;
 let synthTimer = null;
+// 合成结束（成功推出 clips / 失败 / 被取消）时的回调，给"等待语音中…"这类提示收尾用
+let synthIdleHook = null;
+export function setSynthIdleHook(fn) {
+  synthIdleHook = fn;
+}
 function setSynthPending(v) {
   synthPending = v;
   clearTimeout(synthTimer);
-  if (v) synthTimer = setTimeout(() => (synthPending = false), SYNTH_SAFETY_MS);
+  if (v) synthTimer = setTimeout(() => setSynthPending(false), SYNTH_SAFETY_MS);
+  else if (synthIdleHook) synthIdleHook();
 }
 
 export function initTtsPlayback() {
@@ -84,3 +90,6 @@ export function initTtsPlayback() {
 
 // 是否有 AI 回复语音正在"合成中 / 排队等待停顿 / 播放中"。喝水提醒用它避让：回复语音在路上时先不插话
 export const isTtsPlaying = () => synthPending || wakeCurrent !== null;
+
+// AI 回复语音是否还在合成（还没开始播）：chat.js 据此决定文字气泡消失后要不要弹"等待语音中…"
+export const isSynthPending = () => synthPending;

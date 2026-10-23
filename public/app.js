@@ -5,7 +5,7 @@ import { resettlePhysics } from './modules/physics.js';
 import { loadModel, disposeModel } from './modules/model.js';
 import { stopDance, playIdle, playDance, playExitThen, PHYSICS_ENGAGE_WARMUP_STEPS } from './modules/dance.js';
 import { applyScene, zoomSceneBy, moveSceneDepth, panSceneBy, orbitSceneBy, resetSceneAdjust } from './modules/scene.js';
-import { showChatBox, hideChatBox } from './modules/chat.js';
+import { showChatBox, hideChatBox, showReplyBubble } from './modules/chat.js';
 import { initTtsPlayback } from './modules/tts.js';
 import { initDrinkReminder, setDrinkReminders, setDrinkReminderEnabled } from './modules/drink-reminder.js';
 
@@ -366,8 +366,8 @@ document.addEventListener('dblclick', (e) => {
   showChatBox();
 });
 
-// 聊天记录窗口发起的对话回复，也在这边头顶显示一下
-window.petAPI.onShowBubble((text) => showBubble(text, 5000));
+// 聊天记录窗口发起的对话回复，也在这边头顶显示一下（和本窗口发的同一条路径：气泡消失后接"等待语音中…"）
+window.petAPI.onShowBubble((text) => showReplyBubble(text));
 window.petAPI.onBootTimerBubble((text) => showBubble(text, 16000));
 // AI 回复的语音合成好了：播放，并把气泡延长到语音结束
 initTtsPlayback();

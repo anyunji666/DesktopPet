@@ -2,7 +2,8 @@
 // 跟台词气泡（ui.js 的 showBubble）是两套不同的东西：这里是 AI 对话输入框，
 // 发送后的回复仍然通过气泡显示，历史消息列表在独立的聊天记录窗口里。
 import { state } from './state.js';
-import { showBubble } from './ui.js';
+import { showBubble, hideBubbleIfText } from './ui.js';
+import { isSynthPending, setSynthIdleHook } from './tts.js';
 import { startRecording, stopRecording } from './mic.js';
 import { summarizingHint } from '../day-label.js';
 
@@ -28,10 +29,31 @@ export const isVoiceInputActive = () => voiceState !== 'idle';
 const currentPhase = () => (pendingPhase === 'summarizing' ? 'summarizing' : 'waiting');
 const phaseBubble = () => (currentPhase() === 'summarizing' ? summarizingHint(pendingSummaryDay, true) : '等待回复中…');
 const phasePlaceholder = () => (currentPhase() === 'summarizing' ? summarizingHint(pendingSummaryDay, false) : '等待回复中…');
+// AI 回复气泡的显示时长
+const REPLY_BUBBLE_MS = 5000;
 // 等回复期间的气泡：本窗口自己发的才显示（别的窗口发的，这里仍只收起输入框，不弹气泡）。
 // 时间给足（10 分钟）：总结 + 回复可能很久，不能中途自己消失；回复/报错回来后会被新的 showBubble 覆盖
 function showPendingBubble() {
   showBubble(phaseBubble(), 10 * 60 * 1000);
+}
+
+// ---------------- 语音比文字慢：文字气泡消失后先占位 ----------------
+// LLM 文字很快就回来了，语音合成往往还在路上；回复气泡一消失就弹"等待语音中…"，
+// 合成结束（clips 推出 / 失败 / 被取消）时由 tts.js 的 setSynthIdleHook 收起
+const VOICE_WAIT_TEXT = '等待语音中…';
+// 兜底时长：正常情况下合成结束会主动收起，这里只是别让它万一挂着不走
+const VOICE_WAIT_MS = 10 * 60 * 1000;
+
+// 回复气泡自然消失时调用：语音还在合成才弹等待提示（合成早就好了就不弹，直接过）
+function showVoiceWaitHint() {
+  if (isSynthPending()) showBubble(VOICE_WAIT_TEXT, VOICE_WAIT_MS);
+}
+setSynthIdleHook(() => hideBubbleIfText(VOICE_WAIT_TEXT));
+
+// 显示 AI 回复气泡（本窗口发的、聊天记录窗口发起的都走这里）：
+// 气泡消失时若是语音还没合成完，就接着弹"等待语音中…"
+export function showReplyBubble(text) {
+  showBubble(text, REPLY_BUBBLE_MS, { onHide: showVoiceWaitHint });
 }
 
 // ---------------- 语音输入：点击🎙开始，再点一下停止，识别文字实时写回输入框 ----------------
@@ -147,7 +169,8 @@ async function sendToAI(text, image) {
   showPendingBubble(); // 等待占位（随阶段变化），回复/报错回来后会被下面的 showBubble 覆盖掉
   try {
     const reply = await window.petAPI.chatSend(state.characterName, text, image);
-    showBubble(reply, 5000);
+    // 回复气泡消失后如果语音还在合成，接一条"等待语音中…"（见上面的 showVoiceWaitHint）
+    showReplyBubble(reply);
   } catch (err) {
     showBubble('出错了：' + (err && err.message ? err.message : String(err)), 5000);
     // 失败时把文字和图片都放回输入框/预览区，方便直接重发（主进程那边已经把没落盘的图片文件删掉了）
