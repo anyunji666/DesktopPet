@@ -107,13 +107,11 @@ function voiceCharacterNames(selfName) {
     .filter((n) => n && n !== selfName && getTtsConfig(n).voice.provider !== 'off');
 }
 
-// 路人 / 群演：不在 <special_roles> 名单里的人物（店员、路人、旁白里的无名角色，即使有资料设定也算）。
-// 提示词要求模型给他们的「对话」写 `路人：` 前缀，朗读时整句跳过。内部用这个特殊名字当 speaker，tts/index.js 据此直接判为不朗读
-const NPC_LABEL = '路人';
-const NPC_SPEAKER = '\u0000npc';
-// 用户扮演的角色：提示词要求模型给用户角色的「对话」写 `用户：` 前缀，朗读时同样整句跳过（用户的台词不朗读）
-const USER_LABEL = '用户';
-const USER_SPEAKER = '\u0000user';
+// 普通角色：不在 <special_roles> 名单里的全部开口者（其他店员、群演、路人，以及用户扮演的角色，
+// 即使有资料设定也算）。提示词要求模型给他们的「对话」写 `普通角色：` 前缀，朗读时整句跳过。
+// 内部用这个特殊名字当 speaker，tts/index.js 据此直接判为不朗读
+const COMMON_LABEL = '普通角色';
+const COMMON_SPEAKER = '\u0000common';
 
 // 有专属设定的角色名单（给提示词的 <special_roles> 用）：全部角色（含当前主角色），带别名。
 // 名单只用来让模型标注说话者时对照角色名，不代表这些角色一定出现在当前故事里。
@@ -147,8 +145,7 @@ function speakerNameMap() {
     try { aliases = readPersonaFile(n).aliases || []; } catch { /* ignore */ }
     for (const a of aliases) if (!map.has(a.toLowerCase())) map.set(a.toLowerCase(), n);
   }
-  if (!map.has(NPC_LABEL)) map.set(NPC_LABEL, NPC_SPEAKER); // 有角色真叫"路人"时以角色为准
-  if (!map.has(USER_LABEL)) map.set(USER_LABEL, USER_SPEAKER); // 有角色真叫"用户"时以角色为准
+  if (!map.has(COMMON_LABEL)) map.set(COMMON_LABEL, COMMON_SPEAKER); // 有角色真叫"普通角色"时以角色为准
   return map;
 }
 
@@ -174,4 +171,4 @@ function resolveProvidersInput(input) {
   };
 }
 
-module.exports = { normalizeProviders, normalizeVoice, getTtsConfig, saveTtsConfig, maskProviders, resolveProvidersInput, voiceCharacterNames, getSpecialRoles, anyVoiceConfigured, speakerNameMap, NPC_LABEL, NPC_SPEAKER, USER_LABEL, USER_SPEAKER };
+module.exports = { normalizeProviders, normalizeVoice, getTtsConfig, saveTtsConfig, maskProviders, resolveProvidersInput, voiceCharacterNames, getSpecialRoles, anyVoiceConfigured, speakerNameMap, COMMON_LABEL, COMMON_SPEAKER };

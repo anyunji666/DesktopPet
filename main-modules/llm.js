@@ -4,7 +4,7 @@
 const { loadConfig, updateConfig } = require('./config');
 const { loadPersona, loadStoryBackground, loadReaderInfo, loadMemoryIndex } = require('./chat-store');
 const { toneEnabled } = require('./tts/tone');
-const { getSpecialRoles, anyVoiceConfigured, NPC_LABEL, USER_LABEL } = require('./tts/config');
+const { getSpecialRoles, anyVoiceConfigured, COMMON_LABEL } = require('./tts/config');
 const { flattenChatHistory, formatDayCN } = require('./history-flatten');
 const { buildFestivalBlock } = require('./holiday');
 const { generateToken, maskSecret, resolveSecretInput } = require('./security');
@@ -221,17 +221,15 @@ const OUTPUT_RULES_TONE = `## **必须遵守的强制性输出规则**
 - 示例：「【嗔怪抗拒，语速偏快】你不要过来～」*怎么这样···*「【无奈带笑，尾音上扬】真是服了你了～」小拳拳锤了一下{{user}}的胸口，还是默许了{{user}}的行为。`;
 
 // 多角色语音的"说话者标注"规则：至少有一个角色配置了语音时，追加到输出规则后面（见 buildPromptText 的 footerParts）。
-// 要求模型给每句「对话」前面紧挨着写 `角色名：` 前缀，分三种：
+// 要求模型给每句「对话」前面紧挨着写 `角色名：` 前缀，分两种：
 //   · <special_roles> 名单里的角色（名单含当前主角色在内的全部角色，不论是否配置了语音——
 //     没配置语音的角色台词同样要标注，朗读时才能按名字跳过，不会被当成主角色的台词用主角色的声音读）：写角色名原文
-//   · 用户扮演的角色：统一写 USER_LABEL（用户），整句不朗读
-//   · 其他店员、群演、路人等角色：统一写 NPC_LABEL（路人），整句不朗读
+//   · 名单之外的所有开口者（其他店员、群演、路人，以及用户扮演的角色）：统一写 COMMON_LABEL（普通角色），整句不朗读
 // 前缀会留在正文里（气泡 / 聊天记录显示时再摘掉），朗读时由 text-clean.js 的 splitSpeechSegments 拆出来、
 // tts/index.js 据此路由到该角色自己的音色。没有前缀的台词解析时仍默认当前主角色（兼容模型漏标）。
-const SPEAKER_RULE = `- **说话者标注：** 每句「对话」前面都必须紧挨着写上说话者的\`角色名：\`。分三种：
+const SPEAKER_RULE = `- **说话者标注：** 每句「对话」前面都必须紧挨着写上说话者的\`角色名：\`。分两种：
   - <special_roles>名单中的角色：只写名单里的角色名原文，不要写别名，不要加括号、"说道"等其他字。例：Saber：「【平静，带点关切】这个给你，别嫌弃呀」。
-  - 用户扮演的角色：前面统一写\`${USER_LABEL}：\`。
-  - 其他店员、群演、路人等角色：前面统一写\`${NPC_LABEL}：\`。即使这个人物有资料设定，只要不属于上面二种都写\`${NPC_LABEL}：\`。
+  - 其他店员、群演、路人以及用户所扮演的角色：前面统一写\`${COMMON_LABEL}：\`。即使这个人物有资料设定，只要不属于<special_roles>都写\`${COMMON_LABEL}：\`。
 - 一句「对话」只能是一个角色说的，不要把两个角色的话写进同一个「」里。`;
 
 // 摘要模块：必须放在整个回复的最末尾（解析时先摘掉摘要块，剩下的才是正文）

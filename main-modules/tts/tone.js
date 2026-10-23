@@ -27,7 +27,7 @@ function stripTones(characterName, reply) {
   return toneEnabled(characterName) ? stripQuoteTones(raw) : raw;
 }
 
-// 摘掉「」前面的说话者前缀（`Saber：` / `路人：` / `用户：`），只给气泡 / 聊天记录窗口显示用，不影响存档和回传给模型的历史
+// 摘掉「」前面的说话者前缀（`Saber：` / `普通角色：`），只给气泡 / 聊天记录窗口显示用，不影响存档和回传给模型的历史
 function stripSpeakers(reply) {
   return stripSpeakerPrefixes(typeof reply === 'string' ? reply : '', speakerNameMap());
 }

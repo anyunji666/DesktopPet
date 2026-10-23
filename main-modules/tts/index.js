@@ -8,7 +8,7 @@
 // （静音、压低舞蹈音乐等沿用台词语音的逻辑）。同时按这条 AI 消息的 ts 把整回合语音缓存到磁盘（chat-store 的 saveChatVoice），
 // 聊天记录窗口双击气泡可以重听；消息被删时语音跟着删，编辑不影响（ts 不变）。
 const { state } = require('../state');
-const { getTtsConfig, saveTtsConfig, normalizeProviders, normalizeVoice, speakerNameMap, NPC_SPEAKER, USER_SPEAKER } = require('./config');
+const { getTtsConfig, saveTtsConfig, normalizeProviders, normalizeVoice, speakerNameMap, COMMON_SPEAKER } = require('./config');
 const { prepareSpeechText, splitSpeechSegments } = require('./text-clean');
 const { loadChatHistory, saveChatVoice } = require('../chat-store');
 const { readCloneAudioDataURL } = require('./clone-store');
@@ -149,7 +149,7 @@ async function speakReply(characterName, reply, msgTs = null) {
     const cfgCache = new Map();
     const SILENT_CFG = { voice: { provider: 'off' } };
     const cfgFor = (speaker) => {
-      if (speaker === NPC_SPEAKER || speaker === USER_SPEAKER) return SILENT_CFG; // 路人 / 用户：不朗读
+      if (speaker === COMMON_SPEAKER) return SILENT_CFG; // 普通角色（名单外的人物、用户扮演的角色）：不朗读
       const name = speaker || characterName;
       if (!cfgCache.has(name)) cfgCache.set(name, getTtsConfig(name));
       return cfgCache.get(name);
@@ -159,7 +159,7 @@ async function speakReply(characterName, reply, msgTs = null) {
 
     // 路由日志：看每句台词交给了谁 / 哪家服务商；认不出的"某某："也提示一下，方便排查别名没配的情况
     console.log('[pet] 语音路由:', segments.map((seg, i) => {
-      const who = seg.speaker === NPC_SPEAKER ? '路人' : seg.speaker === USER_SPEAKER ? '用户' : seg.speaker || characterName;
+      const who = seg.speaker === COMMON_SPEAKER ? '普通角色' : seg.speaker || characterName;
       return `#${i + 1} ${who}→${cfgFor(seg.speaker).voice.provider}`;
     }).join('  '));
     for (const seg of segments) {
