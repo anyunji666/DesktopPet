@@ -1,0 +1,146 @@
+{
+  "currency": "元",
+  "storyStart": "2026-06-26",
+  "asOf": "2026-06-26",
+  "character": {
+    "assets": [
+      {
+        "name": "活期存款",
+        "category": "现金类",
+        "amount": 20000,
+        "days": 0
+      },
+      {
+        "name": "现金",
+        "category": "现金类",
+        "amount": 200,
+        "days": 0
+      },
+      {
+        "name": "红宝石",
+        "category": "动产",
+        "amount": 20000,
+        "days": 31
+      }
+    ],
+    "liabilities": [],
+    "incomes": [],
+    "expenses": [
+      {
+        "name": "房租水电",
+        "monthly": 1000
+      },
+      {
+        "name": "伙食",
+        "monthly": 1500
+      }
+    ],
+    "belongings": [
+      {
+        "name": "手机",
+        "quantity": 1,
+        "unit": "个",
+        "note": "iPhone16 Pro 黑色"
+      },
+      {
+        "name": "电动摩托车钥匙",
+        "quantity": 1,
+        "unit": "把",
+        "note": ""
+      },
+      {
+        "name": "房间钥匙",
+        "quantity": 1,
+        "unit": "把",
+        "note": "住城区公寓"
+      },
+      {
+        "name": "红宝石",
+        "quantity": 1,
+        "unit": "颗",
+        "note": ""
+      }
+    ]
+  },
+  "user": {
+    "assets": [
+      {
+        "name": "活期存款",
+        "category": "现金类",
+        "amount": 100000,
+        "days": 0
+      },
+      {
+        "name": "股票",
+        "category": "金融资产",
+        "amount": 200000,
+        "days": 1
+      },
+      {
+        "name": "乡下别墅",
+        "category": "不动产",
+        "amount": 800000,
+        "days": 31
+      },
+      {
+        "name": "城区套房",
+        "category": "不动产",
+        "amount": 600000,
+        "days": 31
+      },
+      {
+        "name": "城区车位",
+        "category": "不动产",
+        "amount": 50000,
+        "days": 31
+      },
+      {
+        "name": "凯迪拉克CT5",
+        "category": "动产",
+        "amount": 100000,
+        "days": 31
+      }
+    ],
+    "liabilities": [],
+    "incomes": [
+      {
+        "name": "税后工资",
+        "monthly": 8000,
+        "payDay": 10
+      }
+    ],
+    "expenses": [
+      {
+        "name": "生活开销",
+        "monthly": 3000
+      }
+    ],
+    "belongings": [
+      {
+        "name": "手机",
+        "quantity": 1,
+        "unit": "个",
+        "note": "Galaxy S23 Ultra 白色"
+      },
+      {
+        "name": "城区套房钥匙",
+        "quantity": 1,
+        "unit": "个",
+        "note": ""
+      },
+      {
+        "name": "乡下别墅钥匙",
+        "quantity": 5,
+        "unit": "个",
+        "note": ""
+      },
+      {
+        "name": "车钥匙",
+        "quantity": 1,
+        "unit": "个",
+        "note": ""
+      }
+    ]
+  },
+  "userKnown": false
+}
