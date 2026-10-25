@@ -144,13 +144,13 @@ function describeParty(party, cur) {
     lines.push('除还债外的其它月度支出：');
     for (const e of party.expenses) lines.push(`  - ${noParen(e.name) || '未命名'}：每月 ${m(e.monthly)}`);
   }
-  // 随身携带物：名称：数量+单位（备注）；数量没填（0）就不写数量，备注里的括号换成空格（提示词里括号是场外说明）
+  // 随身携带物：名称：数量单位；备注；数量没填（0）就不写数量，备注里的括号换成空格（提示词里括号是场外说明）
   if (party.belongings.length) {
     lines.push('随身携带物：');
     for (const b of party.belongings) {
       const qty = b.quantity > 0 ? `${fmt(b.quantity)}${noParen(b.unit)}` : ''; // 没填数量就连单位也不写
       const note = noParen(b.note);
-      const detail = [qty, note && `备注：${note}`].filter(Boolean).join('；');
+      const detail = [qty, note].filter(Boolean).join('；');
       lines.push(`  - ${noParen(b.name) || '未命名物品'}${detail ? '：' + detail : ''}`);
     }
   }
@@ -177,8 +177,8 @@ function buildFinancialBlock(characterName, history) {
   if (hasChar) parts.push(`<character_finance character="${characterName}">\n${describeParty(data.character, cur)}\n</character_finance>`);
   if (hasUser) {
     const known = data.userKnown
-      ? '角色清楚用户扮演的角色的财产状况。'
-      : '角色并不清楚用户扮演的角色的真实财力，只能从衣着、住处、出手大方与否等表现去推测。';
+      ? `"${characterName}"清楚用户扮演的角色的财产状况。`
+      : `"${characterName}"并不清楚用户扮演的角色的真实财力，只能从衣着、住处、出手大方与否等表现去推测。`;
     parts.push(`<user_finance>\n<!-- 用户所扮演的角色的财产。${known} -->\n${describeParty(data.user, cur)}\n</user_finance>`);
   }
   return `<financial_status>\n<!-- ${guide}\n-->\n${parts.join('\n\n')}\n</financial_status>`;
