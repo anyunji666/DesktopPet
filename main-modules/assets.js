@@ -144,14 +144,15 @@ function describeParty(party, cur) {
     lines.push('除还债外的其它月度支出：');
     for (const e of party.expenses) lines.push(`  - ${noParen(e.name) || '未命名'}：每月 ${m(e.monthly)}`);
   }
-  // 随身携带物：名称：数量单位；备注；数量没填（0）就不写数量，备注里的括号换成空格（提示词里括号是场外说明）
+  // 随身携带物：名称：数量单位；注：备注；数量没填（0）就不写数量，备注里的括号换成空格（提示词里括号是场外说明）
   if (party.belongings.length) {
     lines.push('随身携带物：');
     for (const b of party.belongings) {
       const qty = b.quantity > 0 ? `${fmt(b.quantity)}${noParen(b.unit)}` : ''; // 没填数量就连单位也不写
-      const note = noParen(b.note);
-      const detail = [qty, note].filter(Boolean).join('；');
-      lines.push(`  - ${noParen(b.name) || '未命名物品'}${detail ? '：' + detail : ''}`);
+      const noteText = noParen(b.note);
+      const note = noteText ? `注：${noteText}` : ''; // 备注加「注：」前缀，和数量区分开；备注为空就不写
+      // 名称后：有数量写「：数量单位」，有备注写「；注：备注」，所以没数量时是「名称；注：备注」
+      lines.push(`  - ${noParen(b.name) || '未命名物品'}${qty ? '：' + qty : ''}${note ? '；' + note : ''}`);
     }
   }
   return lines.join('\n');

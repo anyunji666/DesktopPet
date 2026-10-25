@@ -39,7 +39,7 @@
   const MAX_NAME = 40;
   const MAX_ITEM_NAME = 10; // 随身携带物的物品名称
   const MAX_UNIT = 3; // 随身携带物的单位
-  const MAX_NOTE = 20; // 随身携带物的备注
+  const MAX_NOTE = 100; // 随身携带物的备注
   const MAX_QTY = 1e6; // 随身携带物的数量上限
   const MAX_NUM = 1e15;
   const MAX_ADVANCE_MONTHS = 1200; // 一次最多往后推算 100 年，防止故事时间写成离谱的日期时卡死

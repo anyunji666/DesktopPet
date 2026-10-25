@@ -125,6 +125,12 @@
         opt.textContent = v;
         input.appendChild(opt);
       }
+    } else if (o.multiline) {
+      // 多行输入框（备注用）：自动换行，可以拖动右下角调高；max 同样限制字数
+      input = document.createElement('textarea');
+      input.rows = o.rows || 3;
+      if (o.max) input.maxLength = o.max;
+      if (o.placeholder) input.placeholder = o.placeholder;
     } else {
       input = document.createElement('input');
       input.type = o.number ? 'number' : 'text';
@@ -292,7 +298,7 @@
     const g1 = div('grid');
     g1.style.gridTemplateColumns = '1fr';
     g1.style.marginTop = '10px'; // 备注和上一行拉开一点距离
-    g1.append(field(row, 'note', { label: '备注', placeholder: '如：口红用来补妆', max: C.MAX_NOTE }).wrap);
+    g1.append(field(row, 'note', { label: '备注', placeholder: '如：口红用来补妆', max: C.MAX_NOTE, multiline: true, rows: 3 }).wrap);
     card.append(head, g1);
     return card;
   }
