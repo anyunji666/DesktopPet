@@ -94,16 +94,57 @@ function loadChatHistory(characterName) {
   } catch (err) {
     if (err.code !== 'ENOENT') {
       console.warn(`[pet] 角色 "${characterName}" 的聊天记录读取失败: ${err.message}`);
+      // 文件存在但解析失败（损坏）：先留一份备份，否则下一次保存会把它覆盖成空记录，数据就彻底丢了
+      if (err instanceof SyntaxError) backupCorruptFile(chatHistoryPath(characterName));
     }
     return [];
   }
 }
 
+// 聊天记录写盘后的监听（main.js 注册，用来通知已打开的资产配置窗口：故事时间可能变了）
+let historySavedListener = null;
+function onChatHistorySaved(cb) {
+  historySavedListener = typeof cb === 'function' ? cb : null;
+}
+
+// 把损坏的文件改名留底（<原名>.corrupt-<时间戳>），同一个损坏文件只备份一次（改名后原路径就不在了）
+function backupCorruptFile(filePath) {
+  try {
+    fs.renameSync(filePath, `${filePath}.corrupt-${Date.now()}`);
+  } catch (e) {
+    console.warn(`[pet] 备份损坏文件失败: ${e.message}`);
+  }
+}
+
+// 原子写入：先写临时文件再改名，写到一半断电 / 崩溃 / 磁盘满时不会留下半截文件
+function writeFileAtomic(filePath, data) {
+  const tmp = `${filePath}.tmp`;
+  try {
+    fs.writeFileSync(tmp, data);
+    fs.renameSync(tmp, filePath);
+  } catch (err) {
+    try {
+      fs.unlinkSync(tmp);
+    } catch {}
+    throw err;
+  }
+}
+
+// 写盘失败要抛出去：调用方（编辑 / 删除 / 对话落盘）据此报错，而不是误以为已经保存
 function saveChatHistory(characterName, history) {
   try {
-    fs.writeFileSync(chatHistoryPath(characterName), JSON.stringify(history, null, 2));
+    writeFileAtomic(chatHistoryPath(characterName), JSON.stringify(history, null, 2));
   } catch (err) {
     console.error(`[pet] 保存聊天记录失败: ${err.message}`);
+    throw new Error('保存聊天记录失败：' + err.message);
+  }
+  // 只有写盘成功才通知监听（失败已经抛出，不会走到这里）
+  if (historySavedListener) {
+    try {
+      historySavedListener(characterName, history);
+    } catch (err) {
+      console.warn(`[pet] 聊天记录保存监听出错: ${err.message}`);
+    }
   }
 }
 
@@ -432,6 +473,7 @@ module.exports = {
   chatHistoryPath,
   loadChatHistory,
   saveChatHistory,
+  onChatHistorySaved,
   loadDaySummaries,
   loadDaySummary,
   saveDaySummary,

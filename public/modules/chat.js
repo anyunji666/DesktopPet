@@ -223,6 +223,14 @@ async function startVoiceInput() {
   asrSessionId = sessionId;
   try {
     await startRecording((chunk) => window.petAPI.asrSendChunk(sessionId, chunk));
+    if (voiceState !== 'starting') {
+      // 等麦克风就绪的这段时间里已经被点了"停止"（或识别会话已经出错收尾）：状态已经不是 starting 了，
+      // 不能再把它改成 recording，否则界面显示已停止、麦克风和识别会话却还开着
+      stopRecording();
+      window.petAPI.asrStop(sessionId);
+      if (asrSessionId === sessionId) asrSessionId = null;
+      return;
+    }
     voiceState = 'recording';
   } catch (err) {
     // 多半是麦克风权限被拒绝

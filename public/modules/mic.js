@@ -45,20 +45,26 @@ export async function startRecording(onAudioChunk) {
   mediaStream = await navigator.mediaDevices.getUserMedia({
     audio: { channelCount: 1, noiseSuppression: true, echoCancellation: true },
   });
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  sourceNode = audioCtx.createMediaStreamSource(mediaStream);
-  processorNode = audioCtx.createScriptProcessor(BUFFER_SIZE, 1, 1);
-  processorNode.onaudioprocess = (e) => {
-    if (!recording || !onChunk) return;
-    const input = e.inputBuffer.getChannelData(0);
-    const pcm16 = floatTo16BitPCM(downsampleTo16k(input, audioCtx.sampleRate));
-    onChunk(pcm16.buffer);
-  };
-  sourceNode.connect(processorNode);
-  // Chromium 要求 ScriptProcessorNode 接上目的地才会持续触发 onaudioprocess；
-  // processorNode 本身不写输出数据，默认静音，不会有回声/破音
-  processorNode.connect(audioCtx.destination);
-  recording = true;
+  try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    sourceNode = audioCtx.createMediaStreamSource(mediaStream);
+    processorNode = audioCtx.createScriptProcessor(BUFFER_SIZE, 1, 1);
+    processorNode.onaudioprocess = (e) => {
+      if (!recording || !onChunk) return;
+      const input = e.inputBuffer.getChannelData(0);
+      const pcm16 = floatTo16BitPCM(downsampleTo16k(input, audioCtx.sampleRate));
+      onChunk(pcm16.buffer);
+    };
+    sourceNode.connect(processorNode);
+    // Chromium 要求 ScriptProcessorNode 接上目的地才会持续触发 onaudioprocess；
+    // processorNode 本身不写输出数据，默认静音，不会有回声/破音
+    processorNode.connect(audioCtx.destination);
+    recording = true;
+  } catch (err) {
+    // 麦克风已经打开、后面的音频节点创建失败：必须把麦克风释放掉，否则任务栏的麦克风占用标记一直亮着
+    stopRecording();
+    throw err;
+  }
 }
 
 export function stopRecording() {

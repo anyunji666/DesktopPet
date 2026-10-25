@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>角色资产配置</title>
+<style>
+  body {
+    font-family: "Microsoft YaHei", sans-serif;
+    margin: 0;
+    padding: 16px 20px 28px;
+    background: #faf7f6;
+    color: #333;
+  }
+  .page-title {
+    margin: 0 0 4px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid #f0dfe4;
+    font-size: 16px;
+    color: #a02440;
+  }
+  /* 未保存标记：标题右侧的红点小字，改过但还没保存时显示 */
+  .dirty { display: none; margin-left: 6px; font-size: 11px; font-weight: normal; color: #e04060; }
+  .dirty.show { display: inline; }
+  .tip { font-size: 11px; color: #aaa; line-height: 1.6; margin: 4px 0 0; }
+  label { display: block; font-size: 12px; color: #777; margin: 0 0 3px; }
+  input, select, textarea {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 7px 9px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    font-size: 13px;
+    outline: none;
+    font-family: inherit;
+    background: #fff;
+    color: #333;
+  }
+  input:focus, select:focus, textarea:focus { border-color: #e04060; }
+  textarea { resize: vertical; min-height: 64px; line-height: 1.5; }
+  input[type="checkbox"] { width: auto; margin: 0 6px 0 0; vertical-align: -2px; }
+  button { padding: 8px 12px; border-radius: 8px; font-size: 13px; cursor: pointer; font-family: inherit; }
+  button:disabled { opacity: 0.5; cursor: default; }
+
+  /* ---------- 顶部：货币单位 + 角色 / 用户标签 ---------- */
+  .top-row { display: flex; align-items: flex-end; gap: 12px; margin: 12px 0 0; }
+  .top-row .cur { width: 90px; flex: none; }
+  .tabs { display: flex; gap: 8px; flex: 1; }
+  .tab {
+    flex: 1;
+    border: 1px solid #e8c9d1;
+    background: #fff;
+    color: #a02440;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tab.active { background: #e04060; border-color: #e04060; color: #fff; }
+
+  /* ---------- 故事日期 ---------- */
+  .story-row { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; margin: 12px 0 0; }
+  .story-row label { margin: 0; font-size: 13px; color: #555; }
+  .story-row input[type="date"] { width: auto; }
+  .story-row .tip { margin: 0; }
+
+  /* ---------- 看板 ---------- */
+  .dash { margin-top: 14px; background: #fff; border: 1px solid #f0dfe4; border-radius: 12px; padding: 12px 14px; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; }
+  .stat { background: #fdf3f5; border-radius: 8px; padding: 8px 10px; }
+  .stat .k { font-size: 11px; color: #999; }
+  .stat .v { font-size: 15px; font-weight: bold; color: #333; margin-top: 2px; word-break: break-all; }
+  .neg { color: #c93454 !important; }
+  table.tiers { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px; }
+  table.tiers th { text-align: left; font-weight: normal; color: #999; padding: 4px 6px; border-bottom: 1px solid #f0dfe4; }
+  table.tiers td { padding: 5px 6px; border-bottom: 1px dashed #f3e6ea; }
+  table.tiers th, table.tiers td { text-align: left; }
+  /* 三列按比例分宽：取用时间 30% / 能凑的钱 30% / 所需操作 40%，都靠左 */
+  table.tiers { table-layout: fixed; }
+  table.tiers th:nth-child(1) { width: 30%; }
+  table.tiers th:nth-child(2) { width: 30%; }
+  table.tiers th:nth-child(3) { width: 40%; }
+  table.tiers td.main { font-weight: bold; }
+  table.tiers td small { display: block; font-size: 10px; color: #aaa; }
+  .stat .k small { font-size: 10px; color: #aaa; margin-left: 4px; }
+  .dash-foot { margin-top: 8px; font-size: 11px; color: #999; line-height: 1.7; }
+  .emergency { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; margin-top: 10px; }
+  .emergency > div { width: 130px; }
+
+  /* ---------- 明细区 ---------- */
+  .section-head { display: flex; align-items: center; justify-content: space-between; margin: 22px 0 2px; }
+  .section-title { font-size: 13px; color: #a02440; font-weight: bold; }
+  .add-btn { padding: 4px 10px; font-size: 12px; border: 1px solid #e04060; background: #fff; color: #e04060; }
+  .add-btn:active:not(:disabled) { background: #ffe9ee; }
+  .empty { font-size: 12px; color: #bbb; padding: 10px 0; text-align: center; }
+  .row-card { background: #fff; border: 1px solid #eee; border-radius: 10px; padding: 10px; margin: 8px 0; }
+  .grid { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); }
+  .grid + .grid { margin-top: 8px; }
+  .grid .wide { grid-column: span 2; }
+  .row-head { display: flex; gap: 8px; align-items: flex-end; }
+  .row-head .f-name { flex: 1; min-width: 0; }
+  .row-head .f-kind { width: 110px; flex: none; }
+  .del-btn { flex: none; padding: 7px 9px; border: 1px solid #ddd; background: #fff; color: #999; }
+  .del-btn:hover { border-color: #e04060; color: #e04060; }
+  .row-calc { margin-top: 8px; font-size: 11px; color: #999; line-height: 1.6; }
+  .row-calc b { color: #555; font-weight: normal; }
+
+  .btn-row { display: flex; gap: 10px; margin-top: 22px; }
+  .save-btn { flex: 1; border: none; background: #e04060; color: #fff; padding: 10px; font-size: 14px; }
+  .save-btn:active:not(:disabled) { background: #c93454; }
+  .status { margin-top: 10px; font-size: 12px; min-height: 16px; line-height: 1.6; word-break: break-all; }
+  .status.ok { color: #2a8f4e; }
+  .status.err { color: #c93454; }
+  .status.busy { color: #999; }
+
+  /* ---------- 关窗口前的确认浮层（替代系统对话框，样式跟「角色与音色设置」窗口一致） ---------- */
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.35);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+  }
+  .overlay.hidden { display: none; }
+  #confirm-dialog {
+    width: min(320px, calc(100vw - 32px));
+    background: #fff;
+    border-radius: 12px;
+    padding: 16px 18px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+    box-sizing: border-box;
+  }
+  #confirm-msg { font-size: 13px; line-height: 1.6; color: #333; margin-bottom: 14px; }
+  .dialog-btns { display: flex; gap: 8px; justify-content: flex-end; }
+  .dialog-btns button { border: none; border-radius: 8px; padding: 7px 14px; font-size: 13px; color: #fff; }
+  #confirm-cancel { background: #f0f0f0; color: #888; }
+  #confirm-ok { background: #d33; }
+</style>
+</head>
+<body>
+  <h2 class="page-title">🧰 角色资产配置 <span class="dirty" id="dirty">● 未保存</span></h2>
+  <p class="tip">
+    给「角色」和「你扮演的角色」各配一份财产：资产、负债、月度收入、月度支出。保存后会写进 AI 的提示词，
+    AI 据此判断各方手里有多少钱、几天能凑到多少，影响角色花钱的手笔、拒绝或冒险的底气。每个角色单独存一份。
+  </p>
+
+  <div class="top-row">
+    <div class="cur">
+      <label>货币单位</label>
+      <input id="currency" maxlength="8" placeholder="元" />
+    </div>
+    <div class="tabs">
+      <button class="tab active" id="tab-character" type="button"></button>
+      <button class="tab" id="tab-user" type="button">🙋 你（用户角色）</button>
+    </div>
+  </div>
+
+  <div class="story-row">
+    <label for="story-start">故事开始日期</label>
+    <input id="story-start" type="date" />
+    <p class="tip" id="story-now"></p>
+  </div>
+
+  <div id="party-root"></div>
+
+  <div class="btn-row">
+    <button id="save-btn" class="save-btn" type="button">保存资产配置</button>
+  </div>
+  <div id="status" class="status"></div>
+  <p class="tip">两方都清空后保存 = 删除 assets.json，之后不再向 AI 发送财产设定。</p>
+
+  <!-- 关窗口前的"未保存"确认：页面内浮层，不用系统对话框 -->
+  <div id="confirm-overlay" class="overlay hidden">
+    <div id="confirm-dialog">
+      <div id="confirm-msg">还有没保存的修改，关掉窗口后这些修改会丢失。</div>
+      <div class="dialog-btns">
+        <button id="confirm-cancel" type="button">继续编辑</button>
+        <button id="confirm-ok" type="button">放弃修改并关闭</button>
+      </div>
+    </div>
+  </div>
+
+<script src="assets-calc.js"></script>
+<script src="character-assets.js"></script>
+</body>
+</html>

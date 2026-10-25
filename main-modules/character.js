@@ -7,10 +7,21 @@ const CHARACTER_ROOT = path.join(ROOT, 'Character');
 
 // ---------- 扫描角色（Character/<角色名>/ 下最大的 .pmx 作为本体模型） ----------
 function pickModelFile(dir) {
-  const files = fs.readdirSync(dir).filter((f) => /\.pmx$/i.test(f));
+  // 先把每个 .pmx 的大小一次量好（单个文件读不了就当 0，不让它拖垮整个扫描）
+  const sizeOf = (f) => {
+    try {
+      return fs.statSync(path.join(dir, f)).size;
+    } catch {
+      return 0;
+    }
+  };
+  const files = fs
+    .readdirSync(dir)
+    .filter((f) => /\.pmx$/i.test(f))
+    .map((f) => ({ f, size: sizeOf(f) }));
   if (!files.length) return null;
-  files.sort((a, b) => fs.statSync(path.join(dir, b)).size - fs.statSync(path.join(dir, a)).size);
-  return files[0];
+  files.sort((a, b) => b.size - a.size);
+  return files[0].f;
 }
 
 function scanCharacters() {
@@ -20,8 +31,15 @@ function scanCharacters() {
   const characters = [];
   for (const name of fs.readdirSync(CHARACTER_ROOT)) {
     const dir = path.join(CHARACTER_ROOT, name);
-    if (!fs.statSync(dir).isDirectory()) continue;
-    const modelFile = pickModelFile(dir);
+    // 单个目录项读不了（损坏的快捷方式 / 权限问题 / 没有读取权限的目录）只跳过它，不能让整个程序起不来
+    let modelFile;
+    try {
+      if (!fs.statSync(dir).isDirectory()) continue;
+      modelFile = pickModelFile(dir);
+    } catch (err) {
+      console.warn(`[pet] 角色目录 "${name}" 读取失败，已跳过: ${err.message}`);
+      continue;
+    }
     if (!modelFile) {
       console.warn(`[pet] 角色目录 "${name}" 中没有 .pmx 文件，已跳过`);
       continue;

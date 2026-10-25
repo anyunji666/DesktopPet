@@ -78,20 +78,30 @@ function withRenderPause(createFn, { resumeOn = 'load', signalChannel } = {}) {
   const resume = () => {
     if (resumed) return;
     resumed = true;
+    clearTimeout(fallbackTimer);
     if (offSignal) offSignal();
     // 双保险：即使时机刚好没掐准、内容其实已经画完但还没被系统真正呈现出来，
     // 也主动强制系统重绘一帧，等效于用户手动点一下 / 最小化还原触发的效果，
     // 不用非得靠用户自己动手才能看到内容。
-    if (win && win.webContents && !win.isDestroyed()) {
-      try {
-        win.webContents.invalidate();
-      } catch {}
-    }
+    // 必须先判 isDestroyed 再碰 webContents：窗口已销毁时访问 win.webContents 本身就会抛异常，
+    // 抛在 send('resume-render') 之前的话，宠物的渲染就会永远停在暂停状态
+    try {
+      if (win && !win.isDestroyed()) win.webContents.invalidate();
+    } catch {}
     send('resume-render');
   };
-  const win = createFn();
+  // 兜底定时器要在创建窗口之前就挂上：createFn 万一抛错，pause-render 已经发出去了，不能没人负责恢复
+  const fallbackTimer = setTimeout(resume, 5000);
+  let win = null;
+  try {
+    win = createFn();
+  } catch (err) {
+    clearTimeout(fallbackTimer);
+    resume();
+    throw err;
+  }
   if (win) attachDragGuard(win); // 拖动/缩放这个子窗口期间，临时关掉宠物窗口的鼠标转发（见 drag-guard.js）
-  if (win && win.webContents) {
+  if (win && !win.isDestroyed() && win.webContents) {
     if (resumeOn === 'content-ready' && signalChannel) {
       const wcId = win.webContents.id;
       const onSignal = (event) => {
@@ -104,7 +114,6 @@ function withRenderPause(createFn, { resumeOn = 'load', signalChannel } = {}) {
     }
     win.once('closed', resume);
   }
-  setTimeout(resume, 5000);
   return win;
 }
 
@@ -195,6 +204,57 @@ function openCharacterVoiceWindow(characterName) {
       created.focus();
     });
     created.loadURL(characterVoicePageUrl(characterName));
+    return created;
+  });
+}
+
+// ---------- 角色资产配置窗口 ----------
+// 和「角色与音色设置」同一套打开 / 换角色逻辑：每次只开一个，按角色打开，不用先切换桌宠当前角色；
+// 点的是已打开的那个角色就直接聚焦，点另一个角色交给页面判断有没有未保存的修改（见 character-assets.html）。
+function assetsPageUrl(characterName) {
+  return `http://127.0.0.1:${state.serverPort}/public/character-assets.html?character=${encodeURIComponent(characterName)}`;
+}
+
+// 页面确认"放弃修改并切换"之后回调：页面已放行 beforeunload，直接重载成目标角色
+function confirmAssetsSwitch(characterName) {
+  if (typeof characterName !== 'string') return;
+  if (!state.characters.some((c) => c.name === characterName)) return;
+  const win = state.assetsWin;
+  if (!win || win.isDestroyed()) return;
+  state.assetsWinCharacter = characterName;
+  win.setTitle('角色资产配置 - ' + characterName);
+  win.loadURL(assetsPageUrl(characterName));
+}
+
+function openAssetsWindow(characterName) {
+  const win = state.assetsWin;
+  if (win && !win.isDestroyed()) {
+    win.show();
+    win.focus();
+    if (state.assetsWinCharacter !== characterName) win.webContents.send('assets-switch-ask', characterName);
+    return;
+  }
+  state.assetsWinCharacter = characterName;
+  withRenderPause(() => {
+    state.assetsWin = new BrowserWindow({
+      width: 560,
+      height: 760,
+      minWidth: 480,
+      minHeight: 520,
+      title: '角色资产配置 - ' + characterName,
+      webPreferences: securePrefs(),
+    });
+    // 见 openSettingsWindow 里的同名调用注释
+    state.assetsWin.webContents.setBackgroundThrottling(false);
+    state.assetsWin.setMenu(null);
+    const created = state.assetsWin;
+    // 有未保存修改时页面会拦住关闭（beforeunload），这里只把窗口提到前面让页面自己的确认浮层被看到
+    created.webContents.on('will-prevent-unload', () => {
+      if (created.isDestroyed()) return;
+      created.show();
+      created.focus();
+    });
+    created.loadURL(assetsPageUrl(characterName));
     return created;
   });
 }
@@ -435,6 +495,12 @@ function buildMenu() {
       label: '📝 角色与音色设置',
       submenu: state.characters.map((c) => ({ label: c.name, click: () => openCharacterVoiceWindow(c.name) })),
     },
+    {
+      // 一级：角色列表；点某个角色 -> 弹出该角色的"角色资产配置"窗口（角色和用户两方的资产 / 负债 / 收支）
+      // 资产设定会写进 LLM 提示词，影响角色的底气和行动
+      label: '🧰 角色资产配置',
+      submenu: state.characters.map((c) => ({ label: c.name, click: () => openAssetsWindow(c.name) })),
+    },
     { type: 'separator' },
     // 父菜单按当前状态后缀 ✅，两个子选项用 ✓ 前缀标出当前选择；声音 / 喝水提醒 / 开机自启动各自独立一格
     {
@@ -667,11 +733,9 @@ function setDrinkReminderEnabled(enabled) {
 
 // ---------- 声音开关状态 ----------
 // 静音/恢复的实际开关在渲染进程（audio.muted / voiceAudio.muted），它应用后通过 mute-changed 上报回来，
-// 主进程记在 state.muted，右键菜单"声音"据此显示 ✅ / ✓
-ipcMain.on('mute-changed', (_e, muted) => {
-  state.muted = !!muted;
-  state.menu = buildMenu();
-});
+// 主进程记在 state.muted，右键菜单"声音"据此显示 ✅ / ✓。
+// 这条 IPC 的监听在 main.js 里注册，不能在本文件顶层注册：本文件加载时 guardIpc（IPC 来源校验）还没装上，
+// 在这里注册会绕过"只接受本地页面调用"的检查
 
 module.exports = {
   securePrefs,
@@ -686,6 +750,8 @@ module.exports = {
   openSettingsWindow,
   openCharacterVoiceWindow,
   confirmCharacterVoiceSwitch,
+  openAssetsWindow,
+  confirmAssetsSwitch,
   openHistoryWindow,
   openLlmLogWindow,
   openAboutWindow,

@@ -56,6 +56,19 @@ function logRecentCall(label, requestText, replyText) {
 // 聊天发送锁（chat-lock.js）随之释放，不会因为请求挂住而把两个窗口一直锁死
 const LLM_TIMEOUT_MS = 120 * 1000;
 
+// 回复正文：大多数接口返回字符串；少数兼容接口返回 [{ type: 'text', text: '…' }, …] 分段数组，拼起来用，
+// 不然后面的 .trim() 会直接抛 TypeError。取不出文字返回空串
+function extractReplyText(content) {
+  if (typeof content === 'string') return content.trim();
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => (typeof part === 'string' ? part : part && typeof part.text === 'string' ? part.text : ''))
+      .join('')
+      .trim();
+  }
+  return '';
+}
+
 // 通用 OpenAI 兼容 /chat/completions 请求。特意放在主进程发起（而不是渲染进程 fetch），
 // 是为了避免 API Key 出现在渲染进程的网络面板/DevTools 里
 // label：这次调用是干嘛的（比如"对话回复 - xxx"/"总结生成 - xxx"），只用来在调试日志里区分，不影响请求本身
@@ -114,9 +127,8 @@ async function callLLM(messages, label = '对话回复') {
     throw new Error(`HTTP ${resp.status}${msg ? ': ' + msg : ''}`);
   }
   if (!data) throw new Error('LLM 响应不是有效 JSON');
-  const content = data?.choices?.[0]?.message?.content;
-  if (!content) throw new Error('LLM 响应中没有回复内容');
-  const reply = content.trim();
+  const reply = extractReplyText(data?.choices?.[0]?.message?.content);
+  if (!reply) throw new Error('LLM 响应中没有回复内容');
   logRecentCall(label, stringifyMessagesForLog(messages), reply);
   return reply;
 }
@@ -129,19 +141,38 @@ function normalizeModelList(data) {
   return [...new Set(names)];
 }
 
+const MODEL_LIST_TIMEOUT_MS = 30 * 1000;
+
 async function fetchModelList(apiUrl, apiKey) {
   if (!apiUrl) throw new Error('请先填写 API Base URL');
   const baseUrl = apiUrl.replace(/\/$/, '');
   const url = baseUrl.endsWith('/models') ? baseUrl : `${baseUrl}/models`;
   const bearer = relayTokenFor(url, getApiConfig()) || apiKey;
-  const resp = await fetch(url, {
-    method: 'GET',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
-    },
-  });
-  const rawText = await resp.text();
+  // 和 callLLM 一样要有超时：地址填错 / 网络不通时不能让"加载模型"一直挂着
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, MODEL_LIST_TIMEOUT_MS);
+  let resp;
+  let rawText;
+  try {
+    resp = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
+      },
+      signal: controller.signal,
+    });
+    rawText = await resp.text();
+  } catch (err) {
+    if (timedOut) throw new Error(`加载模型列表超时（超过 ${MODEL_LIST_TIMEOUT_MS / 1000} 秒没有返回）`);
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
   let data = null;
   try {
     data = JSON.parse(rawText);

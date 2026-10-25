@@ -3,6 +3,7 @@
 // 请求怎么发出去在 llm-client.js（它反过来依赖本文件的 getApiConfig，所以本文件不能 require 它）。
 const { loadConfig, updateConfig } = require('./config');
 const { loadPersona, loadStoryBackground, loadReaderInfo, loadMemoryIndex } = require('./chat-store');
+const { buildFinancialBlock } = require('./assets');
 const { toneEnabled } = require('./tts/tone');
 const { getSpecialRoles, anyVoiceConfigured, COMMON_LABEL } = require('./tts/config');
 const { flattenChatHistory, formatDayCN } = require('./history-flatten');
@@ -41,7 +42,7 @@ function getApiConfig() {
     apiProfiles: sanitizeApiProfiles(cfg && cfg.apiProfiles),
     model: (cfg && cfg.model) || '',
     temperature: Number.isFinite(cfg && cfg.temperature) ? cfg.temperature : 0.9,
-    max_tokens: Number.isFinite(cfg && cfg.max_tokens) ? cfg.max_tokens : 2600,
+    max_tokens: Number.isFinite(cfg && cfg.max_tokens) ? cfg.max_tokens : 8192,
     // 当前模型是否支持识图（vision）：开=图片按 OpenAI 视觉格式直发；关=图片只以文字说明进 prompt
     vision: !!(cfg && cfg.vision),
     // Gemini 多 Key 轮询中转要用的 Key 列表；非空时 main.js 会自动起本地中转服务
@@ -263,13 +264,13 @@ function buildSummaryPrompt(dayKey, dayLines) {
   parts.push(dayLines.join('\n'));
   parts.push('</historical_conversation>');
   parts.push('');
-  parts.push(`<historical_conversation>是用户和你在 ${formatDayCN(dayKey)} 扮演各自角色所创作的故事。其中带有括号的内容是用户和你的元交流，不带括号的内容是扮演各自角色的故事。需要对故事进行总结，对元交流提取记忆。`);
+  parts.push(`<historical_conversation>是用户和你在 ${formatDayCN(dayKey)} 扮演各自角色所创作的故事。其中带有括号的内容是用户和你的元交流，不带括号的内容是扮演各自角色的故事。需要对故事进行总结，对元交流提取 设定/要求。`);
   parts.push('');
-  parts.push('请按下面的格式输出[总结]和[记忆]：');
+  parts.push('请按下面的格式输出：');
   parts.push('[总结]');
   parts.push('不超100字总结<historical_conversation>里的故事；按时间顺序列出关键事件，平铺直叙，不用比喻，内容太多压不进100字就列几个要点；不要加"总结："前缀，不要用分点符号');
   parts.push('[记忆]');
-  parts.push('提炼元交流中出现的值得长期记忆的 设定/要求，作为附加要求，一条一行，每条不超过20字；没有就只写"无"');
+  parts.push('只有元交流中确实出现了值得长期记忆的 设定/要求 时，才输出[记忆]段。一条一行，每条 设定/要求 不超过20字。没有可记的内容就整段省略——不要输出"[记忆]"标记，也不要写"无"或留空行');
   return parts.join('\n');
 }
 
@@ -300,6 +301,9 @@ function buildPromptText(characterName, history, text) {
   if (readerInfo.trim()) {
     parts.push(`<user_persona>\n<!-- 用户所扮演的角色设定资料 -->\n${readerInfo.trim()}\n</user_persona>`);
   }
+  // 财产状况：角色和用户两方的资产 / 负债 / 收支（角色资产配置里填的），都没填就不发这一段
+  const financialBlock = buildFinancialBlock(characterName, history); // 里面按最新的故事时间推算资产
+  if (financialBlock) parts.push(financialBlock);
   // hot 记忆索引：常驻的、只存没有时效性的附加要求的小索引，由跨天总结/滚动总结
   // 那次 LLM 调用顺带产出并追加，不需要每轮从全量历史里现猜。没内容就不发这一段
   const memoryIndex = loadMemoryIndex(); // 附加要求：全局共用，不区分角色

@@ -140,13 +140,12 @@ function parseSummaryAndMemory(rawText) {
   } else if (sumIdx !== -1) {
     summaryPart = text.slice(sumIdx + 4).trim();
   }
-  const memoryLines =
-    memPart && memPart !== '无'
-      ? memPart
-          .split('\n')
-          .map((l) => l.replace(/^[-*·]\s*/, '').trim())
-          .filter(Boolean)
-      : [];
+  // "没有可记的"有各种写法：无 / 无。/ （无）/ - 无 / 暂无 / 没有 …… 这些都不是记忆，不能写进附加要求
+  const NO_MEMORY_RE = /^[（(【\[]?\s*(?:暂?无|没有|无内容|无新增|none|n\/a)\s*[）)】\]]?[。.!！]?$/i;
+  const memoryLines = memPart
+    .split('\n')
+    .map((l) => l.replace(/^\s*(?:[-*·•]|\d+[.、)）])\s*/, '').trim())
+    .filter((l) => l && !NO_MEMORY_RE.test(l));
   return { summary: summaryPart, memoryLines };
 }
 

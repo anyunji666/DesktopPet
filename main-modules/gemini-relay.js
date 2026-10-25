@@ -18,6 +18,10 @@ const RETRY_ROUNDS = 3;
 const RETRY_BASE_DELAY_MS = 2000;
 const RETRY_MAX_DELAY_MS = 15000;
 const MODELS_CACHE_TTL_MS = 10 * 60 * 1000;
+// 上游请求的超时：不设的话上游挂住时这条请求（连同它占的 Key）会一直悬着。
+// 单次生成留 100 秒（桌宠自己的总超时是 120 秒，见 llm-client.js），拉模型列表 20 秒
+const UPSTREAM_TIMEOUT_MS = 100 * 1000;
+const MODELS_TIMEOUT_MS = 20 * 1000;
 
 let server = null;
 let keyStates = []; // [{ key, cooldownUntil }]
@@ -84,7 +88,7 @@ async function fetchModelsWithKey(apiKey) {
   let pageToken = '';
   do {
     const url = `https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''}`;
-    const resp = await fetch(url, { headers: { 'x-goog-api-key': apiKey } });
+    const resp = await fetch(url, { headers: { 'x-goog-api-key': apiKey }, signal: AbortSignal.timeout(MODELS_TIMEOUT_MS) });
     if (!resp.ok) {
       const bodyText = await resp.text();
       throw { status: resp.status, body: bodyText };
@@ -200,11 +204,16 @@ function toGeminiContents(messages) {
   return contents;
 }
 
+// 调用方中途断开连接（桌宠超时放弃 / 窗口关闭）时抛出，不可重试
+const CLIENT_GONE = { status: 499, body: '调用方已断开连接，中止请求', retryable: false };
+
 // 单轮：把所有 key 轮一遍。成功则返回 resp；这一轮全部失败则抛出 lastErr
-async function tryAllKeysOnce(model, contents) {
+async function tryAllKeysOnce(model, contents, generationConfig, clientSignal) {
   const maxAttempts = keyStates.length;
   let lastErr = null;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    // 调用方（桌宠）已经放弃这次请求：别再换 Key 重试，白白消耗额度
+    if (clientSignal && clientSignal.aborted) throw CLIENT_GONE;
     const idx = pickKey();
     const keyState = keyStates[idx];
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
@@ -215,9 +224,11 @@ async function tryAllKeysOnce(model, contents) {
         method: 'POST',
         // Key 放请求头而不是 URL 查询参数：URL 容易被各种日志 / 报错信息带出去
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': keyState.key },
-        body: JSON.stringify({ contents }),
+        body: JSON.stringify(generationConfig ? { contents, generationConfig } : { contents }),
+        signal: clientSignal ? AbortSignal.any([clientSignal, AbortSignal.timeout(UPSTREAM_TIMEOUT_MS)]) : AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
       });
     } catch (networkErr) {
+      if (clientSignal && clientSignal.aborted) throw CLIENT_GONE;
       lastErr = { status: 0, body: redact(String(networkErr), [keyState.key]), retryable: true };
       continue;
     }
@@ -257,11 +268,11 @@ function sleep(ms) {
 }
 
 // 外层重试：一轮所有 key 都因临时性错误失败，指数退避后整体再来一轮；遇到不可自愈的错误直接放弃
-async function callGemini(model, contents) {
+async function callGemini(model, contents, generationConfig, clientSignal) {
   let lastErr = null;
   for (let round = 0; round < RETRY_ROUNDS; round++) {
     try {
-      return await tryAllKeysOnce(model, contents);
+      return await tryAllKeysOnce(model, contents, generationConfig, clientSignal);
     } catch (err) {
       lastErr = err;
       if (!err.retryable) {
@@ -295,9 +306,23 @@ async function handleChatCompletions(payload, res) {
     return sendJson(res, 400, { error: { message: 'model 字段含有非法字符' } });
   }
   const contents = toGeminiContents(payload && payload.messages);
+  // 透传界面里设置的温度（OpenAI 的 0~2 范围和 Gemini 一致）；不传就用 Gemini 自己的默认值。
+  // max_tokens 故意不透传：Gemini 2.5 系列的思考 token 也算在输出上限里，
+  // 桌宠里设置的上限可能偏小，会让思考型模型常常"思考完就没额度出正文"，宁可不限
+  const temperature = payload && Number(payload.temperature);
+  const generationConfig =
+    payload && payload.temperature != null && Number.isFinite(temperature)
+      ? { temperature: Math.min(2, Math.max(0, temperature)) }
+      : undefined;
+
+  // 调用方断开（桌宠 120 秒超时 / 窗口关闭）就中止上游重试，别继续白白烧 Key 的额度
+  const ctrl = new AbortController();
+  res.on('close', () => {
+    if (!res.writableFinished) ctrl.abort();
+  });
 
   try {
-    const geminiResp = await callGemini(model, contents);
+    const geminiResp = await callGemini(model, contents, generationConfig, ctrl.signal);
     const data = await geminiResp.json();
     const cand = data?.candidates?.[0];
     // 拼接所有文字 part（跳过思考摘要 thought），不再只取 parts[0]
@@ -321,6 +346,7 @@ async function handleChatCompletions(payload, res) {
     });
   } catch (err) {
     log('所有 Key 均失败:', err);
+    if (err === CLIENT_GONE || res.destroyed) return; // 对面已经不在了，没人收这个响应
     sendJson(res, err.status || 500, {
       error: { message: '所有 Key 都调用失败，详情: ' + redact(err.body || err.message || '未知错误', keyStates.map((k) => k.key)) },
     });

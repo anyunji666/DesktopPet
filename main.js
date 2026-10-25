@@ -27,6 +27,7 @@ const {
   savePersonaFile,
   loadChatHistory,
   saveChatHistory,
+  onChatHistorySaved,
   readChatImageDataURL,
   deleteChatImage,
   clearChatImages,
@@ -39,6 +40,7 @@ const {
   MEMORY_MAX_CHARS,
   clearOpenedDay,
 } = require('./main-modules/chat-store');
+const { loadAssets, saveAssetsFile, currentStoryDate } = require('./main-modules/assets');
 const { getTtsConfig, saveTtsConfig, getPresets, testVoice } = require('./main-modules/tts');
 const { maskProviders, resolveProvidersInput } = require('./main-modules/tts/config');
 const { getAsrConfig, saveAsrConfig } = require('./main-modules/asr/config');
@@ -71,6 +73,7 @@ const {
   toggleDevEntries,
   openHistoryWindow,
   confirmCharacterVoiceSwitch,
+  confirmAssetsSwitch,
   send,
   currentCharacterPayload,
   currentScene,
@@ -547,7 +550,8 @@ ipcMain.on('about-open-repo', (e) => {
 ipcMain.handle('about-toggle-dev-entries', (e) => (fromAboutWin(e) ? toggleDevEntries() : state.showDevEntries));
 
 ipcMain.on('window-move', (_e, dx, dy) => {
-  if (!state.win || state.bgMouseInteraction === false) return;
+  if (!state.win || state.win.isDestroyed() || state.bgMouseInteraction === false) return;
+  if (!Number.isFinite(dx) || !Number.isFinite(dy)) return; // 非数值会让 setPosition 抛异常
   // 位置限制：窗口中间一半的区域不能移出屏幕工作区（多显示器合并计算，详见 win-limit.js）；
   // 被限制住的那部分位移直接丢弃
   const cur = state.win.getBounds();
@@ -557,12 +561,13 @@ ipcMain.on('window-move', (_e, dx, dy) => {
 
 // 缩放：渲染进程只上报"鼠标相对按下时的水平位移"，尺寸和宽高比全部在这里算
 ipcMain.on('window-resize-begin', () => {
-  if (!state.win || state.bgMouseInteraction === false) return;
+  if (!state.win || state.win.isDestroyed() || state.bgMouseInteraction === false) return;
   state.resizeStartW = state.win.getBounds().width;
 });
 
 ipcMain.on('window-resize-by', (_e, dx) => {
-  if (!state.win || state.bgMouseInteraction === false || !Number.isFinite(dx)) return;
+  if (!state.win || state.win.isDestroyed() || state.bgMouseInteraction === false || !Number.isFinite(dx)) return;
+  if (!(state.resizeStartW > 0)) return; // 没收到 begin（或窗口已销毁重建）时没有基准宽度，直接忽略
   const w = Math.max(WIN_MIN_W, Math.min(WIN_MAX_W, Math.round(state.resizeStartW + dx)));
   const h = Math.round((w * WIN_H) / WIN_W);
   // 缩放时左上角不动、向右下放大，窗口变大后中间区域可能被推出工作区，这里一并限制
@@ -584,6 +589,13 @@ ipcMain.on('scene-adjust-save', (_e, name, adj) => {
 
 ipcMain.on('show-menu', () => {
   if (state.menu && state.win) state.menu.popup({ window: state.win });
+});
+
+// 声音开关状态：渲染进程应用完静音后上报，菜单据此显示勾选（见 window.js 的"声音开关状态"注释）。
+// 必须在 guardIpc 之后注册，才会经过来源校验
+ipcMain.on('mute-changed', (_e, muted) => {
+  state.muted = !!muted;
+  state.menu = buildMenu();
 });
 
 // ---------- IPC：AI 对话 ----------
@@ -679,6 +691,27 @@ ipcMain.handle('save-persona', (_e, characterName, data) => {
     readerInfo: typeof d.readerInfo === 'string' ? d.readerInfo.trim() : '',
   });
   return true;
+});
+// ---------- IPC：指定角色的资产配置（角色资产配置窗口用，按窗口打开的角色，不跟桌宠当前角色） ----------
+// 读取 / 保存都经过 assets-calc 的 sanitize，页面拿到和存进去的永远是整理过的合法数据
+ipcMain.handle('get-assets', (_e, characterName) => {
+  if (!validCharacter(characterName)) throw new Error('未知角色');
+  return loadAssets(characterName, loadChatHistory(characterName)); // 推算到当前故事日期
+});
+ipcMain.handle('save-assets', (_e, characterName, data) => {
+  if (!validCharacter(characterName)) throw new Error('未知角色');
+  return saveAssetsFile(characterName, data && typeof data === 'object' ? data : {}, loadChatHistory(characterName));
+});
+// 聊天记录一写盘（新回复 / 编辑 / 删除 / 重新生成 / 清空）就把当前故事日期告诉已打开的资产配置窗口，
+// 页面据此刷新推算后的数字（有未保存修改时只提示，不覆盖）
+onChatHistorySaved((characterName, history) => {
+  const w = state.assetsWin;
+  if (!w || w.isDestroyed() || state.assetsWinCharacter !== characterName) return;
+  w.webContents.send('assets-story-changed', currentStoryDate(history));
+});
+// 角色资产配置窗口：页面在浮层里确认"放弃修改并切换"后，主进程把窗口原地重载成目标角色
+ipcMain.on('assets-switch-confirm', (_e, characterName) => {
+  confirmAssetsSwitch(characterName);
 });
 // ---------- IPC：附加要求（memory index）编辑（API 与全局设置窗口用） ----------
 // 附加要求 = 跨天总结时 AI 从元交流里自动提炼的长期设定/要求，这里允许用户手动增删改。全局共用一份，不区分角色。
@@ -908,9 +941,9 @@ ipcMain.handle('delete-chat-message', (_e, characterName, index) => {
   const history = loadChatHistory(characterName);
   if (index >= history.length) throw new Error('无效的消息索引');
   const removed = history.splice(index, 1)[0];
+  saveChatHistory(characterName, history); // 先落盘，成功后再删图片/语音文件，避免记录还在、附件却没了
   if (removed && removed.image) deleteChatImage(characterName, removed.image); // 图片文件跟着删
   if (removed) deleteChatVoice(characterName, removed.ts); // 回复语音也跟着删
-  saveChatHistory(characterName, history);
   return true;
 });
 

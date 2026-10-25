@@ -11,9 +11,10 @@ const {
   saveDaySummary,
   clearDaySummaries,
   clearOpenedDay,
+  chatImageDir,
   saveChatImage,
+  deleteChatImage,
   readChatImageDataURL,
-  clearChatImages,
   clearChatVoices,
 } = require('./chat-store');
 
@@ -99,33 +100,56 @@ function parseImport(data) {
 }
 
 // ---------- 导入：落盘 ----------
+// 顺序很重要：先把新图片存好、再整份写入新记录，两步都成功之后才去清理旧数据。
+// 如果一上来就清空旧图片 / 旧总结，中途失败（磁盘满、写入出错）时旧记录还在、它引用的图片却已经没了；
+// 现在中途失败会把已存的新图片回滚掉，原有的记录、图片、总结原封不动。
 function applyImport(characterName, data) {
   const { messages, daySummaries, skipped } = parseImport(data);
 
-  // 校验通过，才开始动现有数据：整份覆盖，跟"清空对话"清掉的东西保持一致
-  clearChatImages(characterName);
+  const history = [];
+  const newImages = new Set(); // 这次导入新存下来的图片文件名
+  let imageFailed = 0;
+  try {
+    for (const m of messages) {
+      const entry = { role: m.role, content: m.content, ts: m.ts };
+      if (m.imageDataURL) {
+        try {
+          entry.image = saveChatImage(characterName, m.imageDataURL);
+          newImages.add(entry.image);
+        } catch (err) {
+          imageFailed++;
+          if (!entry.content.trim()) continue; // 图片存不下来、又没有文字，这条就没内容了
+        }
+      }
+      history.push(entry);
+    }
+    saveChatHistory(characterName, history);
+  } catch (err) {
+    for (const f of newImages) deleteChatImage(characterName, f); // 回滚：删掉这次新存的图片，旧数据没动过
+    throw err;
+  }
+
+  // 新记录已经落盘：整份覆盖，把旧数据清掉，跟"清空对话"清掉的东西保持一致
+  purgeImagesExcept(characterName, newImages);
   clearChatVoices(characterName);
   clearDaySummaries(characterName);
   clearOpenedDay(characterName);
-
-  const history = [];
-  let imageFailed = 0;
-  for (const m of messages) {
-    const entry = { role: m.role, content: m.content, ts: m.ts };
-    if (m.imageDataURL) {
-      try {
-        entry.image = saveChatImage(characterName, m.imageDataURL);
-      } catch (err) {
-        imageFailed++;
-        if (!entry.content.trim()) continue; // 图片存不下来、又没有文字，这条就没内容了
-      }
-    }
-    history.push(entry);
-  }
-  saveChatHistory(characterName, history);
   for (const [k, v] of Object.entries(daySummaries)) saveDaySummary(characterName, k, v);
 
   return { count: history.length, skipped, imageFailed };
+}
+
+// 删掉角色图片目录里除 keep 以外的所有文件（旧记录的图片）
+function purgeImagesExcept(characterName, keep) {
+  let files = [];
+  try {
+    files = fs.readdirSync(chatImageDir(characterName));
+  } catch {
+    return;
+  }
+  for (const f of files) {
+    if (!keep.has(f)) deleteChatImage(characterName, f);
+  }
 }
 
 function importFromFile(characterName, filePath) {

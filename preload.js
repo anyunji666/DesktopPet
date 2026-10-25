@@ -48,6 +48,12 @@ contextBridge.exposeInMainWorld('petAPI', {
   // 指定角色的设定（persona.json：世界背景 / 角色资料 / 别名 / 你的资料）读取 / 保存（角色与音色设置窗口用）
   getPersona: (characterName) => ipcRenderer.invoke('get-persona', characterName),
   savePersona: (characterName, data) => ipcRenderer.invoke('save-persona', characterName, data),
+  // 角色资产配置窗口：读取 / 保存某角色的资产设定（角色和用户两方）；换角色时主进程先问页面有没有未保存的修改
+  getAssets: (characterName) => ipcRenderer.invoke('get-assets', characterName),
+  saveAssets: (characterName, data) => ipcRenderer.invoke('save-assets', characterName, data),
+  onAssetsStoryChanged: (cb) => ipcRenderer.on('assets-story-changed', (_e, now) => cb(now)),
+  onAssetsSwitchAsk: (cb) => ipcRenderer.on('assets-switch-ask', (_e, name) => cb(name)),
+  assetsSwitch: (characterName) => ipcRenderer.send('assets-switch-confirm', characterName),
   // 附加要求（memory index，全局共用）读取 / 保存（API 与全局设置窗口用）
   getMemoryIndex: () => ipcRenderer.invoke('get-memory-index'),
   saveMemoryIndex: (text) => ipcRenderer.invoke('save-memory-index', text),

@@ -122,8 +122,8 @@ export function syncTempBubble() {
 }
 onPendingChange(syncTempBubble);
 
-export async function load() {
-  const history = await window.petAPI.getChatHistory(characterName);
+// 把一份历史记录渲染进列表（同步执行，中间没有 await，不会被别的重绘打断）
+function renderHistory(history) {
   if (!history.length) {
     emptyEl.style.display = 'block';
     return;
@@ -131,13 +131,20 @@ export async function load() {
   for (const m of history) appendMsg(m.role, m.content, m.ts, m.imageDataURL, m.storyTime, m.summaryOverview, m.rawContent);
 }
 
+export async function load() {
+  renderHistory(await window.petAPI.getChatHistory(characterName));
+}
+
 // 全量重绘（编辑/删除后调用）；keepScroll 时恢复原滚动位置，避免编辑中间的消息后跳到底部
+// 必须先取数据、再同步地清空并渲染：如果先清空再 await 取数据，两次重绘重叠时
+// 会各自清空、各自追加，同一批消息就显示两遍
 export async function reload(keepScroll = false) {
   const prevScroll = window.scrollY;
+  const history = await window.petAPI.getChatHistory(characterName);
   stopReplay(); // 整页重绘（删除 / 重新生成等）会让正在重听的那条可能已不存在，先停掉
   list.innerHTML = '';
   view.msgCount = 0;
-  await load();
+  renderHistory(history);
   syncTempBubble(); // 整页重绘会把临时气泡也清掉，正在等回复的话补回去
   if (keepScroll) window.scrollTo(0, prevScroll);
 }

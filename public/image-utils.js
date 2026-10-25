@@ -25,11 +25,18 @@
     const img = await loadImg(dataURL);
     const MAX = 1280;
     const scale = Math.min(1, MAX / Math.max(img.naturalWidth, img.naturalHeight));
-    if (scale === 1 && dataURL.length < 500000) return dataURL;
+    // 主进程只收 png / jpeg / gif / webp（chat-store.js 的 saveChatImage）：其它格式（bmp / svg / avif …）
+    // 哪怕很小也要转成 jpeg，不能原样放行，否则发送时才报"不支持的图片格式"
+    const accepted = ['image/png', 'image/jpeg', 'image/webp'].includes(file.type);
+    if (scale === 1 && accepted && dataURL.length < 500000) return dataURL;
     const canvas = document.createElement('canvas');
-    canvas.width = Math.round(img.naturalWidth * scale);
-    canvas.height = Math.round(img.naturalHeight * scale);
-    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+    canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+    const ctx = canvas.getContext('2d');
+    // JPEG 没有透明通道：不垫底色的话，带透明的 PNG 截图透明处会变成纯黑
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
     return canvas.toDataURL('image/jpeg', 0.85);
   }
 

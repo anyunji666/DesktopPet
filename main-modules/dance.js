@@ -6,19 +6,50 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const ACTIONS_ROOT = path.join(ROOT, 'Actions');
 
+// 文件大小读不到（权限 / 损坏的快捷方式）就当 0，不让一个坏文件拖垮整个扫描
+function sizeOrZero(p) {
+  try {
+    return fs.statSync(p).size;
+  } catch {
+    return 0;
+  }
+}
+
+function isDirSafe(p) {
+  try {
+    return fs.statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+// 返回动作列表；Actions 目录不存在 / 读不了时返回空数组（右键菜单里就没有舞蹈项），
+// 不能抛错：启动时 buildMenu 和角色数据都会调到这里，抛了宠物就起不来
 function scanDances() {
   const dances = [];
-  const names = fs
-    .readdirSync(ACTIONS_ROOT)
-    .filter((name) => fs.statSync(path.join(ACTIONS_ROOT, name)).isDirectory())
-    .sort();
+  let names;
+  try {
+    names = fs
+      .readdirSync(ACTIONS_ROOT)
+      .filter((name) => isDirSafe(path.join(ACTIONS_ROOT, name)))
+      .sort();
+  } catch (err) {
+    console.warn(`[pet] 读取 Actions 目录失败，没有可用动作: ${err.message}`);
+    return dances;
+  }
   for (const name of names) {
     const dir = path.join(ACTIONS_ROOT, name);
-    const files = fs.readdirSync(dir);
+    let files;
+    try {
+      files = fs.readdirSync(dir);
+    } catch (err) {
+      console.warn(`[pet] 动作 "${name}" 目录读取失败，已跳过: ${err.message}`);
+      continue;
+    }
     // 过滤镜头/表情文件，选最大的 vmd 作为主动作
     const vmds = files
       .filter((f) => /\.vmd$/i.test(f) && !/镜头|camera|表情/i.test(f))
-      .map((f) => ({ f, size: fs.statSync(path.join(dir, f)).size }))
+      .map((f) => ({ f, size: sizeOrZero(path.join(dir, f)) }))
       .sort((a, b) => b.size - a.size);
     if (!vmds.length) {
       console.warn(`[pet] 动作 "${name}" 目录下没有可用的 vmd 文件，已跳过`);

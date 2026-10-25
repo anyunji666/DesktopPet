@@ -11,9 +11,18 @@
 //     byte3 保留位，固定 0x00
 //   flags 非 0 时，header 后跟 4 字节大端有符号序列号（负数表示"这是最后一包"）
 //   再跟 4 字节大端无符号 payload 长度 + payload 本体（按 header 里的压缩方式处理）
-const WebSocket = require('ws');
 const crypto = require('crypto');
 const zlib = require('zlib');
+
+// ws 包在需要开语音识别时才加载（不在文件顶部 require）：main.js 启动时就会加载本文件，
+// 缺依赖时只让语音识别报一条看得懂的错，而不是整个宠物起不来（和 tts/edge.js 的做法一致）
+function loadWs() {
+  try {
+    return require('ws');
+  } catch {
+    throw new Error('缺少依赖 ws（语音识别需要），请在项目目录运行 npm install 后重启宠物');
+  }
+}
 
 const WS_URL = 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel';
 const IDLE_TIMEOUT_MS = 15000; // 超过这么久收不到服务端任何消息就当异常收尾，避免会话一直挂着
@@ -132,6 +141,7 @@ function extractText(json) {
 //   onError(err)    —— 出错时回调一次（连接失败/鉴权失败/服务端错误包/超时），之后不会再有 onFinal
 // 返回 { sendAudio(pcmBuffer), finish() }：finish() 通知"音频发完了"，等最终结果或连接关闭
 function createAsrSession({ appId, accessKey, resourceId, onPartial, onFinal, onError }) {
+  const WebSocket = loadWs();
   let seq = 1;
   let lastText = '';
   let finished = false;

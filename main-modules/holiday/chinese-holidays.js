@@ -35,12 +35,16 @@ function subtractOneDay(solar) {
 
 // 农历新年常在公历 1~2 月、腊八常落在公历 12 月或次年 1 月初，"农历 Y 年"和"公历 Y 年"并不对齐。
 // 所以对每个节日分别试农历 targetYear 和 targetYear-1，取换算后公历年等于目标年的那个。
+// 返回数组：同一个农历节日在一个公历年里可能出现两次——典型就是腊八（腊月初八），
+// 农历年底的腊八可能落在公历 12 月底，而上一个农历年的腊八又落在这一年的 1 月初
+// （例如 2022 年既有 1 月 10 日、又有 12 月 30 日），只取第一个会漏掉另一次。
 function resolveToTargetSolarYear(lunarMonth, lunarDay, targetSolarYear) {
+  const found = [];
   for (const lunarYear of [targetSolarYear, targetSolarYear - 1]) {
     const solar = lunarToSolar(lunarYear, lunarMonth, lunarDay);
-    if (solar && solar.year === targetSolarYear) return solar;
+    if (solar && solar.year === targetSolarYear) found.push(solar);
   }
-  return null;
+  return found;
 }
 
 // 按公历年份返回当年全部中国节日 [{ month, day, name }]
@@ -49,10 +53,10 @@ function getChineseHolidays(solarYear) {
   let springFestival = null;
 
   for (const def of CHINESE_LUNAR_HOLIDAYS_FIXED) {
-    const solar = resolveToTargetSolarYear(def.lunarMonth, def.lunarDay, solarYear);
-    if (!solar) continue;
-    result.push({ month: solar.month, day: solar.day, name: def.name });
-    if (def.name === '春节') springFestival = solar;
+    for (const solar of resolveToTargetSolarYear(def.lunarMonth, def.lunarDay, solarYear)) {
+      result.push({ month: solar.month, day: solar.day, name: def.name });
+      if (def.name === '春节') springFestival = solar;
+    }
   }
 
   if (springFestival) {
