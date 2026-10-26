@@ -75,6 +75,9 @@
   .status.ok { color: #2a8f4e; }
   .status.err { color: #c93454; }
   .status.busy { color: #999; }
+  /* 就近提示：紧贴在触发它的控件说明下方，空内容时不占位 */
+  .status.inline { margin-top: 4px; min-height: 0; }
+  .status.inline:empty { display: none; }
   /* ---------- 关窗口前的确认浮层（替代系统对话框，样式跟聊天记录窗口的确认框一致） ---------- */
   .overlay {
     position: fixed;
@@ -177,6 +180,7 @@
       <label>Resource ID</label>
       <input id="asr_resource_id" placeholder="如 volc.bigasr.sauc.duration" />
       <p class="tip">复用上面这套 App ID / Access Key。流式语音识别大模型-小时版 已预填 volc.bigasr.sauc.duration，不需要改动。</p>
+      <div id="asr-status" class="status inline"></div>
 
       <div class="section-title">豆包 · 此角色的音色</div>
       <label>音色来源</label>
@@ -203,6 +207,7 @@
           <button id="doubao-preset-reset" class="inline-btn" type="button">恢复默认</button>
         </div>
         <p class="tip">导入的 json 会整体覆盖替换当前预置音色列表（每条含 name / speakerId / resourceId / note）；恢复默认会丢弃导入过的内容，换回程序自带的列表。</p>
+        <div id="preset-status" class="status inline"></div>
       </div>
     </div>
 
@@ -233,6 +238,7 @@
           <button id="clone-clear" class="inline-btn" type="button">清除</button>
         </div>
         <p class="tip">选一段清晰、无背景音乐的单人说话录音（仅支持 wav / mp3，不超过 7 MB）。选中后会复制一份到程序数据目录，之后原文件可以移动或删除。</p>
+        <div id="clone-status" class="status inline"></div>
       </div>
     </div>
 
@@ -267,23 +273,27 @@
   }
 
   // 两套状态提示共用一套行为：非错误类文案 2 秒后自动清空；err 常驻，等用户下次操作再被覆盖
-  function makeStatus(elId) {
+  function makeStatus(elId, base = 'status') {
     let timer = null;
     return (text, cls) => {
       const el = $(elId);
       el.textContent = text || '';
-      el.className = 'status' + (cls ? ' ' + cls : '');
+      el.className = base + (cls ? ' ' + cls : '');
       if (timer) { clearTimeout(timer); timer = null; }
       if (text && cls !== 'err') {
         timer = setTimeout(() => {
           el.textContent = '';
-          el.className = 'status';
+          el.className = base;
         }, 2000);
       }
     };
   }
   const setPersonaStatus = makeStatus('persona-status');
   const setVoiceStatus = makeStatus('voice-status');
+  // 就近提示：各自显示在触发它的控件下方，不再堆到页面最底部
+  const setPresetStatus = makeStatus('preset-status', 'status inline');
+  const setCloneStatus = makeStatus('clone-status', 'status inline');
+  const setAsrStatus = makeStatus('asr-status', 'status inline');
 
   // ---------- 未保存提示 ----------
   // 两段表单各记一份"改过、还没保存"的状态：标题旁边亮红点；关窗口时由 beforeunload 拦下，
@@ -537,7 +547,7 @@
     // 走到这里才算加载完整，放开试听 / 保存
     $('voice-save-btn').disabled = false;
     $('test-btn').disabled = false;
-    if (!asrLoaded) setVoiceStatus('语音识别配置读取失败，本次保存不会修改它', 'err');
+    if (!asrLoaded) setAsrStatus('语音识别配置读取失败，本次保存不会修改它', 'err');
   }
 
   // 表单 -> 与主进程 ttsConfig 同结构的对象（主进程会再规整一遍）
@@ -589,6 +599,7 @@
   $('doubao_preset_voice').addEventListener('change', renderDoubaoPresetNote);
 
   $('doubao-preset-import').addEventListener('click', async () => {
+    setPresetStatus('');
     try {
       const list = await window.petAPI.ttsDoubaoVoicesImport();
       if (list) {
@@ -596,47 +607,51 @@
         fillDoubaoPresetSelect();
         renderDoubaoPresetNote();
         voiceDirty.mark();
-        setVoiceStatus(`已导入 ${list.length} 条预置音色，记得点"保存"`, 'ok');
+        setPresetStatus(`已导入 ${list.length} 条预置音色，记得点"保存"`, 'ok');
       }
     } catch (err) {
-      setVoiceStatus('导入失败：' + errText(err), 'err');
+      setPresetStatus('导入失败：' + errText(err), 'err');
     }
   });
   $('doubao-preset-export').addEventListener('click', async () => {
+    setPresetStatus('');
     try {
       const filePath = await window.petAPI.ttsDoubaoVoicesExport();
-      if (filePath) setVoiceStatus('已导出到 ' + filePath, 'ok');
+      if (filePath) setPresetStatus('已导出到 ' + filePath, 'ok');
     } catch (err) {
-      setVoiceStatus('导出失败：' + errText(err), 'err');
+      setPresetStatus('导出失败：' + errText(err), 'err');
     }
   });
   $('doubao-preset-reset').addEventListener('click', async () => {
+    setPresetStatus('');
     try {
       doubaoVoiceList = await window.petAPI.ttsDoubaoVoicesReset();
       fillDoubaoPresetSelect();
       renderDoubaoPresetNote();
       voiceDirty.mark();
-      setVoiceStatus('已恢复默认预置音色，记得点"保存"', 'ok');
+      setPresetStatus('已恢复默认预置音色，记得点"保存"', 'ok');
     } catch (err) {
-      setVoiceStatus('恢复默认失败：' + errText(err), 'err');
+      setPresetStatus('恢复默认失败：' + errText(err), 'err');
     }
   });
 
   $('clone-pick').addEventListener('click', async () => {
+    setCloneStatus('');
     try {
       const r = await window.petAPI.ttsPickCloneAudio(character);
       if (r) {
         cloneAudio = r;
         renderClone();
         voiceDirty.mark();
-        setVoiceStatus('参考音频已选择，记得点"保存"', 'ok');
+        setCloneStatus('参考音频已选择，记得点"保存"', 'ok');
       }
     } catch (err) {
-      setVoiceStatus('选择参考音频失败：' + errText(err), 'err');
+      setCloneStatus('选择参考音频失败：' + errText(err), 'err');
     }
   });
   $('clone-clear').addEventListener('click', () => {
     cloneAudio = null;
+    setCloneStatus('');
     renderClone();
     voiceDirty.mark();
   });
@@ -658,6 +673,8 @@
 
   $('voice-save-btn').addEventListener('click', async () => {
     setVoiceStatus('保存中…', 'busy');
+    setPresetStatus('');
+    setCloneStatus('');
     try {
       await window.petAPI.ttsSaveConfig(character, collect());
       if (asrLoaded) await window.petAPI.asrSaveConfig({ resourceId: $('asr_resource_id').value });

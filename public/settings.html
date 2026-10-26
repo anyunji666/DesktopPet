@@ -83,6 +83,11 @@
   #status { margin-top: 10px; font-size: 12px; min-height: 16px; }
   #status.ok { color: #2a8f4e; }
   #status.err { color: #c93454; }
+  /* 就近提示：紧贴在触发它的控件说明文字下方，空内容时不占位 */
+  .msg { margin: 4px 0 0; font-size: 12px; line-height: 1.5; }
+  .msg:empty { display: none; }
+  .msg.ok { color: #2a8f4e; }
+  .msg.err { color: #c93454; }
   .model-row { display: flex; gap: 8px; }
   .model-row input { flex: 1; }
   .model-row button {
@@ -164,6 +169,7 @@
   <label>附加要求</label>
   <textarea id="memory_index" style="min-height: 90px" placeholder="一行一条&#10;例如：&#10;故事保持轻松日常节奏&#10;战斗场景略写不细描&#10;不要突然跳过时间线"></textarea>
   <p class="tip"><span id="memory-count">0 / 200</span>　所有角色共用。跨天总结时 AI 会自动从元交流中提炼并追加，你也可以在这里增删修改；建议每条 20 字内，总量上限 200 字，超出无法保存。</p>
+  <p class="msg" id="msg-memory"></p>
 
   <div class="section-title">⚙ 对话功能 · API 设置（全局生效，不区分角色）</div>
   <p class="tip">通用 OpenAI 兼容接口配置，支持任意兼容平台（OpenAI / DeepSeek / 各类中转等）</p>
@@ -175,6 +181,7 @@
     <div id="url_list" class="combo-list"></div>
   </div>
   <p class="tip">填到 /v1 为止即可，程序会自动拼接 /chat/completions。点右侧 ▾ 可选择保存过的地址，会自动填入对应的密钥</p>
+  <p class="msg" id="msg-url"></p>
 
   <label>API Key</label>
   <input id="api_key" type="password" placeholder="sk-..." />
@@ -186,6 +193,7 @@
   </div>
   <select id="model_select"></select>
   <p class="tip">填好 URL / Key 后可以点"加载模型"拉取该平台支持的模型列表，选一个自动填进上面的输入框；也可以不点，直接手动填模型名</p>
+  <p class="msg" id="msg-models"></p>
 
   <label style="display: flex; align-items: center; gap: 6px; margin-top: 14px; cursor: pointer; font-size: 13px; color: #555;">
     <input id="vision" type="checkbox" style="width: auto;" />
@@ -211,6 +219,7 @@
   <label>个人 Gemini API Key（AI Studio 申请的那种，格式 AIzaSy...）</label>
   <textarea id="llm_relay_keys" placeholder="仅支持能直连上gemini的网络，一行一Key"></textarea>
   <p class="tip" id="relay-status-tip"></p>
+  <p class="msg" id="msg-relay"></p>
 
   <button id="save-btn">保存</button>
   <div id="status"></div>
@@ -248,6 +257,22 @@
     }
   }
 
+  // 就近提示：写到指定的 .msg 元素；非错误文案 2 秒后自动清空，err 常驻直到下次操作覆盖
+  const msgTimers = {};
+  function setMsg(id, text, cls) {
+    const el = $(id);
+    el.textContent = text || '';
+    el.className = 'msg' + (cls ? ' ' + cls : '');
+    if (msgTimers[id]) { clearTimeout(msgTimers[id]); msgTimers[id] = null; }
+    if (text && cls !== 'err') {
+      msgTimers[id] = setTimeout(() => {
+        el.textContent = '';
+        el.className = 'msg';
+      }, 4000);
+    }
+  }
+  const errText = (err) => (err && err.message ? err.message : String(err));
+
   // 中转当前是否真的在跑（来自后端状态，不是 textarea 里有没有字）
   let relayRunning = false;
 
@@ -279,13 +304,14 @@
     if (!wantStop && keysList.length === 0) return;
 
     btn.disabled = true;
+    setMsg('msg-relay', '');
     try {
       // 只保存 llmRelayKeys 这一个字段，不影响 API Base URL / Key / 模型名等其它设置
       const result = await window.petAPI.saveApiConfig({ llmRelayKeys: wantStop ? [] : keysList });
       applyRelayStatus(result.relayStatus);
-      setStatus(relayRunning ? '中转已启动' : '中转已停止', 'ok');
+      setMsg('msg-relay', relayRunning ? '中转已启动' : '中转已停止', 'ok');
     } catch (err) {
-      setStatus('操作失败：' + (err && err.message ? err.message : String(err)), 'err');
+      setMsg('msg-relay', '操作失败：' + errText(err), 'err');
     } finally {
       btn.disabled = false;
     }
@@ -340,11 +366,12 @@
           return;
         }
         clearTimeout(armTimer);
+        setMsg('msg-url', '');
         try {
           apiProfiles = await window.petAPI.deleteApiProfile(p.api_url);
           renderUrlList();
         } catch (err) {
-          setStatus('删除失败：' + (err && err.message ? err.message : String(err)), 'err');
+          setMsg('msg-url', '删除失败：' + errText(err), 'err');
         }
       });
 
@@ -401,18 +428,22 @@
       $('memory_index').value = memory.text || '';
       updateMemoryCount();
     } catch (err) {
-      setStatus('加载附加要求失败：' + (err && err.message ? err.message : String(err)), 'err');
+      setMsg('msg-memory', '加载附加要求失败：' + errText(err), 'err');
     }
   }
 
-  $('memory_index').addEventListener('input', updateMemoryCount);
+  $('memory_index').addEventListener('input', () => {
+    updateMemoryCount();
+    setMsg('msg-memory', '');
+  });
 
   $('save-btn').addEventListener('click', async () => {
     // 附加要求超限先拦在最前面，别让其它设置存了一半才报错
     if (memoryLoaded && normalizeMemory($('memory_index').value).length > memoryLoaded.maxChars) {
-      setStatus('附加要求超过 ' + memoryLoaded.maxChars + ' 字上限，请删减后再保存', 'err');
+      setMsg('msg-memory', '附加要求超过 ' + memoryLoaded.maxChars + ' 字上限，请删减后再保存', 'err');
       return;
     }
+    setMsg('msg-memory', '');
     setStatus('保存中…', '');
     try {
       await window.petAPI.saveApiConfig({
@@ -445,7 +476,7 @@
     const select = $('model_select');
     btn.disabled = true;
     btn.textContent = '加载中…';
-    setStatus('', '');
+    setMsg('msg-models', '');
     try {
       // 直接用表单里当前填的值去拉，不强制先保存
       const list = await window.petAPI.fetchModelList($('api_url').value.trim(), $('api_key').value.trim());
@@ -463,10 +494,10 @@
         select.appendChild(opt);
       }
       select.classList.add('show');
-      setStatus(`已获取 ${list.length} 个模型，从下拉框里选一个`, 'ok');
+      setMsg('msg-models', `已获取 ${list.length} 个模型，从下拉框里选一个`, 'ok');
     } catch (err) {
       select.classList.remove('show');
-      setStatus('加载模型列表失败：' + (err && err.message ? err.message : String(err)), 'err');
+      setMsg('msg-models', '加载模型列表失败：' + errText(err), 'err');
     } finally {
       btn.disabled = false;
       btn.textContent = '🔄 加载模型';

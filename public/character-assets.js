@@ -15,14 +15,16 @@
   }
 
   // 非错误类提示 2 秒后自动清空；err 常驻，等下次操作再被覆盖
-  let statusTimer = null;
-  function setStatus(text, cls) {
-    const el = $('status');
+  // 底部 #status 对应「保存」按钮；加载 / 刷新失败各自显示在出错的位置（#load-status 页面顶部、#story-status 故事日期旁）
+  const statusTimers = {};
+  function setStatus(text, cls, id = 'status') {
+    const el = $(id);
+    const base = id === 'status' ? 'status' : 'status inline';
     el.textContent = text || '';
-    el.className = 'status' + (cls ? ' ' + cls : '');
-    if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
+    el.className = base + (cls ? ' ' + cls : '');
+    if (statusTimers[id]) { clearTimeout(statusTimers[id]); statusTimers[id] = null; }
     if (text && cls !== 'err') {
-      statusTimer = setTimeout(() => { el.textContent = ''; el.className = 'status'; }, 2000);
+      statusTimers[id] = setTimeout(() => { el.textContent = ''; el.className = base; }, 2000);
     }
   }
 
@@ -497,12 +499,13 @@
     $('save-btn').disabled = true;
     try {
       newerNow = null;
+      setStatus('', '', 'load-status');
       data = prepare(await window.petAPI.getAssets(character));
       $('currency').value = data.currency;
       render();
       $('save-btn').disabled = false;
     } catch (err) {
-      setStatus('加载失败：' + errText(err), 'err');
+      setStatus('加载失败：' + errText(err), 'err', 'load-status');
     }
   }
 
@@ -542,10 +545,11 @@
         return;
       }
       data = fresh;
+      setStatus('', '', 'story-status');
       $('currency').value = data.currency;
       render();
     } catch (err) {
-      setStatus('刷新失败：' + errText(err), 'err');
+      setStatus('刷新失败：' + errText(err), 'err', 'story-status');
     }
   });
 

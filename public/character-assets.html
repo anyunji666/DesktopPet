@@ -110,6 +110,9 @@
   .status.ok { color: #2a8f4e; }
   .status.err { color: #c93454; }
   .status.busy { color: #999; }
+  /* 就近提示：紧贴在出错的位置，空内容时不占位 */
+  .status.inline { margin-top: 4px; min-height: 0; }
+  .status.inline:empty { display: none; }
 
   /* ---------- 关窗口前的确认浮层（替代系统对话框，样式跟「角色与音色设置」窗口一致） ---------- */
   .overlay {
@@ -143,6 +146,7 @@
     给「角色」和「你扮演的角色」各配一份财产：资产、负债、月度收入、月度支出。保存后会写进 AI 的提示词，
     AI 据此判断各方手里有多少钱、几天能凑到多少，影响角色花钱的手笔、拒绝或冒险的底气。每个角色单独存一份。
   </p>
+  <div id="load-status" class="status inline"></div>
 
   <div class="top-row">
     <div class="cur">
@@ -159,6 +163,7 @@
     <label for="story-start">故事开始日期</label>
     <input id="story-start" type="date" />
     <p class="tip" id="story-now"></p>
+    <div id="story-status" class="status inline"></div>
   </div>
 
   <div id="party-root"></div>
