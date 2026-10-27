@@ -10,8 +10,8 @@ import { disposeObject3D, fixEmptyMorphs, modelStats, frameModel } from './model
 
 // 默认灯光（无场景时的样子）；场景可以通过 scene.json 的 lights 字段覆盖，切回无场景时恢复
 const DEFAULT_LIGHTS = {
-  ambient: { color: '#ffffff', intensity: 0.9 },
-  key: { color: '#ffffff', intensity: 1.6, position: [3, 10, 6] },
+  ambient: { color: '#ffffff', intensity: 0.6 },
+  key: { color: '#ffffff', intensity: 1.2, position: [3, 10, 6] },
   back: { color: '#ffe0e8', intensity: 0.5, position: [-4, 8, -6] },
 };
 const ambientLight = new THREE.AmbientLight();

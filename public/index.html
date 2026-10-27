@@ -43,7 +43,8 @@
     }
     /* 裁圆角：场景地面等 3D 内容铺满窗口时会盖住 CSS 背景层的下圆角，这里把 WebGL 画布整体裁成圆角 */
     #app { position: absolute; inset: 0; border-radius: 12px; overflow: hidden; }
-    canvas { display: block; }
+    /* 调色：线性光照下 MMD 模型对比度偏低、发灰，用滤镜拉回来；不需要时删掉 filter 那一行即可 */
+    canvas { display: block; filter: contrast(1.16) saturate(1.2); }
 
     #loading {
       position: absolute;
