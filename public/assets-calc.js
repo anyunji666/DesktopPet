@@ -7,9 +7,10 @@
 //   随故事时间推算（advanceAssets）：只读故事时间，由代码自己算，不让 LLM 记账
 //     · 收入在到账日加进列表里的第一条现金类资产，支出和月供在每月 1 日从它里面扣（可以扣成负数）；
 //       一条现金类资产都没有时，sanitizeParty 会自动建一条叫「账户资金」的现金类资产来接
-//     · 负债：每月 1 日先扣月度支出，再按顺序还一期：剩余期数 −1，本金按「本金 ÷ 剩余期数」减少，期数到 0 记下还完日期；
+//     · 负债：剩余期数不用填，按「剩余本金 ÷ 月供」向上取整自动算；每月 1 日先扣月度支出，再按顺序还一期：
+//       期数 −1，本金按「本金 ÷ 剩余期数」减少，期数到 0 记下还完日期；
 //       账户资金不够这一期月供就延期（期数、本金都不动，下个月 1 日再试），所以还完日期会跟着往后顺延
-//     · 没填剩余期数的负债：只算欠款，不算进月度支出，也不自动还款（代表欠着但短期内不想还）
+//     · 没填月供的负债：只算欠款，不算进月度支出，也不自动还款（代表欠着但短期内不想还）
 //     · 资产的「预计多久到账」是资产自己的属性，不随时间变
 // 既给 Node（require）用，也给页面（<script src>）用。
 (function (root, factory) {
@@ -43,6 +44,7 @@
   const MAX_QTY = 1e6; // 随身携带物的数量上限
   const MAX_NUM = 1e15;
   const MAX_ADVANCE_MONTHS = 1200; // 一次最多往后推算 100 年，防止故事时间写成离谱的日期时卡死
+  const MAX_PERIODS = 12000; // 剩余期数上限（本金相对月供极大时按 1000 年算，防止数字离谱）
 
   function str(v, max) {
     return typeof v === 'string' ? v.trim().slice(0, max) : '';
@@ -102,6 +104,12 @@
     return `${y} 年 ${m} 月 ${day} 日`;
   }
 
+  // 剩余期数由程序算：剩余本金 ÷ 月供，向上取整（最后一期可以少还一点）；没填月供 = 0，代表暂时不还
+  function periodsOf(principal, monthly) {
+    if (!(monthly > 0) || !(principal > 0)) return 0;
+    return Math.min(MAX_PERIODS, Math.ceil(principal / monthly));
+  }
+
   // 整理一方（角色 / 用户）的数据，缺的字段补默认值，脏数据修正成合法值。保存和读取都走这里
   function sanitizeParty(p) {
     const src = p && typeof p === 'object' ? p : {};
@@ -133,11 +141,12 @@
         src.liabilities,
         (r) => {
           const principal = num(r.principal);
-          const periods = Math.round(num(r.periods, 12000));
+          const monthly = num(r.monthly);
+          const periods = periodsOf(principal, monthly);
           return {
             name: str(r.name, MAX_NAME),
             principal,
-            monthly: num(r.monthly),
+            monthly,
             periods,
             // 还完的日期：只有本金和期数都是 0 才有意义，改回有欠款就清掉
             paidOff: principal === 0 && periods === 0 ? validDate(r.paidOff) : '',
@@ -195,7 +204,7 @@
     const assets = p.assets;
     const debts = p.liabilities.filter((l) => !l.paidOff);
     const totalDebt = r2(sum(debts, (l) => l.principal));
-    const monthlyDebt = r2(sum(debts.filter((l) => l.periods > 0), (l) => l.monthly)); // 没填期数的不还，月供不算
+    const monthlyDebt = r2(sum(debts.filter((l) => l.periods > 0), (l) => l.monthly)); // 没填月供的不还，月供不算
     const monthlyIncome = r2(sum(p.incomes, (i) => i.monthly));
     const monthlyExpense = r2(sum(p.expenses, (e) => e.monthly) + monthlyDebt);
     // 账户资金 = 所有现金类资产之和；其他类别按到账天数（1 到 31）累加到「今天」上
@@ -228,7 +237,7 @@
       if (first > from && first <= to) {
         cash.amount = r2(cash.amount - sum(out.expenses, (e) => e.monthly)); // 月度支出照扣，可以扣成负数
         for (const l of out.liabilities) {
-          if (l.paidOff || l.periods <= 0) continue; // 没填期数的不还
+          if (l.paidOff || l.periods <= 0) continue; // 没填月供的不还
           if (cash.amount < l.monthly) continue; // 钱不够这一期月供：延期，下个月 1 日再试
           cash.amount = r2(cash.amount - l.monthly);
           l.principal = r2(l.principal - l.principal / l.periods);
@@ -278,6 +287,8 @@
     sanitizeParty,
     sanitizeAssets,
     isPartyEmpty,
+    periodsOf,
+    MAX_PERIODS,
     computeParty,
     advanceAssets,
     parseStoryDate,

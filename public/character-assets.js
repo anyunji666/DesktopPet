@@ -244,20 +244,20 @@
     const card = div('row-card');
     const head = div('row-head');
     const tip = tipLine(() => {
-      if (n(row.principal) > 0 || n(row.periods) > 0) row.paidOff = ''; // 又改回有欠款，不再算已还完
+      if (n(row.principal) > 0 || n(row.monthly) > 0) row.paidOff = ''; // 又改回有欠款，不再算已还完
       if (row.paidOff) {
         const start = C.dateCN(data.storyStart);
         return `${start ? '故事时间开始于 ' + start + '，' : ''}${C.dateCN(row.paidOff)}已还完本负债`;
       }
-      if (n(row.principal) > 0 && !(n(row.periods) > 0)) return '没填剩余期数，视为暂时不还：只算欠款，不算进月度支出，也不自动还款。';
-      return '';
+      if (!(n(row.principal) > 0)) return '';
+      if (!(n(row.monthly) > 0)) return '没填月供，视为暂时不还：只算欠款，不算进月度支出，也不自动还款。';
+      return `剩余本金 ${fmt(n(row.principal))} ÷ 月供 ${fmt(n(row.monthly))} = ${C.periodsOf(n(row.principal), n(row.monthly))} 剩余期数`;
     });
     head.append(field(row, 'name', { label: '负债名称', cls: 'f-name', placeholder: '如：住房按揭、车贷、消费分期', max: 40 }).wrap, delButton(onDelete));
     const g1 = div('grid');
     g1.append(
       field(row, 'principal', { label: '剩余本金', number: true, after: tip.refresh }).wrap,
-      field(row, 'monthly', { label: '月供', number: true }).wrap,
-      field(row, 'periods', { label: '剩余期数（月）', number: true, step: '1', after: tip.refresh }).wrap
+      field(row, 'monthly', { label: '月供', number: true, after: tip.refresh }).wrap
     );
     card.append(head, g1, tip.el);
     return card;
@@ -309,7 +309,7 @@
     {
       key: 'assets',
       title: '💎 资产',
-      hint: '名下拥有资产。所有「现金类」资产的金额之和就是「账户资金」（金额可为负，代表透支）：月度收入加进第一条现金类资产，月度支出和月供从它里面扣。一条都没有时会自动建一条「账户资金」。',
+      hint: '月度收入加进第一条现金类资产，月度支出和月供从它里面扣。一条现金类资产都没有时会自动建一条「账户资金」。「账户资金」指所有「现金类」资产的金额之和，金额可为负，代表透支。',
       blank: () => ({ name: '', category: '现金类', amount: '', days: 0 }),
       // 一条现金类资产都没有（比如删光了）：自动建一条「账户资金」放在最前面
       normalize: (rows) => {
@@ -320,8 +320,8 @@
     {
       key: 'liabilities',
       title: '🧾 负债',
-      hint: '填还没还的本金和月供，不是当初借的数。每月 1 日还一期，本金按剩余期数平均减少。',
-      blank: () => ({ name: '', principal: '', monthly: '', periods: '' }),
+      hint: '填未还债款及月供，每月 1 日还一期。',
+      blank: () => ({ name: '', principal: '', monthly: '' }),
       card: liabilityCard,
     },
     {
@@ -334,7 +334,7 @@
     {
       key: 'expenses',
       title: '🛒 月度支出',
-      hint: '每月 1 日从「账户资金」里扣。上面负债的月供会自动算进月支出，这里不用重复填。',
+      hint: '每月 1 日从「账户资金」里扣。这里不要重复填写负债的月供。',
       blank: () => ({ name: '', monthly: '' }),
       card: expenseCard,
     },
@@ -357,7 +357,7 @@
     const tier = (when, v, action) => `<tr><td>${when}</td><td class="n main${neg(v)}">${fmt(v)}</td><td class="act">${action}</td></tr>`;
     body.innerHTML = `
       <div class="stats">
-        <div class="stat"><div class="k">每月结余<small>（月收入-月支出）</small></div><div class="v${neg(s.monthlySurplus)}">${fmt(s.monthlySurplus)} ${u}</div></div>
+        <div class="stat"><div class="k">每月结余<small>（月总收入-月总支出）</small></div><div class="v${neg(s.monthlySurplus)}">${fmt(s.monthlySurplus)} ${u}</div></div>
       </div>
       <table class="tiers">
         <tr><th>取用时间</th><th class="n">能凑的钱</th><th class="act">所需操作</th></tr>

@@ -131,7 +131,7 @@ function describeParty(party, cur) {
   if (debts.length) {
     lines.push('负债：');
     for (const l of debts) {
-      // 没填期数的负债不算进月度支出（欠着但短期内不想还），不写月供，免得和上面的每月支出对不上
+      // 没填月供的负债不算进月度支出（欠着但短期内不想还），不写月供，免得和上面的每月支出对不上
       const pay = l.periods > 0 ? `，月供 ${m(l.monthly)}，还剩 ${l.periods} 期` : '，暂未安排还款';
       lines.push(`  - ${noParen(l.name) || '未命名负债'}：欠 ${m(l.principal)}${pay}`);
     }
