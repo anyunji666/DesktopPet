@@ -1,6 +1,6 @@
 import { state, clock, scene, camera, renderer, audio, voiceAudio, tmpV, desiredPos, desiredTgt, curTgt } from './modules/state.js';
 import { showLoading, showBubble, playVoice, stopVoice, hitModel } from './modules/ui.js';
-import { triggerBlink, idlePose, updateBlink } from './modules/idle-animation.js';
+import { triggerBlink, idlePose, updateBlink, applyIdleArms, restoreIdleArms } from './modules/idle-animation.js';
 import { resettlePhysics } from './modules/physics.js';
 import { loadModel, disposeModel } from './modules/model.js';
 import { stopDance, playIdle, playDance, playExitThen, PHYSICS_ENGAGE_WARMUP_STEPS } from './modules/dance.js';
@@ -218,6 +218,30 @@ let resizeStartX = 0;
 // 这里是同一个问题的另一个诱因：整体旋转瞬间跳变。
 const YAW_MAX_STEP = 0.05;
 
+// 把朝向角折算进 (-π, π]：modelYaw 是累计值，拖几圈就会变成 7、-12 弧度，
+// 重置时直线插值到 0 会绕远路（经过背面）；折算后最多转 180°，走最短路径。
+// 折算前后是同一个朝向，不会有视觉跳变。
+function wrapYaw(a) {
+  const twoPi = Math.PI * 2;
+  return ((((a + Math.PI) % twoPi) + twoPi) % twoPi) - Math.PI;
+}
+
+// 写入模型朝向：x、z 必须一起清零。MMDPhysics 初始化（每次播放舞蹈都会触发）会把
+// mesh.quaternion 清零再 copy 回来，three 会据此反算欧拉角；朝向超过 ±90° 时反算结果
+// 是 (180°, 180°-y, 180°) 这种等价写法，若只写 rotation.y，x/z 的 180° 会残留，
+// 导致拖拽方向反转、重置朝向变成背面。
+function applyModelYaw() {
+  if (state.mesh) state.mesh.rotation.set(0, state.modelYaw, 0);
+}
+
+// 把当前朝向折算进 (-π, π] 并同步到模型；目标值若原本等于当前值（拖拽跟手），保持相等
+function normalizeModelYaw() {
+  const follow = state.modelYawTarget === state.modelYaw;
+  state.modelYaw = wrapYaw(state.modelYaw);
+  if (follow) state.modelYawTarget = state.modelYaw;
+  applyModelYaw();
+}
+
 // 右下角缩放手柄
 document.getElementById('resize-handle').addEventListener('mousedown', (e) => {
   if (e.button !== 0) return;
@@ -310,7 +334,7 @@ document.addEventListener('mousemove', (e) => {
     const dyaw = Math.max(-YAW_MAX_STEP, Math.min(YAW_MAX_STEP, dx * 0.01));
     state.modelYaw += dyaw;
     state.modelYawTarget = state.modelYaw; // 手动拖拽时目标值跟手，不触发/干扰下面动画回正的插值
-    if (state.mesh) state.mesh.rotation.y = state.modelYaw;
+    applyModelYaw();
   } else {
     window.petAPI.move(dx, dy);
   }
@@ -330,8 +354,10 @@ document.addEventListener('mouseup', (e) => {
     return;
   }
   if (!dragging && !rotating) return;
+  const wasRotating = rotating;
   dragging = false;
   rotating = false;
+  if (wasRotating) normalizeModelYaw(); // 松手时折算朝向角，避免累计值越拖越大
   // 只有待机姿态和待机动画下才响应点击（出对话气泡 + 台词语音），其他舞蹈（含开场舞、退场舞）中不响应。
   // e.detail === 1 才是"单独一次点击"；双击时这里会先后收到 detail 1、2 两次 mouseup，
   // detail 2（双击的第二下）交给下面的 dblclick 处理，这里跳过，避免连续弹两条随机台词
@@ -402,6 +428,7 @@ window.petAPI.onAction((action) => {
       playIdle();
       // 待机顺带重置朝向，不用再多点一次"重置模型朝向"；
       // 只改目标值，animate() 里限速插值转正，避免瞬间跳变甩飞裙摆/头发
+      normalizeModelYaw(); // 先折算，保证回正走最短路径
       state.modelYawTarget = 0;
     }
   }
@@ -418,6 +445,7 @@ window.petAPI.onAction((action) => {
     // rotating 状态被下一次杂散 mousemove 用旧坐标又转回去，导致刚重置就又被转歪
     rotating = false;
     dragging = false;
+    normalizeModelYaw(); // 先折算，保证回正走最短路径
     // 只改目标值，animate() 里限速插值转正，避免瞬间跳变甩飞裙摆/头发
     state.modelYawTarget = 0;
   }
@@ -504,7 +532,9 @@ function animate() {
       state.helper.enable('physics', true);
     }
     // 循环动作（待机）跨循环点时不重置物理，见 dance.js 里的 resetPhysicsOnLoop
+    if (state.idleAnim) restoreIdleArms(); // 撤销上一帧叠加的手臂外展，再让动画/IK/物理按原始姿态算
     state.helper.update(dt);
+    if (state.idleAnim) applyIdleArms(); // 待机动画：算完后把手臂向外推开一点，避免手穿进裙子
   } else if (state.mesh) {
     idlePose(t);
   }
@@ -515,7 +545,7 @@ function animate() {
     const diff = state.modelYawTarget - state.modelYaw;
     const step = Math.max(-YAW_MAX_STEP, Math.min(YAW_MAX_STEP, diff));
     state.modelYaw += step;
-    state.mesh.rotation.y = state.modelYaw;
+    applyModelYaw();
   }
   // 摄像机：跳舞时跟随舞台位移；待机时以模型为中心环绕
   if (state.camBase) {
