@@ -60,6 +60,7 @@ export const state = {
   bubbleColor: null,
   characterName: null,
   materialFixes: null,
+  physicsTweaks: null, // 当前角色的 physics.json（见 main-modules/character.js 的 loadPhysicsTweaks）
 
   // 模型
   mesh: null,

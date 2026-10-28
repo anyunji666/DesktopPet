@@ -189,6 +189,62 @@ function loadMaterialFixes(characterName) {
   return null;
 }
 
+// ---------- 读取角色物理微调（Character/<角色名>/physics.json，可选） ----------
+// 个别模型的头发/裙摆/袖口物理配置不稳（刚体没有回复力、和手臂大腿反复接触等），会一直抖。
+// 这里按角色配置修正，所有字段都可选，不写就完全不影响该角色。名字一律是 PMX 里的「刚体名」，
+// 写成正则字符串（如 "^裙_"、"袖"）；不确定名字叫什么，开发者工具控制台里用 __phys.find('裙') 查。
+//   noCollide         [{ bodies, with, when }]  bodies 命中的刚体不再和 with 命中的刚体碰撞；when 默认 "idle"（仅待机）
+//   freeze            [{ bodies, when }]  bodies 命中的刚体改成跟随骨骼不再模拟；when 默认 "idle"（仅待机）
+//   damping           [{ bodies, linear, angular, when }]  覆盖命中刚体的线性 / 角阻尼（0~1）；when 默认 "always"
+//   when 只有 "idle"（仅待机动画期间）和 "always"（任何动作）两种取值
+function loadPhysicsTweaks(characterName) {
+  const p = path.join(CHARACTER_ROOT, characterName, 'physics.json');
+  const warn = (msg) => console.warn(`[pet] 角色 "${characterName}" 的 physics.json ${msg}`);
+  const isRe = (v) => {
+    if (typeof v !== 'string' || !v) return false;
+    try {
+      new RegExp(v);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const num01 = (v) => typeof v === 'number' && v >= 0 && v <= 1;
+  let data;
+  try {
+    data = JSON.parse(fs.readFileSync(p, 'utf-8'));
+  } catch (err) {
+    if (err.code !== 'ENOENT') warn(`解析失败: ${err.message}`);
+    return null;
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    warn('格式不对（应为对象），已忽略');
+    return null;
+  }
+  const out = { noCollide: [], freeze: [], damping: [] };
+  for (const it of Array.isArray(data.noCollide) ? data.noCollide : []) {
+    if (it && isRe(it.bodies) && isRe(it.with)) {
+      out.noCollide.push({ bodies: it.bodies, with: it.with, when: it.when === 'always' ? 'always' : 'idle' });
+    }
+    else warn('里有一条 noCollide 缺少合法的 bodies / with 正则，已跳过');
+  }
+  for (const it of Array.isArray(data.freeze) ? data.freeze : []) {
+    if (it && isRe(it.bodies)) out.freeze.push({ bodies: it.bodies, when: it.when === 'always' ? 'always' : 'idle' });
+    else warn('里有一条 freeze 缺少合法的 bodies 正则，已跳过');
+  }
+  for (const it of Array.isArray(data.damping) ? data.damping : []) {
+    if (it && isRe(it.bodies) && (num01(it.linear) || num01(it.angular))) {
+      out.damping.push({
+        bodies: it.bodies,
+        linear: num01(it.linear) ? it.linear : null,
+        angular: num01(it.angular) ? it.angular : null,
+        when: it.when === 'idle' ? 'idle' : 'always',
+      });
+    } else warn('里有一条 damping 缺少合法的 bodies 正则或 0~1 的 linear / angular，已跳过');
+  }
+  return out;
+}
+
 module.exports = {
   CHARACTER_ROOT,
   pickModelFile,
@@ -197,4 +253,5 @@ module.exports = {
   loadVoices,
   loadDrinkReminders,
   loadMaterialFixes,
+  loadPhysicsTweaks,
 };

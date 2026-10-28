@@ -10,17 +10,23 @@ import { state } from './state.js';
 // stiffnessScale 1.6→1.2、damping 0.25→0.16：当初是在"清零虚假初速度"补丁之后调低的，
 // 但实测真正解决开场甩飞的是 dance.js 的 PHYSICS_ENGAGE_DELAY（开场先停物理），
 // 不是清零速度/加热身步数。所以这两个值当时的调法依据并不牢靠，摆动手感不对可以重新调。
+//   accumulateStep    屏幕刷新率高于 65Hz（如 144Hz）时，MMDPhysics 默认每一帧都强制跑一整步（1/65 秒），
+//                     物理就比真实时间快（144Hz 约 2.2 倍）。打开后改成让 Bullet 自己按真实时间攒步数。
+//                     模拟结果：60Hz 下和原来数值完全一致，144Hz 下抖动指标约减半。设 false = 用回 three.js 原行为
 export const PHYSICS_CFG = {
   gravityScale: 1,
   stiffnessScale: 1.2,
   damping: 0.16,
+  accumulateStep: true,
 };
 
 // 全局物理调整（头发/裙摆甩动太夸张时抑制）。
 // gravityScale 通过 helper.add 的构造参数直接生效；stiffnessScale / damping
 // 需要在物理对象创建后逐个关节（btGeneric6DofSpringConstraint）设置。
 // MMDPhysics 不给弹簧设阻尼（PMX 的减衰参数也没被应用），所以追加阻尼对抑制"飘"最有效。
-export function applyPhysicsCfg() {
+// opts.idle：这次创建的是待机动画的物理（physics.json 里 when 为 "idle" 的 noCollide / freeze 只在待机时生效；
+// 待机动画只有头部在动，身体不动，关掉碰撞不会穿模，跳舞等大动作则保持原有碰撞）
+export function applyPhysicsCfg(opts = {}) {
   const cfg = PHYSICS_CFG;
   const objs = state.mesh ? state.helper.objects.get(state.mesh) : null;
   const p = objs && objs.physics;
@@ -53,6 +59,131 @@ export function applyPhysicsCfg() {
         body.setDamping(Math.min(ld + cfg.damping, 1), Math.min(ad + cfg.damping, 1));
       }
     }
+  }
+  applyStepAccumulation(p);
+  applyCharacterTweaks(p, state.physicsTweaks, opts);
+}
+
+// ---------------- 步长 / 按角色微调 ----------------
+
+// 刚体名（PMX 里的名字）匹配：re 可以是 RegExp 或正则字符串。返回 MMDPhysics 的 RigidBody 包装对象数组
+export function findBodies(physics, re) {
+  const rx = re instanceof RegExp ? re : new RegExp(re);
+  return (physics.bodies || []).filter((rb) => rx.test((rb.params && rb.params.name) || ''));
+}
+
+// 替换 MMDPhysics._stepSimulation：把真实经过的时间直接交给 Bullet 按 unitStep 攒子步。
+// three.js 原实现在 delta < unitStep 时会强制跑一整步（见 PHYSICS_CFG.accumulateStep 的说明），
+// delta ≥ unitStep 时和下面完全一样，所以刷新率 ≤65Hz 的机器行为不变。
+function stepAccumulated(delta) {
+  const unit = this.unitStep;
+  const dt = Math.min(delta, unit * this.maxStepNum); // 卡顿后一次性补太多步会炸，和原实现一样封顶
+  this.world.stepSimulation(dt, this.maxStepNum, unit);
+}
+
+function applyStepAccumulation(physics) {
+  try {
+    if (PHYSICS_CFG.accumulateStep) physics._stepSimulation = stepAccumulated;
+  } catch (err) {
+    console.warn('[pet] 物理步长设置失败，已沿用默认值:', err);
+  }
+}
+
+// 改某个刚体的碰撞掩码（它能和哪些组碰撞）。
+// 必须把刚体从世界摘下来再按新掩码加回去：Bullet 的碰撞对在宽相阶段按掩码生成，只改掩码不会清掉
+// 已经存在的碰撞对（控制台里实时调试时就是这种情况）；摘除时会连带清掉它参与的所有碰撞对。
+// params 是从模型几何里共享出来的对象，不能原地改，换成本实例私有的副本
+function setBodyMask(physics, rb, mask) {
+  physics.world.removeRigidBody(rb.body);
+  physics.world.addRigidBody(rb.body, 1 << rb.params.groupIndex, mask);
+  rb.params = { ...rb.params, groupTarget: mask };
+}
+
+// bodiesRe 命中的刚体不再和 withRe 命中的刚体碰撞。
+// 碰撞过滤是按"组"做的：把 withRe 命中刚体所在的组从 bodiesRe 刚体的掩码里去掉，
+// 所以同组里没被 withRe 命中的刚体也会一起被排除，这部分放进 collateral 返回，让调用方提示。
+export function tweakNoCollide(physics, bodiesRe, withRe) {
+  const A = findBodies(physics, bodiesRe);
+  const B = findBodies(physics, withRe);
+  const result = { bodies: A.length, with: B.length, changed: 0, collateral: [] };
+  if (!A.length || !B.length) return result;
+  const groups = new Set(B.map((rb) => rb.params.groupIndex));
+  let clearBits = 0;
+  for (const g of groups) clearBits |= 1 << g;
+  const inB = new Set(B);
+  result.collateral = (physics.bodies || [])
+    .filter((rb) => !inB.has(rb) && groups.has(rb.params.groupIndex))
+    .map((rb) => rb.params.name);
+  for (const rb of A) {
+    const mask = rb.params.groupTarget & ~clearBits;
+    if (mask !== rb.params.groupTarget) {
+      setBodyMask(physics, rb, mask);
+      result.changed++;
+    }
+  }
+  return result;
+}
+
+// 命中的动态刚体改成"跟随骨骼"（和 PMX 里的静态刚体一样，由动画驱动、不再被模拟），
+// 对应骨骼也不再被物理改写。刚体质量/类型要改，必须先从世界摘下来再加回去
+export function tweakFreeze(physics, re) {
+  const Ammo = window.Ammo;
+  const world = physics.world;
+  let frozen = 0;
+  const targets = findBodies(physics, re);
+  for (const rb of targets) {
+    if (!rb.body || rb.params.type === 0 || rb.params.boneIndex === -1) continue;
+    world.removeRigidBody(rb.body);
+    const zero = new Ammo.btVector3(0, 0, 0);
+    rb.body.setMassProps(0, zero);
+    Ammo.destroy(zero);
+    rb.body.setCollisionFlags(rb.body.getCollisionFlags() | 2); // CF_KINEMATIC_OBJECT
+    rb.body.setActivationState(4); // DISABLE_DEACTIVATION，和 MMDPhysics 对静态刚体的处理一致
+    world.addRigidBody(rb.body, 1 << rb.params.groupIndex, rb.params.groupTarget);
+    rb.params = { ...rb.params, type: 0 };
+    rb.reset(); // 刚体传送回当前骨骼
+    frozen++;
+  }
+  return { bodies: targets.length, changed: frozen };
+}
+
+// 覆盖命中刚体的阻尼（0~1，传 null / undefined 的那一项保持不变）
+export function tweakDamping(physics, re, linear, angular) {
+  const targets = findBodies(physics, re);
+  for (const rb of targets) {
+    const lin = typeof linear === 'number' ? linear : rb.params.positionDamping;
+    const ang = typeof angular === 'number' ? angular : rb.params.rotationDamping;
+    rb.body.setDamping(lin, ang);
+  }
+  return { bodies: targets.length, changed: targets.length };
+}
+
+// 把 physics.json 的内容套到刚体上。写错名字（一个刚体都没命中）会在控制台提示，方便排查
+export function applyCharacterTweaks(physics, tweaks, opts = {}) {
+  if (!tweaks) return;
+  const tag = '[pet][physics.json]';
+  try {
+    const on = (it, dflt) => (it.when || dflt) === 'always' || !!opts.idle; // when: "idle" 的条目只在待机动画的物理里生效
+    for (const it of tweaks.noCollide || []) {
+      if (!on(it, 'idle')) continue;
+      const r = tweakNoCollide(physics, it.bodies, it.with);
+      if (!r.bodies || !r.with) console.warn(`${tag} noCollide 没命中刚体：bodies "${it.bodies}" ${r.bodies} 个，with "${it.with}" ${r.with} 个`);
+      else if (r.collateral.length) {
+        console.info(`${tag} noCollide "${it.bodies}" ↛ "${it.with}"：同组的另外 ${r.collateral.length} 个刚体也一并不再碰撞（如 ${r.collateral.slice(0, 5).join('、')}）`);
+      }
+    }
+    for (const it of tweaks.freeze || []) {
+      if (!on(it, 'idle')) continue;
+      const r = tweakFreeze(physics, it.bodies);
+      if (!r.bodies) console.warn(`${tag} freeze 没命中刚体："${it.bodies}"`);
+    }
+    for (const it of tweaks.damping || []) {
+      if (!on(it, 'always')) continue;
+      const r = tweakDamping(physics, it.bodies, it.linear, it.angular);
+      if (!r.bodies) console.warn(`${tag} damping 没命中刚体："${it.bodies}"`);
+    }
+  } catch (err) {
+    console.error(`${tag} 应用失败，已忽略剩余配置:`, err);
   }
 }
 

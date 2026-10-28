@@ -149,7 +149,7 @@ export function playDance(index, opts = {}) {
             const physicsObj = state.helper.objects.get(state.mesh).physics;
             if (physicsObj) trackPhysicsObjects(physicsObj, createdAmmoObjs);
           }
-          applyPhysicsCfg();
+          applyPhysicsCfg({ idle: !!opts.idle }); // idle：physics.json 里只在待机生效的 freeze 靠它区分
           // add() 的 ik 参数只对 PMX 动画路径生效，mixer 路径要用 enable 关
           if (fkAuthored) state.helper.enable('ik', false);
           state.helperHasMesh = true;
