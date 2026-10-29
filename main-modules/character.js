@@ -227,6 +227,46 @@ function loadMaterialFixes(characterName) {
   return null;
 }
 
+// ---------- 读取角色灯光覆盖（Character/<角色名>/lights.json，可选） ----------
+// 默认灯光对所有模型不一定合适（贴图偏暗的模型需要更强的光），按角色覆盖就不会连带影响别的角色。
+// 字段与 Scene/<场景>/scene.json 的 lights 相同，且会被场景自己的 lights 覆盖（场景是刻意的氛围，优先级更高）：
+//   ambient / key / back: { color, intensity, position }  —— 都可选，没写的沿用默认灯光
+function loadLights(characterName) {
+  const p = path.join(CHARACTER_ROOT, characterName, 'lights.json');
+  const warn = (msg) => console.warn(`[pet] 角色 "${characterName}" 的 lights.json ${msg}`);
+  let data;
+  try {
+    data = JSON.parse(fs.readFileSync(p, 'utf-8'));
+  } catch (err) {
+    if (err.code !== 'ENOENT') warn(`解析失败: ${err.message}`);
+    return null;
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    warn('格式不对（应为对象），已忽略');
+    return null;
+  }
+  const normLight = (l) => {
+    if (!l || typeof l !== 'object' || Array.isArray(l)) return null;
+    const out = {};
+    if (typeof l.color === 'string') out.color = l.color;
+    if (Number.isFinite(l.intensity)) out.intensity = l.intensity;
+    if (Array.isArray(l.position) && l.position.length === 3 && l.position.every(Number.isFinite)) {
+      out.position = l.position;
+    }
+    return Object.keys(out).length ? out : null;
+  };
+  const out = {};
+  for (const key of ['ambient', 'key', 'back']) {
+    const light = normLight(data[key]);
+    if (light) out[key] = light;
+  }
+  if (!Object.keys(out).length) {
+    warn('里没有可用的 ambient / key / back，已忽略');
+    return null;
+  }
+  return out;
+}
+
 // ---------- 读取角色物理微调（Character/<角色名>/physics.json，可选） ----------
 // 个别模型的头发/裙摆/袖口物理配置不稳（刚体没有回复力、和手臂大腿反复接触等），会一直抖。
 // 这里按角色配置修正，所有字段都可选，不写就完全不影响该角色。名字一律是 PMX 里的「刚体名」，
@@ -291,5 +331,6 @@ module.exports = {
   loadVoices,
   loadDrinkReminders,
   loadMaterialFixes,
+  loadLights,
   loadPhysicsTweaks,
 };

@@ -60,6 +60,8 @@ export const state = {
   bubbleColor: null,
   characterName: null,
   materialFixes: null,
+  lights: null, // 当前角色的 lights.json（按角色覆盖默认灯光，见 main-modules/character.js 的 loadLights）
+  sceneLights: null, // 当前场景 scene.json 的 lights，优先级高于角色灯光
   physicsTweaks: null, // 当前角色的 physics.json（见 main-modules/character.js 的 loadPhysicsTweaks）
 
   // 模型

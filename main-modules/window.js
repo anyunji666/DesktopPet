@@ -3,7 +3,7 @@ const { app, BrowserWindow, Menu, shell, screen, ipcMain } = require('electron')
 const path = require('path');
 const { state } = require('./state');
 const { loadConfig, updateConfig } = require('./config');
-const { loadQuotes, loadVoices, loadDrinkReminders, loadMaterialFixes, loadPhysicsTweaks } = require('./character');
+const { loadQuotes, loadVoices, loadDrinkReminders, loadMaterialFixes, loadLights, loadPhysicsTweaks } = require('./character');
 const { scanDances } = require('./dance');
 const { scanScenes, getAdjust, setAdjust, ADJUST_DEFAULT } = require('./scene');
 const { cancelSpeaking } = require('./tts');
@@ -389,6 +389,7 @@ function currentCharacterPayload() {
     drinkReminderEnabled: loadConfig().drinkReminderEnabled !== false,
     bubbleColor: q.color,
     materialFixes: loadMaterialFixes(c.name),
+    lights: loadLights(c.name),
     physicsTweaks: loadPhysicsTweaks(c.name),
   };
 }

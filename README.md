@@ -56,6 +56,7 @@ Character/
    ├─ persona.json       ← 可选：LLM 聊天人设
    ├─ assets.json        ← 可选：角色与用户的资产配置（右键菜单编辑，自动生成）
    ├─ fixes.json         ← 可选：材质修正
+   ├─ lights.json        ← 可选：按角色覆盖默认灯光
    └─ physics.json       ← 可选：物理微调（裙摆 / 袖口 / 头发一直抖时用）
 ```
 
@@ -103,6 +104,21 @@ Character/
 - 上面三个「材质名 → 数值」的字段都支持 `"*"` 作为默认值，具体材质名优先于 `"*"`。
 - 整体饱和度不在这里调：那是全应用级的调色，在 `public/index.html` 的 `canvas { filter: contrast(...) saturate(...) }` 那一行（对所有角色和场景都生效）。
 - 所有字段都是按角色生效的，各角色互不影响；材质名要和 PMX 里完全一致（控制台 `__phys` 那套查不了材质名，直接看 PMX 或用模型编辑工具）。
+
+**lights.json**：按角色覆盖默认灯光，模型贴图偏暗时用它比改材质更自然（明暗关系不会被拉平）。
+
+```json
+{
+  "ambient": { "color": "#ffffff", "intensity": 0.85 },
+  "key": { "color": "#ffffff", "intensity": 1.6, "position": [3, 10, 6] },
+  "back": { "color": "#ffe0e8", "intensity": 0.65 }
+}
+```
+
+- 三项都可选，没写的沿用默认灯光（`public/modules/scene.js` 的 `DEFAULT_LIGHTS`：ambient 0.6 / key 1.2 / back 0.5）。
+- `ambient` 抬高整体（也压平层次），`key` 是主光方向强度，`back` 是背后的补光/轮廓光。想「亮但立体」就多给 `key`、少给 `ambient`。
+- 优先级：默认灯光 → 角色 `lights.json` → 当前场景 `scene.json` 的 `lights`（场景是刻意的氛围，压过角色设置）。
+- 每次切角色 / 重启读取，改完不用重启整个程序。
 
 **physics.json**：个别模型的头发、裙摆、袖口会一直抖，原因多半是这些刚体和手臂、大腿等碰撞体反复接触，或者本身没有回复力。这里按角色修正，所有字段可选，不写不影响任何角色。刚体名就是 PMX 里的刚体名，写成正则。
 

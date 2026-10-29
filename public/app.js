@@ -5,7 +5,7 @@ import { resettlePhysics } from './modules/physics.js';
 import './modules/physics-debug.js'; // 控制台调试入口 window.__phys（排查个别模型物理抖动用）
 import { loadModel, disposeModel } from './modules/model.js';
 import { stopDance, playIdle, playDance, playExitThen, PHYSICS_ENGAGE_WARMUP_STEPS } from './modules/dance.js';
-import { applyScene, zoomSceneBy, moveSceneDepth, panSceneBy, orbitSceneBy, resetSceneAdjust } from './modules/scene.js';
+import { applyScene, applyLights, zoomSceneBy, moveSceneDepth, panSceneBy, orbitSceneBy, resetSceneAdjust } from './modules/scene.js';
 import { showChatBox, hideChatBox, showReplyBubble } from './modules/chat.js';
 import { initTtsPlayback } from './modules/tts.js';
 import { initDrinkReminder, setDrinkReminders, setDrinkReminderEnabled } from './modules/drink-reminder.js';
@@ -460,6 +460,7 @@ window.petAPI.onInit((data) => {
   state.bubbleColor = data.bubbleColor || null;
   state.characterName = data.characterName || null;
   state.materialFixes = data.materialFixes || null;
+  state.lights = data.lights || null;
   state.physicsTweaks = data.physicsTweaks || null;
   setDrinkReminders(data.drinkReminders);
   setDrinkReminderEnabled(data.drinkReminderEnabled);
@@ -480,7 +481,9 @@ window.petAPI.onSwitchCharacter((data) => {
     state.bubbleColor = data.bubbleColor || null;
     state.characterName = data.characterName || null;
     state.materialFixes = data.materialFixes || null;
+    state.lights = data.lights || null;
     state.physicsTweaks = data.physicsTweaks || null;
+    applyLights(state.sceneLights || {}); // 角色灯光随角色切换，场景灯光仍然优先
     setDrinkReminders(data.drinkReminders); // 切角色不会重置"这个小时已提醒过"的记录，避免新旧角色连报两次
     hideChatBox(); // 切角色时把可能开着的对话输入框收起来
     stopVoice(); // 停掉旧角色还没播完的语音（同时恢复被压低的舞蹈音乐）

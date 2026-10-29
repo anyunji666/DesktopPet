@@ -8,7 +8,8 @@ import { state, scene, camera, manager } from './state.js';
 import { showLoading, hideLoading, showBubble } from './ui.js';
 import { disposeObject3D, fixEmptyMorphs, modelStats, frameModel } from './model.js';
 
-// 默认灯光（无场景时的样子）；场景可以通过 scene.json 的 lights 字段覆盖，切回无场景时恢复
+// 默认灯光（无场景时的样子）。覆盖顺序：默认 → 角色 lights.json → 场景 scene.json 的 lights
+// （场景是刻意的氛围，优先级最高；切回无场景时回到「默认 + 角色」）
 const DEFAULT_LIGHTS = {
   ambient: { color: '#ffffff', intensity: 0.6 },
   key: { color: '#ffffff', intensity: 1.2, position: [3, 10, 6] },
@@ -26,7 +27,7 @@ export function applyLights(override = {}) {
     ['back', backLight],
   ];
   for (const [k, light] of pairs) {
-    const cfg = { ...DEFAULT_LIGHTS[k], ...(override[k] || {}) };
+    const cfg = { ...DEFAULT_LIGHTS[k], ...((state.lights || {})[k] || {}), ...(override[k] || {}) };
     light.color.set(cfg.color);
     light.intensity = cfg.intensity;
     if (cfg.position) light.position.set(...cfg.position);
@@ -130,6 +131,7 @@ export function disposeScene() {
   }
   scene.fog = null;
   state.sceneName = null;
+  state.sceneLights = null;
   state.sceneAdjust = { ...ADJUST_DEFAULT };
   document.getElementById('hint-scene').style.display = 'none';
   sceneBgEl.style.background = '';
@@ -156,6 +158,7 @@ export function applyScene(payload) {
     if (payload.backgroundImage) sceneBgEl.style.backgroundImage = `url("${payload.backgroundImage}")`;
     if (payload.hintColor) document.getElementById('hint').style.color = payload.hintColor;
 
+    state.sceneLights = payload.lights || null;
     applyLights(payload.lights);
     state.sceneCam = { ...state.sceneCam, ...(payload.camera || {}) };
 
