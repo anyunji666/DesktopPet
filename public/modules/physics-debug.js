@@ -29,6 +29,7 @@ const api = {
         '  noCollide("^裙_", "腕|ひじ|手")   命中的第一组刚体不再和第二组碰撞（会提示被连带的同组刚体）',
         '  freeze("袖")                    命中的动态刚体改成跟随骨骼（不再模拟）',
         '  damping("^裙_", 0.98, 0.98)     覆盖线性 / 角阻尼（0~1）',
+        '  vels(0.01)                      列出当前速度最大的刚体（在抖的就是它们，多调几次看谁一直排前面）',
         '  reset()                         把刚体传送回当前骨骼并预演 60 步（等于"拖一下"的效果）',
         '  restore()                       重新进入待机，撤销以上所有修改',
         '  export()                        打印可存成 physics.json 的配置',
@@ -87,6 +88,32 @@ const api = {
     if (!r.bodies) return console.warn('[__phys] 没命中刚体');
     applied.push({ kind: 'damping', bodies: String(re), linear: typeof linear === 'number' ? linear : null, angular: typeof angular === 'number' ? angular : null });
     console.log(`已设置 ${r.changed} 个刚体的阻尼`);
+  },
+  // 列出当前速度最大的刚体。抖动是持续性的，多调几次，一直排在前面的就是抖动源
+  vels(min = 0.01) {
+    const p = currentPhysics();
+    if (!p) return;
+    const rows = [];
+    for (const rb of p.bodies) {
+      const body = rb.body;
+      if (!body || typeof body.getLinearVelocity !== 'function') continue;
+      const v = body.getLinearVelocity();
+      const w = body.getAngularVelocity();
+      const lin = Math.hypot(v.x(), v.y(), v.z());
+      const ang = Math.hypot(w.x(), w.y(), w.z());
+      if (lin < min && ang < min) continue;
+      rows.push({
+        name: rb.params.name,
+        type: TYPE_NAME[rb.params.type] || rb.params.type,
+        group: rb.params.groupIndex,
+        线速度: +lin.toFixed(3),
+        角速度: +ang.toFixed(3),
+      });
+    }
+    rows.sort((a, b) => b.线速度 + b.角速度 - (a.线速度 + a.角速度));
+    console.log(`速度超过 ${min} 的刚体 ${rows.length} 个（多调几次，一直排最前面的就是抖动源）`);
+    if (rows.length) console.table(rows.slice(0, 15));
+    return rows.length;
   },
   reset() {
     const p = currentPhysics();

@@ -1,6 +1,18 @@
 // ---------------- 物理（Ammo / Bullet） ----------------
 // 头发/裙摆/飘带这些是物理骨骼，跳舞时开物理模拟它们才会自然摆动，
 // 否则会僵在绑定姿态（飘带支棱出来"卡住"就是这个原因）
+//
+// ⚠ 碰撞组语义与 MMD 相反（three.js 的问题，不是模型文件的错）：
+//   PMX 里每个刚体有一个 16 位「非衝突グループフラグ」，置 1 = 不与那一组碰撞；
+//   但 MMDPhysics 在创建刚体时直接把它当 Bullet 的碰撞掩码传进去
+//   （MMDPhysics.js 的 world.addRigidBody(body, 1 << groupIndex, groupTarget)），
+//   而 Bullet 的掩码是置 1 = 会碰撞 —— 两者正好反过来。
+//   后果举例：作者写"袖子不碰手腕"，在这里变成"袖子只碰手腕"（因此一直抖）；
+//   作者写 flag=0（MMD 里是"碰所有组"），在这里掩码 0 变成"谁都不碰"。
+//   所以本项目里所有 collision 相关配置（physics.json 的 bodies/with、__phys.find() 打印的
+//   collidesWith、__phys.noCollide 的参数）都按「置 1 = 会碰撞」来理解，不要拿 MMD 编辑器的
+//   非衝突グループ勾选状态直接对照，两边是反的。
+//   three 的 MMD 支持在 r172 之后已整体移除，上游不会再修；症状用角色级 physics.json 收掉。
 import { state } from './state.js';
 
 // 头发/裙摆物理的全局调整参数（所有角色共用，想调就改这里）：

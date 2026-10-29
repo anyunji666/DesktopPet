@@ -53,14 +53,36 @@ export function modelStats(root) {
 }
 
 // 按角色的 fixes.json 修正材质（PMX 的 mesh.material 是材质数组，按 name 匹配）
-// 目前支持 whiteDiffuse：把这些材质的漫反射色设为纯白，
-// 解决模型作者压低脸部 diffuse（如 0.753 灰）导致 three.js 里脸发灰的问题
+//   whiteDiffuse：漫反射色设为纯白（模型作者压低 diffuse 导致脸发灰时用）
+//   brightness：乘到漫反射色上（贴图本身偏暗时用，1 以上变亮）
+//   emissive：整体缩放自发光（MMDLoader 把 PMX 環境色 ×0.2 当 emissive 加进去，
+//     那层是不受光照的均匀灰，会把暗部抬起来、"蒙一层灰"，设 0 就能恢复对比度与饱和度）
+//   specular / shininess：覆盖高光强度与光泽度（很多模型 specular 全 0 → 完全没有光泽）
+// 三个字典都支持 "*" 作为默认值，具体材质名优先。
+// 整体饱和度不在这里做——那是全应用级的调色，在 index.html 的 canvas filter 里（contrast / saturate）。
+// MMDToonMaterial 的 color / specular / emissive 都是对应 uniform 的别名（见 MMDLoader.js
+// 的 exposePropertyNames），直接改这些 Color 即可；着色器不会把 diffuse 截到 1，
+// 所以乘大于 1 的系数能真正提亮。
 function applyMaterialFixes(m) {
-  if (!state.materialFixes || !Array.isArray(m.material)) return;
-  const white = new Set(state.materialFixes.whiteDiffuse || []);
-  if (!white.size) return;
+  const fixes = state.materialFixes;
+  if (!fixes || !Array.isArray(m.material)) return;
+  const white = new Set(fixes.whiteDiffuse || []);
+  const pick = (dict, name, fallback) => {
+    if (!dict) return fallback;
+    if (Object.prototype.hasOwnProperty.call(dict, name)) return dict[name];
+    return Object.prototype.hasOwnProperty.call(dict, '*') ? dict['*'] : fallback;
+  };
+  const emissiveScale = typeof fixes.emissive === 'number' ? fixes.emissive : 1;
   for (const mat of m.material) {
-    if (white.has(mat.name) && mat.color) mat.color.setRGB(1, 1, 1);
+    if (!mat.color) continue;
+    if (white.has(mat.name)) mat.color.setRGB(1, 1, 1);
+    const brightness = pick(fixes.brightness, mat.name, 1);
+    if (brightness !== 1) mat.color.multiplyScalar(brightness);
+    if (emissiveScale !== 1 && mat.emissive) mat.emissive.multiplyScalar(emissiveScale);
+    const specular = pick(fixes.specular, mat.name, null);
+    if (specular !== null && mat.specular) mat.specular.setScalar(specular);
+    const shininess = pick(fixes.shininess, mat.name, null);
+    if (shininess !== null) mat.shininess = shininess;
   }
 }
 
