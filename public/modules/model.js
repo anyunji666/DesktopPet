@@ -1,6 +1,6 @@
 // ---------------- 加载 / 卸载模型 ----------------
 import * as THREE from 'three';
-import { state, scene, camera, loader, tmpV, curTgt } from './state.js';
+import { state, scene, camera, loader, tmpV, curTgt, renderer } from './state.js';
 import { showLoading, hideLoading } from './ui.js';
 import { setupIdle, resetIdle } from './idle-animation.js';
 import { stopDance, playDance, playIdle, ENTRANCE_DANCE_NAME } from './dance.js';
@@ -59,7 +59,7 @@ export function modelStats(root) {
 //     那层是不受光照的均匀灰，会把暗部抬起来、"蒙一层灰"，设 0 就能恢复对比度与饱和度）
 //   specular / shininess：覆盖高光强度与光泽度（很多模型 specular 全 0 → 完全没有光泽）
 // 三个字典都支持 "*" 作为默认值，具体材质名优先。
-// 整体饱和度不在这里做——那是全应用级的调色，在 index.html 的 canvas filter 里（contrast / saturate）。
+// 画面对比度 / 饱和度不在材质里做，见下面的 applyColorGrade（按角色写到 canvas 的 CSS filter）。
 // MMDToonMaterial 的 color / specular / emissive 都是对应 uniform 的别名（见 MMDLoader.js
 // 的 exposePropertyNames），直接改这些 Color 即可；着色器不会把 diffuse 截到 1，
 // 所以乘大于 1 的系数能真正提亮。
@@ -73,6 +73,17 @@ function applyMaterialFixes(m) {
     return Object.prototype.hasOwnProperty.call(dict, '*') ? dict['*'] : fallback;
   };
   const emissiveScale = typeof fixes.emissive === 'number' ? fixes.emissive : 1;
+  // 名字写错（和 PMX 里的材质名对不上）时 fixes.json 会静默不生效，这里提示出来，和 physics.json 的行为一致。
+  // 同名的多个材质会一起被调整（pick 按名字匹配）
+  const names = new Set(m.material.map((mat) => mat.name));
+  const unmatched = new Set();
+  for (const w of white) if (!names.has(w)) unmatched.add(`whiteDiffuse."${w}"`);
+  for (const key of ['brightness', 'specular', 'shininess']) {
+    for (const name of Object.keys(fixes[key] || {})) {
+      if (name !== '*' && !names.has(name)) unmatched.add(`${key}."${name}"`);
+    }
+  }
+  if (unmatched.size) console.warn(`[pet][fixes.json] 这些材质名没有命中模型里的任何材质（检查是否写错）：${[...unmatched].join('、')}`);
   for (const mat of m.material) {
     if (!mat.color) continue;
     if (white.has(mat.name)) mat.color.setRGB(1, 1, 1);
@@ -84,6 +95,15 @@ function applyMaterialFixes(m) {
     const shininess = pick(fixes.shininess, mat.name, null);
     if (shininess !== null) mat.shininess = shininess;
   }
+}
+
+// 按角色的 fixes.json 里的 contrast / saturate 给整张画布调色（CSS filter，1 = 不变）。
+// 没配置（或没有 fixes.json）时清掉滤镜，避免上一个角色的调色残留到新角色上
+function applyColorGrade(fixes) {
+  const parts = [];
+  if (fixes && typeof fixes.contrast === 'number' && fixes.contrast !== 1) parts.push(`contrast(${fixes.contrast})`);
+  if (fixes && typeof fixes.saturate === 'number' && fixes.saturate !== 1) parts.push(`saturate(${fixes.saturate})`);
+  renderer.domElement.style.filter = parts.join(' ');
 }
 
 // CCDIKSolver 每帧解算 IK 时直接用 PMX 里存的迭代次数（不会自己加大）。
@@ -113,6 +133,7 @@ export function loadModel(url, opts = {}) {
     (loaded) => {
       fixEmptyMorphs(loaded);
       applyMaterialFixes(loaded);
+      applyColorGrade(state.materialFixes);
       fixLowFootIkIterations(loaded);
       state.mesh = loaded;
       state.modelYaw = 0;

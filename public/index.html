@@ -43,9 +43,9 @@
     }
     /* 裁圆角：场景地面等 3D 内容铺满窗口时会盖住 CSS 背景层的下圆角，这里把 WebGL 画布整体裁成圆角 */
     #app { position: absolute; inset: 0; border-radius: 12px; overflow: hidden; }
-    /* 调色：线性光照下 MMD 模型对比度偏低、发灰，用滤镜拉回来；不需要时删掉 filter 那一行即可
-       saturate 从 1.2 降到 1.02：去掉 fixes.json 里那层 emissive 灰之后画面本来就变艳了，这里再压一点 */
-    canvas { display: block; filter: contrast(1.06) saturate(1.02); }
+    /* 调色已改为按角色设置：见 Character/<角色名>/fixes.json 的 contrast / saturate（model.js 的 applyColorGrade 会写到 canvas 的 style.filter）。
+       这里不再放全局滤镜，没配置的角色不做调色 */
+    canvas { display: block; }
 
     #loading {
       position: absolute;

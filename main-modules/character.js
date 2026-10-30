@@ -178,16 +178,20 @@ function loadDrinkReminders(characterName) {
 //   brightness: { 材质名: 倍数 } —— 提亮/压暗命中的材质，1.0 不变、>1 变亮、<1 变暗
 //     （如庄方宜的 tex/衣.png、tex/发.png 本身就偏暗：平均亮度 101 / 83，
 //      而 three 渲染里 toon 图是纯白、漫反射也是 1，靠材质参数无处可调，只能在这里乘系数）
-//     上限 8，防止写成离谱的值把画面糊成一片白
+//     上限 8，防止写成离谱的值把画面糊成一片白；写 0 视为无效，按 1（不变）处理
+//     贴图本身偏暗时，可以和 lights.json 配合使用（庄方宜就是两边一起调亮的），两者会相乘，调的时候留意别过曝
+//     材质名对不上 PMX 里的名字时，前端控制台会有 warn 提示
 //   emissive: 倍数 —— 统一缩放自发光。MMDLoader 会把 PMX 的「環境色」当成 emissive 加进来
 //     （ambient × 0.2，MMDLoader.js 里写死的），这一层是均匀加在画面上、不受光照影响的灰，
 //     模型的暗部被抬到 0.3~0.4，看起来就是"蒙了一层灰"。设 0 去掉，对比度和饱和度都会回来
 //   specular / shininess: { 材质名: 数值 } —— 覆盖高光颜色（0~1 灰度）和光泽度（1~200）。
 //     MMD 里大量模型 specular 全是 0、shininess 1，three 就是完全没高光，看着"没有光泽"
 //   材质名字典都支持 "*" 作为默认值，具体材质名优先（{ "*": 0.2, "颜": 0.05 }）
-//   整体饱和度不在这里做，那是全应用级调色（index.html 的 canvas filter）
+//   contrast / saturate: 数字 —— 这个角色的画面对比度 / 饱和度（CSS filter，1 = 不变，上限 3）。不写 = 不调色
+//     去掉 emissive 灰之后画面容易偏艳，就把 saturate 往 1 以下调；按角色生效，切换角色时自动换
 const MAX_BRIGHTNESS = 8;
 const MAX_SHININESS = 200;
+const MAX_GRADE = 3; // contrast / saturate 上限，防止写成离谱的值
 const NUM_DICT_KEYS = ['brightness', 'specular', 'shininess'];
 function loadMaterialFixes(characterName) {
   const p = path.join(CHARACTER_ROOT, characterName, 'fixes.json');
@@ -212,10 +216,14 @@ function loadMaterialFixes(characterName) {
       }
       if (Object.keys(dict).length) out[key] = dict;
     }
+    for (const key of ['contrast', 'saturate']) {
+      if (isNum(data[key]) && data[key] >= 0) out[key] = Math.min(data[key], MAX_GRADE);
+      else if (data[key] !== undefined) warn(`${key} 不是非负数，已跳过`);
+    }
     if (isNum(data.emissive) && data.emissive >= 0) out.emissive = Math.min(data.emissive, 5);
     else if (data.emissive !== undefined) warn('emissive 不是非负数，已跳过');
     if (!Object.keys(out).length) {
-      warn('里没有可用的 whiteDiffuse / brightness / emissive / specular / shininess，已忽略');
+      warn('里没有可用的 whiteDiffuse / brightness / emissive / specular / shininess / contrast / saturate，已忽略');
       return null;
     }
     return out;

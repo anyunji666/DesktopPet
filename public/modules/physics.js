@@ -17,18 +17,21 @@ import { state } from './state.js';
 
 // 头发/裙摆物理的全局调整参数（所有角色共用，想调就改这里）：
 //   gravityScale    重力倍率，默认 1（调大如 1.5 让发梢更服帖下垂）
-//   stiffnessScale  关节弹簧刚度倍率，默认 1（调大如 2 回弹更快、不易甩飞）
-//   damping         追加阻尼 0~1（抑制甩动幅度。MMDPhysics 默认完全不设阻尼，头发容易飘得夸张）
-// stiffnessScale 1.6→1.2、damping 0.25→0.16：当初是在"清零虚假初速度"补丁之后调低的，
-// 但实测真正解决开场甩飞的是 dance.js 的 PHYSICS_ENGAGE_DELAY（开场先停物理），
-// 不是清零速度/加热身步数。所以这两个值当时的调法依据并不牢靠，摆动手感不对可以重新调。
+//   stiffnessScale  关节弹簧刚度倍率，默认 1（调大如 1.5 回弹更快、不易甩飞）。
+//                   以 PMX 里的原始刚度为基准重新计算（不会叠加）；旧版用 getStiffness 读原值，
+//                   而 Ammo.js 没有这个函数，导致该参数一直没生效，现已改为从 constraint.params 读
+//   damping         关节弹簧阻尼 0~1，越大越能抑制甩动（0 = 不加，保持 Bullet 默认）。
+//                   ⚠ Bullet 自己的 setDamping 语义是反的（1 = 无阻尼，越小阻尼越大，内部当驱动速度系数用），
+//                   这里统一成"越大越阻尼"，写入 Bullet 时换算成 1 - damping。
+//                   旧版直接把 0.16 传给 Bullet，等价于现在的 0.84，所以默认值取 0.84 以保持原来的手感；
+//                   想要"更轻快"就往小调，用 __phys.spring(刚度倍率, 阻尼) 实时对比
 //   accumulateStep    屏幕刷新率高于 65Hz（如 144Hz）时，MMDPhysics 默认每一帧都强制跑一整步（1/65 秒），
 //                     物理就比真实时间快（144Hz 约 2.2 倍）。打开后改成让 Bullet 自己按真实时间攒步数。
 //                     模拟结果：60Hz 下和原来数值完全一致，144Hz 下抖动指标约减半。设 false = 用回 three.js 原行为
 export const PHYSICS_CFG = {
   gravityScale: 1,
-  stiffnessScale: 1.2,
-  damping: 0.16,
+  stiffnessScale: 1,
+  damping: 0.84,
   accumulateStep: true,
 };
 
@@ -43,37 +46,40 @@ export function applyPhysicsCfg(opts = {}) {
   const objs = state.mesh ? state.helper.objects.get(state.mesh) : null;
   const p = objs && objs.physics;
   if (!cfg || !p) return;
-  if (cfg.stiffnessScale && cfg.stiffnessScale !== 1) {
-    for (const c of p.constraints || []) {
-      const con = c.constraint;
-      if (!con || typeof con.getStiffness !== 'function' || typeof con.setStiffness !== 'function') continue;
-      for (let i = 0; i < 6; i++) {
-        const k = con.getStiffness(i);
-        if (k > 0) con.setStiffness(i, k * cfg.stiffnessScale);
-      }
-    }
-  }
-  if (cfg.damping) {
-    // 弹簧约束带阻尼接口就用它；没有就落到刚体阻尼上（相当于空气阻力，kinematic 骨骼刚体不受影响）
-    let jointDamping = false;
-    for (const c of p.constraints || []) {
-      const con = c.constraint;
-      if (!con || typeof con.setDamping !== 'function') continue;
-      for (let i = 0; i < 6; i++) con.setDamping(i, cfg.damping);
-      jointDamping = true;
-    }
-    if (!jointDamping) {
-      for (const b of p.bodies || []) {
-        const body = b.body;
-        if (!body || typeof body.getLinearDamping !== 'function') continue;
-        const ld = body.getLinearDamping();
-        const ad = body.getAngularDamping();
-        body.setDamping(Math.min(ld + cfg.damping, 1), Math.min(ad + cfg.damping, 1));
-      }
+  if (!applySpringTuning(p, cfg) && cfg.damping) {
+    // 约束没有可用的弹簧接口时，落到刚体阻尼上（相当于空气阻力，kinematic 骨骼刚体不受影响）
+    for (const b of p.bodies || []) {
+      const body = b.body;
+      if (!body || typeof body.getLinearDamping !== 'function') continue;
+      const ld = body.getLinearDamping();
+      const ad = body.getAngularDamping();
+      body.setDamping(Math.min(ld + cfg.damping, 1), Math.min(ad + cfg.damping, 1));
     }
   }
   applyStepAccumulation(p);
   applyCharacterTweaks(p, state.physicsTweaks, opts);
+}
+
+// 设置所有弹簧关节的刚度倍率和阻尼。每次都以 PMX 原始刚度（constraint.params）为基准重算，可重复调用不叠加。
+// 只处理 MMDPhysics 实际开启了弹簧的轴（原始刚度 ≠ 0）。damping 为"越大越阻尼"，写入 Bullet 时换算成 1 - damping。
+// 返回处理的约束数；0 表示没有可用的弹簧接口（调用方可退回刚体阻尼）
+export function applySpringTuning(physics, { stiffnessScale = 1, damping = 0 } = {}) {
+  const scale = Number.isFinite(stiffnessScale) && stiffnessScale > 0 ? stiffnessScale : 1;
+  const bulletDamping = 1 - Math.min(Math.max(Number.isFinite(damping) ? damping : 0, 0), 1);
+  let n = 0;
+  for (const c of physics.constraints || []) {
+    const con = c.constraint;
+    const params = c.params;
+    if (!con || !params || typeof con.setStiffness !== 'function' || typeof con.setDamping !== 'function') continue;
+    for (let i = 0; i < 6; i++) {
+      const k = i < 3 ? params.springPosition && params.springPosition[i] : params.springRotation && params.springRotation[i - 3];
+      if (!k) continue;
+      con.setStiffness(i, k * scale);
+      con.setDamping(i, bulletDamping);
+    }
+    n++;
+  }
+  return n;
 }
 
 // ---------------- 步长 / 按角色微调 ----------------

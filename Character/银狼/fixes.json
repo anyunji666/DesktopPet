@@ -1,6 +1,8 @@
 {
   "whiteDiffuse": ["脸", "眉毛", "牙齿", "舌头", "口腔", "眼白", "眼睛", "眼睛1"],
   "emissive": 0,
+  "contrast": 1.06,
+  "saturate": 1.02,
   "brightness": {
     "*": 1.06,
     "脸": 0.89,

@@ -1,5 +1,7 @@
 {
   "emissive": 0,
+  "contrast": 1.06,
+  "saturate": 1.02,
   "brightness": {
     "*": 1.06,
     "颜": 0.95,
