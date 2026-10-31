@@ -127,8 +127,8 @@ function openSettingsWindow() {
   }
   withRenderPause(() => {
     state.settingsWin = new BrowserWindow({
-      width: 420,
-      height: 540,
+      width: 500,
+      height: 700,
       resizable: false,
       title: 'API 与全局设置',
       webPreferences: securePrefs(),
@@ -185,8 +185,8 @@ function openCharacterVoiceWindow(characterName) {
   state.characterVoiceWinCharacter = characterName;
   withRenderPause(() => {
     state.characterVoiceWin = new BrowserWindow({
-      width: 440,
-      height: 720,
+      width: 500,
+      height: 700,
       resizable: false,
       title: '角色与音色设置 - ' + characterName,
       webPreferences: securePrefs(),
@@ -279,8 +279,10 @@ function openHistoryWindow(characterName) {
   state.historyWinCharacter = characterName;
   withRenderPause(() => {
     state.historyWin = new BrowserWindow({
-      width: 420,
-      height: 560,
+      width: 560, // 默认大小和"角色资产配置"窗口一致
+      height: 760,
+      minWidth: 420, // 最小尺寸保持改默认大小前的 420×560
+      minHeight: 560,
       title: '聊天记录 - ' + characterName,
       webPreferences: securePrefs(),
     });

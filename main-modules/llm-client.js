@@ -1,6 +1,9 @@
 // ---------- LLM 请求客户端：调用日志 / callLLM / 拉模型列表 ----------
 // 只管"把请求发出去并拿回结果"：读 API 配置（来自 llm.js）、发 OpenAI 兼容请求、超时处理、记最近一次调用。
 // 依赖方向：本文件 -> llm.js（只取 getApiConfig）；llm.js 不能反向 require 本文件，否则会循环依赖。
+const fs = require('fs');
+const path = require('path');
+const { app } = require('electron');
 const { getApiConfig } = require('./llm');
 const geminiRelay = require('./gemini-relay');
 
@@ -16,21 +19,55 @@ function relayTokenFor(url, cfg) {
   return '';
 }
 
-// ---------- 审查用：最近一次 LLM 调用的请求/回复 ----------
-// 只留最近 1 次（请求+回复算一条），正常回复和归档总结两种调用都算在内，不区分类型，谁最后调用完就显示谁的。
-// 原来是打印到 start.bat 的控制台窗口，后来发现 console.clear() 在 Windows 经典 cmd.exe 下不一定生效
-// （不是 TTY / 不支持 ANSI 转义时会静默失效，导致记录在终端里一直累积），改成推给独立的
-// "LLM调用记录" 窗口（window.js 的 openLlmLogWindow），窗口那边整体替换内容显示，不存在清不干净的问题。
+// ---------- 审查用：最近 2 次 LLM 调用的请求/回复 ----------
+// 留最近 2 条（请求+回复算一条），正常回复和归档总结两种调用都算在内，不区分类型。
+// 同时落盘到 userData/llm-log.jsonl（一行一条），退出程序、重启后重新打开"LLM调用记录"窗口还能看到。
+// 原来是打印到 start.bat 的控制台窗口，后来发现 console.clear() 在 Windows 经典 cmd.exe 下不一定生效，
+// 改成推给独立的"LLM调用记录"窗口（window.js 的 openLlmLogWindow），窗口那边整体替换内容显示。
 // cmd 窗口那边不再打印任何东西，恢复成 Node/Electron 原本的样子。
-let latestCall = null; // 最新一条：{ label, requestText, replyText, ts }
-let logListener = null; // 由 main.js 注入：新记录产生时，推给"LLM调用记录"窗口（如果开着的话）
+const LLM_LOG_KEEP = 2;
+let recentCalls = null; // 旧→新排列：[{ label, requestText, replyText, ts }, ...]，首次用到时才从磁盘读
+let logListener = null; // 由 main.js 注入：新记录产生时，把当前全部记录推给"LLM调用记录"窗口（如果开着的话）
+
+function llmLogFile() {
+  return path.join(app.getPath('userData'), 'llm-log.jsonl');
+}
+
+function loadRecentCalls() {
+  if (recentCalls) return recentCalls;
+  recentCalls = [];
+  try {
+    const lines = fs.readFileSync(llmLogFile(), 'utf-8').split('\n').filter(Boolean);
+    for (const line of lines.slice(-LLM_LOG_KEEP)) {
+      try {
+        const c = JSON.parse(line);
+        if (c && typeof c === 'object') recentCalls.push(c);
+      } catch {} // 某一行损坏（比如写到一半断电）就跳过那一行
+    }
+  } catch {} // 文件还不存在 = 还没有记录
+  return recentCalls;
+}
+
+function saveRecentCalls() {
+  try {
+    const f = llmLogFile();
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    // 先写临时文件再改名，写到一半断电不会把已有记录弄坏
+    const tmp = f + '.tmp';
+    fs.writeFileSync(tmp, recentCalls.map((c) => JSON.stringify(c)).join('\n') + '\n');
+    fs.renameSync(tmp, f);
+  } catch (err) {
+    console.warn('[pet] LLM 调用记录保存失败:', err && err.message ? err.message : err);
+  }
+}
 
 function setLlmLogListener(fn) {
   logListener = typeof fn === 'function' ? fn : null;
 }
 
-function getLatestLlmCall() {
-  return latestCall;
+// 返回旧→新排列的副本
+function getRecentLlmCalls() {
+  return loadRecentCalls().slice();
 }
 
 // messages 可能是纯字符串 content，也可能是 vision 模式下的数组（文本+图片 dataURL）；
@@ -48,8 +85,11 @@ function stringifyMessagesForLog(messages) {
 }
 
 function logRecentCall(label, requestText, replyText) {
-  latestCall = { label, requestText, replyText, ts: Date.now() };
-  if (logListener) logListener(latestCall);
+  loadRecentCalls();
+  recentCalls.push({ label, requestText, replyText, ts: Date.now() });
+  if (recentCalls.length > LLM_LOG_KEEP) recentCalls.splice(0, recentCalls.length - LLM_LOG_KEEP);
+  saveRecentCalls();
+  if (logListener) logListener(getRecentLlmCalls());
 }
 
 // 单次 LLM 请求的超时上限（含读取响应体）。超时按报错处理：抛错、本轮不落历史，
@@ -192,5 +232,5 @@ module.exports = {
   callLLM,
   fetchModelList,
   setLlmLogListener,
-  getLatestLlmCall,
+  getRecentLlmCalls,
 };

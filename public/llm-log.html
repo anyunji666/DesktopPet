@@ -13,17 +13,19 @@
     color: #d4d4d4;
     font-family: "Consolas", "Cascadia Code", "Microsoft YaHei", monospace;
   }
-  #bar {
+  .bar {
     position: sticky;
     top: 0;
     padding: 8px 12px;
     background: #252526;
+    border-top: 1px solid #3a3a3a;
     border-bottom: 1px solid #3a3a3a;
     font-size: 12px;
     color: #9d9d9d;
     display: flex;
     justify-content: space-between;
   }
+  .call:first-child .bar { border-top: none; }
   #content {
     padding: 12px 14px 24px;
     white-space: pre-wrap;
@@ -37,42 +39,49 @@
     font-weight: bold;
     margin: 14px 0 4px;
   }
-  .section-title:first-of-type { margin-top: 0; }
+  .section-title:first-child { margin-top: 0; }
+  .call-body {
+    padding: 12px 14px 24px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 13px;
+    line-height: 1.6;
+  }
   .reply { color: #b5cea8; }
 </style>
 </head>
 <body>
-  <div id="bar">
-    <span id="label">等待第一次 LLM 调用…</span>
-    <span id="time"></span>
-  </div>
-  <div id="content" class="empty">还没有发生过对话，发一条消息之后这里会显示最新的一次请求内容和回复。</div>
+  <div id="content" class="empty">还没有发生过对话，发一条消息之后这里会显示最近两次的请求内容和回复。</div>
 
 <script>
-  const labelEl = document.getElementById('label');
-  const timeEl = document.getElementById('time');
   const contentEl = document.getElementById('content');
 
   function pad(n) { return String(n).padStart(2, '0'); }
-
-  function render(call) {
-    if (!call) return;
-    const d = new Date(call.ts);
-    labelEl.textContent = '[' + (call.label || '对话回复') + ']';
-    timeEl.textContent = pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
-    contentEl.classList.remove('empty');
-    contentEl.innerHTML =
-      '<div class="section-title">发送内容</div>' +
-      escapeHtml(call.requestText) +
-      '<div class="section-title">LLM回复</div>' +
-      '<span class="reply">' + escapeHtml(call.replyText) + '</span>';
-  }
 
   function escapeHtml(s) {
     return String(s || '')
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;');
+  }
+
+  // calls：旧→新排列的数组（最多 2 条）；显示时最新的在上面
+  function render(calls) {
+    if (!Array.isArray(calls) || !calls.length) return;
+    contentEl.classList.remove('empty');
+    contentEl.style.whiteSpace = 'normal';
+    contentEl.style.padding = '0';
+    contentEl.innerHTML = calls.slice().reverse().map((call) => {
+      const d = new Date(call.ts);
+      const time = pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' +
+        pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+      return '<div class="call">' +
+        '<div class="bar"><span>[' + escapeHtml(call.label || '对话回复') + ']</span><span>' + time + '</span></div>' +
+        '<div class="call-body">' +
+        '<div class="section-title">发送内容</div>' + escapeHtml(call.requestText) +
+        '<div class="section-title">LLM回复</div><span class="reply">' + escapeHtml(call.replyText) + '</span>' +
+        '</div></div>';
+    }).join('');
   }
 
   window.petAPI.getLlmLog().then(render).catch(() => {});

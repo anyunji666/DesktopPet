@@ -61,7 +61,7 @@ const {
 } = require('./main-modules/llm');
 const { stripSpeakers } = require('./main-modules/tts/tone');
 const { splitTurnSummary, extractStoryTime, extractOverview, buildSummaryBlock } = require('./main-modules/history-flatten');
-const { fetchModelList, setLlmLogListener, getLatestLlmCall } = require('./main-modules/llm-client');
+const { fetchModelList, setLlmLogListener, getRecentLlmCalls } = require('./main-modules/llm-client');
 const {
   securePrefs,
   WIN_W,
@@ -546,11 +546,11 @@ powerMonitor.on('unlock-screen', reassertAlwaysOnTop); // 屏保退出 / 锁屏�
 powerMonitor.on('resume', reassertAlwaysOnTop); // 系统从睡眠中唤醒
 powerMonitor.on('shutdown', savePetBounds); // 关机/重启前再存一次（macOS/Linux；Windows 靠上面窗口的 session-end）
 
-// 每次 LLM 调用完（对话回复 / 归档总结都算），把最新这一条实时推给"LLM调用记录"窗口；
+// 每次 LLM 调用完（对话回复 / 归档总结都算），把当前保留的全部记录（最近 2 条）实时推给"LLM调用记录"窗口；
 // 窗口没开着时 llmLogWin 是 null/已销毁，这里直接跳过，等窗口下次打开时用 get-llm-log 兜底拿一次
-setLlmLogListener((call) => {
+setLlmLogListener((calls) => {
   if (state.llmLogWin && !state.llmLogWin.isDestroyed()) {
-    state.llmLogWin.webContents.send('llm-log-updated', call);
+    state.llmLogWin.webContents.send('llm-log-updated', calls);
   }
 });
 
@@ -854,8 +854,8 @@ ipcMain.on('open-history-window', (_e, characterName) => {
 ipcMain.on('character-voice-switch-confirm', (_e, characterName) => {
   confirmCharacterVoiceSwitch(characterName);
 });
-// LLM 调用记录窗口打开时，用这个拿一次"当前已有的最新一条"（窗口开着之后的新记录走上面的实时推送）
-ipcMain.handle('get-llm-log', () => getLatestLlmCall());
+// LLM 调用记录窗口打开时，用这个拿一次"当前已有的记录"（最近 2 条，含上次运行时落盘的）（窗口开着之后的新记录走上面的实时推送）
+ipcMain.handle('get-llm-log', () => getRecentLlmCalls());
 
 // ---------- IPC：语音合成（角色与音色设置窗口的音色设置区用） ----------
 // 密钥是各角色共用的，音色参数按角色分开存；试听用表单当前值，不要求先保存
