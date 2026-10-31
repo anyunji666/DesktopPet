@@ -187,6 +187,10 @@ function loadDrinkReminders(characterName) {
 //   specular / shininess: { 材质名: 数值 } —— 覆盖高光颜色（0~1 灰度）和光泽度（1~200）。
 //     MMD 里大量模型 specular 全是 0、shininess 1，three 就是完全没高光，看着"没有光泽"
 //   材质名字典都支持 "*" 作为默认值，具体材质名优先（{ "*": 0.2, "颜": 0.05 }）
+//   toon: { 材质名: { shade, threshold, soft } } —— 用程序生成的明暗渐变替换模型自带的 toon 图（"*" 为默认值）
+//     shade 暗部受光系数 0~1（1 = 不加阴影）、threshold 明暗分界 -1~1（对应 dotNL）、soft 过渡宽度 0~1（接近 0 = 赛璐璐硬边）
+//     多数 PMX 的 toon 图接近纯白，平行光方向对明暗几乎没影响；开了这个，key 光的方向才真正有意义。
+//     只能是灰度阴影（three 只读 toon 图的红色通道）。参数用控制台 __toon 实时调好后 export 即可
 //   contrast / saturate: 数字 —— 这个角色的画面对比度 / 饱和度（CSS filter，1 = 不变，上限 3）。不写 = 不调色
 //     去掉 emissive 灰之后画面容易偏艳，就把 saturate 往 1 以下调；按角色生效，切换角色时自动换
 const MAX_BRIGHTNESS = 8;
@@ -220,10 +224,25 @@ function loadMaterialFixes(characterName) {
       if (isNum(data[key]) && data[key] >= 0) out[key] = Math.min(data[key], MAX_GRADE);
       else if (data[key] !== undefined) warn(`${key} 不是非负数，已跳过`);
     }
+    if (data.toon && typeof data.toon === 'object' && !Array.isArray(data.toon)) {
+      const dict = {};
+      const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+      for (const [name, t] of Object.entries(data.toon)) {
+        if (!t || typeof t !== 'object' || Array.isArray(t) || !isNum(t.shade)) {
+          warn(`toon."${name}" 缺少数值 shade，已跳过`);
+          continue;
+        }
+        const e = { shade: clamp(t.shade, 0, 1) };
+        if (isNum(t.threshold)) e.threshold = clamp(t.threshold, -1, 1);
+        if (isNum(t.soft)) e.soft = clamp(t.soft, 0, 1);
+        dict[name] = e;
+      }
+      if (Object.keys(dict).length) out.toon = dict;
+    } else if (data.toon !== undefined) warn('toon 格式不对（应为对象），已跳过');
     if (isNum(data.emissive) && data.emissive >= 0) out.emissive = Math.min(data.emissive, 5);
     else if (data.emissive !== undefined) warn('emissive 不是非负数，已跳过');
     if (!Object.keys(out).length) {
-      warn('里没有可用的 whiteDiffuse / brightness / emissive / specular / shininess / contrast / saturate，已忽略');
+      warn('里没有可用的 whiteDiffuse / brightness / emissive / specular / shininess / toon / contrast / saturate，已忽略');
       return null;
     }
     return out;

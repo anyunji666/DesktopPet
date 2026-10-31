@@ -88,7 +88,20 @@ export function playIdle() {
 // "退场舞播完再切换角色"的判断条件永远不成立，exitInProgress 会永久卡 true，
 // 之后菜单里的待机/跳舞指令全部被挡住——即使切换角色的退场舞失败了，也要让 opts.onEnd
 // （真正的切换逻辑）照常执行，不能把用户晾在一个已经动不了的旧角色上。
+// 启动完成信号：第一个动作（待机）加载成功或失败兜底后各发一次，主进程据此取消"启动卡住"的看门狗。
+// 页面重载后这个标志随页面重置，会重新发
+let bootDoneSent = false;
+function markBootDone(how) {
+  if (bootDoneSent) return;
+  bootDoneSent = true;
+  try {
+    window.petAPI.startupLog('启动完成：' + how);
+    window.petAPI.notifyBootDone();
+  } catch {}
+}
+
 export function recoverFromDanceFailure(opts) {
+  markBootDone('动作加载失败，已兜底');
   stopDance(); // 顺带做物理清理、重建 helper，把状态复位到"待机姿态"
   state.exitInProgress = false;
   state.loadingDance = false;
@@ -164,6 +177,7 @@ export function playDance(index, opts = {}) {
             state.physicsEnableAt = null;
           }
           hideLoading();
+          markBootDone('首个动作已加载');
           // 从候选根骨骼里选 XZ 位移幅度最大的做镜头跟随（位移轨道可能是本地坐标，幅度比较不受影响）
           state.danceFollow = null;
           state.danceZoom = 0;

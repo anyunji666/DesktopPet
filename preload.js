@@ -70,6 +70,10 @@ contextBridge.exposeInMainWorld('petAPI', {
   onShowBubble: (cb) => ipcRenderer.on('show-bubble', (_e, text) => cb(text)),
   // 初次启动：模型刚出现在屏幕上这一刻通知主进程，仅用于开机自启动计时
   notifyModelReady: () => ipcRenderer.send('model-ready'),
+  // 启动稳定性：写启动日志 / 首个动作加载完（启动完成，主进程据此取消看门狗）/ 请求主进程重载页面
+  startupLog: (msg) => ipcRenderer.send('startup-log', String(msg)),
+  notifyBootDone: () => ipcRenderer.send('boot-done'),
+  requestReload: (reason) => ipcRenderer.send('renderer-reload', String(reason)),
   // 主进程推送：开机自启动计时气泡（3 秒后自动消失，和普通对话气泡分开一个通道，时长不同）
   onBootTimerBubble: (cb) => ipcRenderer.on('boot-timer-bubble', (_e, text) => cb(text)),
   // ---- 一次只能发一条（锁在主进程 chat-lock.js）----

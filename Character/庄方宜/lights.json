@@ -1,5 +1,5 @@
 {
   "ambient": { "color": "#ffffff", "intensity": 0.85 },
-  "key": { "color": "#ffffff", "intensity": 1.6 },
-  "back": { "color": "#ffe0e8", "intensity": 0.65 }
+  "key": { "color": "#fff2e6", "intensity": 1.6 },
+  "back": { "color": "#ffd0e0", "intensity": 0.7 }
 }

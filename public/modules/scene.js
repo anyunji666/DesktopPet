@@ -6,7 +6,7 @@ import { MMDLoader } from 'three/addons/loaders/MMDLoader.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { state, scene, camera, manager } from './state.js';
 import { showLoading, hideLoading, showBubble } from './ui.js';
-import { disposeObject3D, fixEmptyMorphs, modelStats, frameModel } from './model.js';
+import { disposeObject3D, fixEmptyMorphs, applyAnisotropy, modelStats, frameModel } from './model.js';
 
 // 默认灯光（无场景时的样子）。覆盖顺序：默认 → 角色 lights.json → 场景 scene.json 的 lights
 // （场景是刻意的氛围，优先级最高；切回无场景时回到「默认 + 角色」）
@@ -195,6 +195,7 @@ export function applyScene(payload) {
                 return;
               }
               fixEmptyMorphs(obj);
+              applyAnisotropy(obj);
               obj.scale.multiplyScalar(m.scale);
               obj.position.set(...m.position);
               obj.rotation.y = THREE.MathUtils.degToRad(m.rotationY);

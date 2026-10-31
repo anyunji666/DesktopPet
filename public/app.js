@@ -3,6 +3,7 @@ import { showLoading, showBubble, playVoice, stopVoice, hitModel } from './modul
 import { triggerBlink, idlePose, updateBlink, applyIdleArms, restoreIdleArms } from './modules/idle-animation.js';
 import { resettlePhysics } from './modules/physics.js';
 import './modules/physics-debug.js'; // 控制台调试入口 window.__phys（排查个别模型物理抖动用）
+import './modules/toon-debug.js'; // 控制台调试入口 window.__toon（实时调明暗渐变，调好后导出到 fixes.json）
 import { loadModel, disposeModel } from './modules/model.js';
 import { stopDance, playIdle, playDance, playExitThen, PHYSICS_ENGAGE_WARMUP_STEPS } from './modules/dance.js';
 import { applyScene, applyLights, zoomSceneBy, moveSceneDepth, panSceneBy, orbitSceneBy, resetSceneAdjust } from './modules/scene.js';
@@ -454,6 +455,7 @@ window.petAPI.onAction((action) => {
 
 // ---------------- 初始化数据 ----------------
 window.petAPI.onInit((data) => {
+  try { window.petAPI.startupLog('收到 init，开始加载模型'); } catch {}
   state.dances = data.dances || [];
   state.quotes = data.quotes || [];
   state.voices = data.voices || [];

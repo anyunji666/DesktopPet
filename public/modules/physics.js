@@ -224,24 +224,44 @@ export function resettlePhysics(physicsObj, steps = 0) {
 }
 
 let ammoPromise = null;
+// 开机自启动时系统很忙，wasm 的读取 / 编译可能迟迟不返回（Promise 既不成功也不失败），
+// 动作加载就会一直卡在"加载动作"。超过这个时间就先放弃物理、让角色动起来；
+// 之后如果 Ammo 又自己加载好了，下次切动作时 ensureAmmo 会直接拿到它（见函数开头的检查）
+const AMMO_TIMEOUT_MS = 15000;
 export function ensureAmmo() {
+  if (window.Ammo && window.Ammo.btVector3) return Promise.resolve(true);
   if (!ammoPromise) {
     ammoPromise = new Promise((resolve) => {
-      if (window.Ammo && window.Ammo.btVector3) return resolve(true);
+      const startedAt = performance.now();
+      const log = (m) => {
+        try { window.petAPI.startupLog(m); } catch {}
+      };
+      const timer = setTimeout(() => {
+        console.error('[pet] Ammo 加载超时，先不启用物理');
+        log('Ammo 加载超时(' + AMMO_TIMEOUT_MS / 1000 + 's)，本次先不启用物理');
+        resolve(false);
+      }, AMMO_TIMEOUT_MS);
+      const done = (v) => {
+        clearTimeout(timer);
+        resolve(v); // 超时后再调用无效（Promise 只会决议一次）
+      };
       const s = document.createElement('script');
       s.src = '/node_modules/three/examples/jsm/libs/ammo.wasm.js';
       s.onload = async () => {
         try {
           window.Ammo = await window.Ammo(); // MMDPhysics 引用的是全局 Ammo
-          resolve(true);
+          log('Ammo 就绪，用时 ' + ((performance.now() - startedAt) / 1000).toFixed(1) + 's');
+          done(true);
         } catch (err) {
           console.error('[pet] Ammo 初始化失败，物理已禁用:', err);
-          resolve(false);
+          log('Ammo 初始化失败: ' + err);
+          done(false);
         }
       };
       s.onerror = () => {
         console.error('[pet] ammo.wasm.js 加载失败，物理已禁用');
-        resolve(false);
+        log('ammo.wasm.js 加载失败');
+        done(false);
       };
       document.head.appendChild(s);
     });

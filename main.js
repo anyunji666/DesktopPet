@@ -7,6 +7,7 @@ const { execFile } = require('child_process');
 // 进程真正起跑的时间点，尽量贴近文件顶部，用来算"程序启动用时"（跟开机、登录、
 // 隔了多久才手动打开都没关系，纯粹是这个 Electron 进程自己跑起来花了多久）
 const APP_PROCESS_START_MS = Date.now();
+const { initStartupLog, startupLog } = require('./main-modules/startup-log');
 
 const ROOT = __dirname;
 
@@ -78,6 +79,7 @@ const {
   currentCharacterPayload,
   currentScene,
   buildMenu,
+  migrateAutoLaunch,
 } = require('./main-modules/window');
 
 // ---------- 单实例锁：防止重复启动多个宠物互相抢资源（重复启动会明显变卡） ----------
@@ -337,12 +339,57 @@ function isWidthValid(width) {
   return Number.isFinite(width) && width >= WIN_MIN_W && width <= WIN_MAX_W;
 }
 
+// ---------- 启动稳定性：卡住自动重载 ----------
+// 开机自启动时系统很忙（磁盘 / CPU / 显卡进程都没就绪），偶尔会让页面卡在加载界面，手动重开又正常。
+// 渲染进程在"首个动作加载完"后发 boot-done；这么久没收到就重载页面，最多连续重试几次。
+// 重载会重新触发 did-finish-load → 重新下发 init，等于自动帮用户"重开一次"
+const BOOT_TIMEOUT_MS = 45000;
+const MAX_BOOT_RELOADS = 3;
+let bootDone = false;
+let bootReloads = 0;
+let bootTimer = null;
+
+function armBootWatchdog() {
+  clearTimeout(bootTimer);
+  if (bootDone) return;
+  bootTimer = setTimeout(() => reloadMainWindow(`${BOOT_TIMEOUT_MS / 1000} 秒内没有收到启动完成信号`), BOOT_TIMEOUT_MS);
+}
+
+function reloadMainWindow(reason) {
+  clearTimeout(bootTimer);
+  if (!state.win || state.win.isDestroyed()) return;
+  if (bootReloads >= MAX_BOOT_RELOADS) {
+    startupLog(`已连续重载 ${MAX_BOOT_RELOADS} 次仍未成功，不再重试（原因：${reason}）`);
+    return;
+  }
+  bootReloads++;
+  bootDone = false;
+  startupLog(`重载主窗口 (${bootReloads}/${MAX_BOOT_RELOADS})：${reason}`);
+  setTimeout(() => {
+    if (state.win && !state.win.isDestroyed()) state.win.webContents.reloadIgnoringCache();
+  }, 1500);
+}
+
+ipcMain.on('boot-done', () => {
+  bootDone = true;
+  bootReloads = 0; // 计数的是"连续失败"，成功一次就清零
+  clearTimeout(bootTimer);
+  startupLog('收到启动完成信号，看门狗已取消');
+});
+ipcMain.on('startup-log', (_e, msg) => startupLog('[页面] ' + String(msg).slice(0, 500)));
+ipcMain.on('renderer-reload', (_e, reason) => {
+  startupLog('[页面] 请求重载：' + String(reason).slice(0, 200));
+  reloadMainWindow('页面请求：' + String(reason).slice(0, 100));
+});
+
 async function createWindow() {
+  startupLog('createWindow 开始');
   // 旧版本留下的明文密钥升级成加密存储（系统不支持加密时什么也不做）
   migrateSecrets();
   const server = await startServer();
   const port = server.address().port;
   state.serverPort = port;
+  startupLog(`静态服务已启动，端口 ${port}`);
 
   // 如果之前保存过 Gemini 轮询代理的 Key，启动时自动把本地中转服务起起来（只监听 127.0.0.1）
   // 优先复用上次记住的端口，避免每次开机 Base URL 都要重新填
@@ -431,7 +478,23 @@ async function createWindow() {
   } catch {}
 
   state.win.loadURL(`http://127.0.0.1:${port}/public/index.html`);
-  state.win.webContents.on('did-finish-load', () => {
+  const wc = state.win.webContents;
+  wc.on('did-fail-load', (_e, code, desc, url, isMainFrame) => {
+    if (!isMainFrame || code === -3) return; // -3 = 被新的导航取消，不算失败
+    startupLog(`页面加载失败 code=${code} ${desc} ${url}`);
+    reloadMainWindow(`页面加载失败 ${desc}`);
+  });
+  wc.on('render-process-gone', (_e, details) => {
+    startupLog(`渲染进程退出 reason=${details.reason} exitCode=${details.exitCode}`);
+    if (details.reason !== 'clean-exit') reloadMainWindow(`渲染进程退出 ${details.reason}`);
+  });
+  wc.on('unresponsive', () => startupLog('页面无响应'));
+  app.on('child-process-gone', (_e, details) => {
+    if (details.type === 'GPU') startupLog(`GPU 进程退出 reason=${details.reason}`);
+  });
+  wc.on('did-finish-load', () => {
+    startupLog('页面 did-finish-load，下发 init 并启动看门狗');
+    armBootWatchdog();
     send('init', {
       ...currentCharacterPayload(),
       scene: currentScene(),
@@ -1009,7 +1072,12 @@ ipcMain.handle('clear-chat-history', (_e, characterName) => {
 });
 
 app.whenReady().then(() => {
-  if (gotLock) createWindow();
+  if (gotLock) {
+    initStartupLog(APP_PROCESS_START_MS);
+    startupLog('app ready');
+    migrateAutoLaunch();
+    createWindow().catch((err) => startupLog('createWindow 出错: ' + (err && err.stack ? err.stack : err)));
+  }
 });
 app.on('window-all-closed', () => app.quit());
 

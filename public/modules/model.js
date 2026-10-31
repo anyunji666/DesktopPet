@@ -16,6 +16,9 @@ export function disposeObject3D(root) {
           const value = mat[key];
           if (value && value.isTexture) value.dispose();
         }
+        // applyToon 替换掉的原始 toon 图不再挂在 material 上，单独释放
+        const orig = mat.userData && mat.userData.origGradientMap;
+        if (orig && orig.isTexture) orig.dispose();
         mat.dispose();
       }
     }
@@ -32,6 +35,86 @@ export function fixEmptyMorphs(root) {
     if (!attrs) return;
     for (const key of Object.keys(attrs)) {
       if (Array.isArray(attrs[key]) && attrs[key].length === 0) delete attrs[key];
+    }
+  });
+}
+
+// ---------- toon 明暗渐变（fixes.json 的 toon 字段 / 控制台 __toon） ----------
+// three 的 MMD 着色器按 dotNL（法线和光的夹角余弦，-1~1）去采样 toon 图的红色通道当作"受光系数"。
+// 多数 PMX 的 toon 图接近纯白，所以明暗几乎没有层次。这里用程序生成一条一维渐变图替换掉它：
+//   shade     暗部的受光系数（0~1）。1 = 不加阴影（保持原样，不替换）；0.8 = 暗部降到 80%
+//   threshold 明暗分界位置，对应 dotNL（-1~1）。0 = 光线正好擦过的位置；往正数移，阴影区更大
+//   soft      过渡宽度（0~1）。接近 0 是赛璐璐硬边，0.3 以上是柔和过渡
+// 只能是灰度阴影（three 只读 toon 图的红色通道）。生成的贴图按线性值写入，shade 就是直接乘在光照上的倍数。
+export const TOON_DEFAULTS = { shade: 1, threshold: 0, soft: 0.15 };
+const TOON_WIDTH = 256;
+
+export function makeToonTexture({ shade, threshold, soft }) {
+  const data = new Uint8Array(TOON_WIDTH * 4);
+  const w = Math.max(soft, 1e-3);
+  for (let i = 0; i < TOON_WIDTH; i++) {
+    const dotNL = (i / (TOON_WIDTH - 1)) * 2 - 1;
+    const t = THREE.MathUtils.clamp((dotNL - (threshold - w)) / (2 * w), 0, 1);
+    const k = t * t * (3 - 2 * t); // smoothstep
+    const v = Math.round((shade + (1 - shade) * k) * 255);
+    data.set([v, v, v, 255], i * 4);
+  }
+  const tex = new THREE.DataTexture(data, TOON_WIDTH, 1, THREE.RGBAFormat);
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.generateMipmaps = false;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+// cfg: { 材质名 | "*": { shade, threshold, soft } }；具体材质名优先于 "*"。
+// 可重复调用（控制台实时调参用）：cfg 里没命中、或 shade >= 1 的材质会恢复成模型自带的 toon 图
+export function applyToon(root, cfg) {
+  if (!root) return;
+  if (root.userData.toonTextures) for (const t of root.userData.toonTextures) t.dispose();
+  const made = new Map();
+  root.userData.toonTextures = [];
+  const has = (name) => cfg && Object.prototype.hasOwnProperty.call(cfg, name);
+  root.traverse((obj) => {
+    if (!obj.isMesh || !Array.isArray(obj.material)) return;
+    for (const mat of obj.material) {
+      if (!('gradientMap' in mat)) continue;
+      if (mat.userData.origGradientMap === undefined) mat.userData.origGradientMap = mat.gradientMap;
+      const src = has(mat.name) ? cfg[mat.name] : has('*') ? cfg['*'] : null;
+      const p = src ? { ...TOON_DEFAULTS, ...src } : null;
+      let next = mat.userData.origGradientMap;
+      if (p && p.shade < 1) {
+        const key = `${p.shade}|${p.threshold}|${p.soft}`;
+        if (!made.has(key)) {
+          const t = makeToonTexture(p);
+          made.set(key, t);
+          root.userData.toonTextures.push(t);
+        }
+        next = made.get(key);
+      }
+      if (mat.gradientMap !== next) {
+        mat.gradientMap = next;
+        mat.needsUpdate = true;
+      }
+    }
+  });
+}
+
+// 各向异性过滤：斜视角（侧身、低头）时贴图不发糊。设成显卡支持的最大值，几乎没有性能代价。
+// gradientMap（toon 渐变图）是一维渐变，不需要；其余贴图（map / 球面 / 法线等）统一处理。
+// 贴图可能还在异步加载，anisotropy 在首次上传 GPU 时才读取；已上传过的才需要 needsUpdate
+export function applyAnisotropy(root) {
+  const max = renderer.capabilities.getMaxAnisotropy();
+  root.traverse((obj) => {
+    if (!obj.material) return;
+    const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+    for (const mat of materials) {
+      for (const key of Object.keys(mat)) {
+        const tex = mat[key];
+        if (!tex || !tex.isTexture || key === 'gradientMap' || tex.anisotropy === max) continue;
+        tex.anisotropy = max;
+        if (tex.image) tex.needsUpdate = true;
+      }
     }
   });
 }
@@ -135,6 +218,8 @@ export function loadModel(url, opts = {}) {
       applyMaterialFixes(loaded);
       applyColorGrade(state.materialFixes);
       fixLowFootIkIterations(loaded);
+      applyAnisotropy(loaded);
+      if (state.materialFixes && state.materialFixes.toon) applyToon(loaded, state.materialFixes.toon);
       state.mesh = loaded;
       state.modelYaw = 0;
       state.modelYawTarget = 0;
@@ -143,6 +228,7 @@ export function loadModel(url, opts = {}) {
       setupIdle();
       frameModel();
       hideLoading();
+      try { window.petAPI.startupLog('模型已加载并上屏'); } catch {}
       if (typeof onReady === 'function') onReady(); // 模型此刻已经出现在屏幕上，仅初次启动计时用
       if (playEntrance) {
         // 模型就绪后跳一次开场舞，播完自动回待机（app.js 的 animate() 里已有这个逻辑），不循环
@@ -159,6 +245,7 @@ export function loadModel(url, opts = {}) {
       document.getElementById('loading-text').textContent =
         '模型加载失败：' + (err && err.message ? err.message : err);
       console.error(err);
+      try { window.petAPI.startupLog('模型加载失败: ' + (err && err.message ? err.message : err)); } catch {}
     }
   );
 }
