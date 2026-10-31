@@ -15,7 +15,7 @@ const { startServer } = require('./main-modules/server');
 const geminiRelay = require('./main-modules/gemini-relay');
 const { hardenWebContents, hardenSession, guardIpc, isSafeName, maskSecret } = require('./main-modules/security');
 const { state } = require('./main-modules/state');
-const { constrainMove, constrainResize } = require('./main-modules/win-limit');
+const { constrainMove, constrainResize, isCenterVisible } = require('./main-modules/win-limit');
 const { requestClickThrough } = require('./main-modules/drag-guard');
 const { beginChat, endChat, getChatPending, assertHistoryEditable, assertGlobalMemoryEditable } = require('./main-modules/chat-lock');
 const { planCrossDaySummary, runChatTurn } = require('./main-modules/chat-turn');
@@ -324,13 +324,33 @@ function startupSummaryText(info) {
   return parts.length ? `，${parts.join('，')}` : '';
 }
 
-// 上次关闭时记的位置是否还能用：显示器插拔/分辨率变化后，坐标可能落在当前所有屏幕范围之外，
-// 那种情况下用它会导致窗口开到看不见的地方，宁可放弃、退回默认居中
-function isPositionOnScreen(x, y) {
+// 上次记的位置是否还能用：显示器插拔/分辨率变化后，坐标可能落在当前所有屏幕范围之外，
+// 那种情况下用它会导致窗口开到看不见的地方，宁可放弃、退回默认居中。
+// 判定标准和运行时的位置限制（win-limit.js）保持一致：窗口正中间一半的区域被工作区完整覆盖即可，
+// 不能只看左上角——窗口左上角被允许部分移出屏幕，按左上角判会把这种合法位置误判成不可用
+function isPositionUsable(x, y, width, height) {
   if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
-  return screen.getAllDisplays().some(({ bounds }) => {
-    return x >= bounds.x && x < bounds.x + bounds.width && y >= bounds.y && y < bounds.y + bounds.height;
-  });
+  const areas = screen.getAllDisplays().map((d) => d.workArea);
+  return isCenterVisible({ x, y, width, height }, areas);
+}
+
+// ---------- 主窗口位置/大小的持久化 ----------
+// 只在 before-quit 里存不够：Windows 上系统关机/重启/注销不会触发 before-quit，
+// 那种情况下位置不会更新，开机自启后就回到上次手动退出时的旧位置。
+// 所以拖动/缩放（防抖）、关机事件里也各存一次，三处共用这一个函数。
+// 桌面模式下真实窗口是被临时纵向展开的那一份，要存的是进入前记下的 state.normalWinBounds
+function savePetBounds() {
+  if (!state.win || state.win.isDestroyed()) return;
+  if (state.win.isMinimized()) return; // 最小化时 Windows 会报 -32000 这种假坐标
+  const bounds = state.bgMouseInteraction ? state.win.getBounds() : state.normalWinBounds || state.win.getBounds();
+  if (![bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite) || bounds.x <= -30000 || bounds.y <= -30000) return;
+  updateConfig({ winPosition: { x: bounds.x, y: bounds.y }, winSize: { width: bounds.width, height: bounds.height } });
+}
+
+let saveBoundsTimer = null;
+function scheduleSavePetBounds() {
+  clearTimeout(saveBoundsTimer);
+  saveBoundsTimer = setTimeout(savePetBounds, 500);
 }
 
 // 上次关闭时记的宽度是否还能用：落在 [WIN_MIN_W, WIN_MAX_W] 区间内才算合法，
@@ -415,13 +435,18 @@ async function createWindow() {
 
   // 记住主窗口关闭前的位置：只在坐标仍落在当前屏幕范围内时采用，否则走默认居中
   const savedPos = cfg.winPosition;
-  const useSavedPos = savedPos && isPositionOnScreen(savedPos.x, savedPos.y);
 
   // 记住关闭前的大小：宽度合法就用，高度按固定比例跟着换算（跟拖拽缩放手柄时的算法保持一致）
   const savedSize = cfg.winSize;
   const useSavedSize = savedSize && isWidthValid(savedSize.width);
   const initW = useSavedSize ? Math.round(savedSize.width) : WIN_W;
   const initH = useSavedSize ? Math.round((initW * WIN_H) / WIN_W) : WIN_H;
+
+  // 位置是否可用要结合窗口大小判断（看中间区域是否在屏幕内），所以放在大小算完之后
+  const useSavedPos = savedPos && isPositionUsable(savedPos.x, savedPos.y, initW, initH);
+  if (savedPos && !useSavedPos) {
+    startupLog(`上次记的位置 (${savedPos.x}, ${savedPos.y}) 不在当前屏幕范围内，改用默认居中`);
+  }
 
   // "正常模式"下窗口该在的位置/大小——不管这次是不是以桌面模式启动，都先算出来存好，
   // 退出桌面模式时要用它恢复
@@ -470,6 +495,13 @@ async function createWindow() {
   state.win.setAlwaysOnTop(true, 'screen-saver');
   if (!state.bgMouseInteraction) state.win.setIgnoreMouseEvents(true, { forward: true });
 
+  // 拖动/缩放过程中和结束后都存位置（防抖）；用 move/resize 而不是 moved/resized，
+  // 因为拖动是渲染进程通过 setPosition 驱动的，Windows 上 moved 只在系统自己的拖动循环结束时才触发
+  state.win.on('move', scheduleSavePetBounds);
+  state.win.on('resize', scheduleSavePetBounds);
+  // Windows 关机/重启/注销：before-quit 不会触发，这里同步存一次
+  state.win.on('session-end', savePetBounds);
+
   state.menu = buildMenu();
 
   // 禁用 Chromium 自带的 Ctrl+滚轮 / 捏合页面缩放（Ctrl+滚轮留给"背景前后移动"）
@@ -512,6 +544,7 @@ function reassertAlwaysOnTop() {
 }
 powerMonitor.on('unlock-screen', reassertAlwaysOnTop); // 屏保退出 / 锁屏解锁
 powerMonitor.on('resume', reassertAlwaysOnTop); // 系统从睡眠中唤醒
+powerMonitor.on('shutdown', savePetBounds); // 关机/重启前再存一次（macOS/Linux；Windows 靠上面窗口的 session-end）
 
 // 每次 LLM 调用完（对话回复 / 归档总结都算），把最新这一条实时推给"LLM调用记录"窗口；
 // 窗口没开着时 llmLogWin 是 null/已销毁，这里直接跳过，等窗口下次打开时用 get-llm-log 兜底拿一次
@@ -1089,9 +1122,9 @@ app.on('window-all-closed', () => app.quit());
 // （切换进桌面模式前记下的那份快照），不然下次启动或者切回普通模式时就会用错位置。
 app.on('before-quit', () => {
   geminiRelay.stopRelay();
+  clearTimeout(saveBoundsTimer);
   if (state.win && !state.win.isDestroyed()) {
-    const bounds = state.bgMouseInteraction ? state.win.getBounds() : state.normalWinBounds || state.win.getBounds();
-    updateConfig({ winPosition: { x: bounds.x, y: bounds.y }, winSize: { width: bounds.width, height: bounds.height } });
+    savePetBounds();
     state.win.destroy();
   }
 });
