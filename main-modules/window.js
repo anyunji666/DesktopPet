@@ -239,8 +239,8 @@ function openAssetsWindow(characterName) {
     state.assetsWin = new BrowserWindow({
       width: 560,
       height: 760,
-      minWidth: 480,
-      minHeight: 520,
+      minWidth: 500,
+      minHeight: 560,
       title: '角色资产配置 - ' + characterName,
       webPreferences: securePrefs(),
     });
@@ -281,7 +281,7 @@ function openHistoryWindow(characterName) {
     state.historyWin = new BrowserWindow({
       width: 560, // 默认大小和"角色资产配置"窗口一致
       height: 760,
-      minWidth: 420, // 最小尺寸保持改默认大小前的 420×560
+      minWidth: 500, // 和"角色资产配置"窗口一致
       minHeight: 560,
       title: '聊天记录 - ' + characterName,
       webPreferences: securePrefs(),
