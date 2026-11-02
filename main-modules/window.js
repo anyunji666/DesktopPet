@@ -496,8 +496,8 @@ function buildMenu() {
     },
     { type: 'separator' },
     {
-      // 一级"切换舞蹈"，二级是全部可选动作（悬停展开，跟"切换角色"一致）；没有可选动作时置灰，避免弹出空子菜单
-      label: '💃 切换舞蹈',
+      // 一级"舞蹈展示"，二级是全部可选动作（悬停展开，跟"切换角色"一致）；没有可选动作时置灰，避免弹出空子菜单
+      label: '💃 舞蹈展示',
       enabled: menuDances.length > 0,
       submenu: menuDances.map(({ d, i }) => ({
         label: d.name,
