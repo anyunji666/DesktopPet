@@ -462,46 +462,48 @@ function applyAutoLaunchMode(mode) {
 function buildMenu() {
   const current = state.characters[state.currentIndex];
   const dances = scanDances();
+  // 保留在 scanDances() 结果里的原始下标 i：渲染进程按这个下标取动作，过滤特殊动作后不能重新编号
+  const menuDances = dances.map((d, i) => ({ d, i })).filter(({ d }) => !SPECIAL_DANCE_NAMES.has(d.name));
   const template = [
     {
       label: '🌄 切换场景',
       submenu: [
+        // 当前项用 ✓ 前缀标出（跟"声音"开关一致），不置灰；点当前项时 switchScene 内部会直接返回，不会重复切换
         {
           label: (state.currentSceneName === null ? '✓ ' : '') + '无场景（透明）',
-          enabled: state.currentSceneName !== null,
           click: () => switchScene(null),
         },
         ...(state.scenes.length ? [{ type: 'separator' }] : []),
         ...state.scenes.map((s) => ({
           label: (s.name === state.currentSceneName ? '✓ ' : '') + s.label,
-          enabled: s.name !== state.currentSceneName,
           click: () => switchScene(s.name),
         })),
         { type: 'separator' },
         {
-          label: '↺ 重置当前场景的位置和大小',
+          label: '↺ 重置位置和大小',
           enabled: state.currentSceneName !== null,
           click: () => resetSceneAdjust(),
         },
-        { label: '🔁 重新扫描场景（改完 scene.json 后用）', click: () => reloadScenes() },
+        { label: '🔁 读取配置文件', click: () => reloadScenes() },
       ],
     },
     {
       label: '🎭 切换角色',
       submenu: state.characters.map((c, i) => ({
         label: (i === state.currentIndex ? '✓ ' : '') + c.name,
-        enabled: i !== state.currentIndex,
         click: () => switchCharacter(i),
       })),
     },
     { type: 'separator' },
-    ...dances
-      .map((d, i) => ({ d, i }))
-      .filter(({ d }) => !SPECIAL_DANCE_NAMES.has(d.name))
-      .map(({ d, i }) => ({
-        label: '💃 ' + d.name,
+    {
+      // 一级"切换舞蹈"，二级是全部可选动作（悬停展开，跟"切换角色"一致）；没有可选动作时置灰，避免弹出空子菜单
+      label: '💃 切换舞蹈',
+      enabled: menuDances.length > 0,
+      submenu: menuDances.map(({ d, i }) => ({
+        label: d.name,
         click: () => send('menu-action', { type: 'dance', index: i }),
       })),
+    },
     { type: 'separator' },
     { label: '🔄 重置模型朝向', click: () => send('menu-action', { type: 'resetYaw' }) },
     { label: '⏸ 待机（停止跳舞）', click: () => send('menu-action', { type: 'idle' }) },
