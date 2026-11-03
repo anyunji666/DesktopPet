@@ -250,7 +250,7 @@ const SUMMARY_FOOTER = `- **摘要模块：** 对本轮的正文内容进行一�
 // 生成"某天聊天总结"用的 prompt：单独一次总结任务，不带角色人设/语气/输出格式那些约束，
 // 避免总结文本也带上角色口癖，污染归档内容。前置词（prefix）是全局的、给 AI 本身设定身份用的，
 // 跟 buildPromptText 一样带上，保持这次调用里模型对自己是谁的认知一致。
-// 结构：前置词 → <historical_conversation> 对话记录 → 任务说明与输出格式（指令放在对话后面，长对话里不容易被冲淡）。
+// 结构：前置词 → <memory_index> 已有记忆 → <historical_conversation> 对话记录 → 任务说明与输出格式（指令放在对话后面，长对话里不容易被冲淡）。
 // 不带角色名：故事里有具体的角色名，总结让模型直接用故事里的称呼。
 // 对话行里的括号元交流原样保留（不再在存档时过滤），[总结] 不对它做特殊处理。
 function buildSummaryPrompt(dayKey, dayLines) {
@@ -260,17 +260,26 @@ function buildSummaryPrompt(dayKey, dayLines) {
     parts.push(prefix.trim());
     parts.push('');
   }
+  // 已有记忆索引：旧条目不在这次的对话素材里，不带这一段模型就不知道"什么已经记过"，
+  // [记忆] 段也就没法真的去重（只能靠 appendMemoryLines 的整行子串匹配兜底）。没内容就不发这一段
+  const memoryIndex = loadMemoryIndex();
+  if (memoryIndex.trim()) {
+    parts.push(`<memory_index>\n<!-- 之前提炼的用户 设定/要求，用于比对新[记忆]项不重复提取 -->\n${memoryIndex.trim()}\n</memory_index>`);
+    parts.push('');
+  }
   parts.push('<historical_conversation>');
   parts.push(dayLines.join('\n'));
   parts.push('</historical_conversation>');
   parts.push('');
   parts.push(`<historical_conversation>是用户和你在 ${formatDayCN(dayKey)} 扮演各自角色所创作的故事。其中带有括号的内容是用户和你的元交流，不带括号的内容是扮演各自角色的故事。需要对故事进行总结，对元交流提取 设定/要求。`);
   parts.push('');
-  parts.push('请按下面的格式输出：');
+  parts.push('请严格按下面的格式输出：');
   parts.push('[总结]');
-  parts.push('不超100字总结<historical_conversation>里的故事；按时间顺序列出关键事件，平铺直叙，不用比喻，内容太多压不进100字就列几个要点；不要加"总结："前缀，不要用分点符号');
+  parts.push('<不超100字的当天故事总结：只写不带括号的故事部分，按时间顺序列出关键事件，以及这些事件造成的角色关系、处境、认知变化；平铺直叙，不用比喻，不作评价；压不进100字就只留最关键的几个要点；这一天没有实质进展就写当天的日常状态。[总结]标记下面直接写总结正文，不要加"总结："这类前缀和分点符号。不要分段>');
   parts.push('[记忆]');
-  parts.push('只有元交流中确实出现了值得长期记忆的 设定/要求 时，才输出[记忆]段。一条一行，每条 设定/要求 不超过20字。没有可记的内容就整段省略——不要输出"[记忆]"标记，也不要写"无"或留空行');
+  parts.push('<从括号里的元交流中提取用户提出的长期设定/要求，一条一行、一行一条，每条不超过20字；不编号、不加项目符号；不要和<memory_index>里已有的条目重复；只在确实有值得长期记忆的内容时才写。没有可提取的内容就把这一段整个省略——不要输出"[记忆]"标记，也不要写"无"或留空行>');
+  parts.push('');
+  parts.push('注意：上面 <> 里的文字是输出要求，实际输出时按它把内容写出来，不要带 <> 本身。');
   return parts.join('\n');
 }
 
