@@ -5,7 +5,7 @@ import { state } from './state.js';
 import { showBubble, hideBubbleIfText } from './ui.js';
 import { isSynthPending, setSynthIdleHook } from './tts.js';
 import { startRecording, stopRecording } from './mic.js';
-import { summarizingHint } from '../day-label.js';
+import { phaseHint } from '../day-label.js';
 
 const chatBox = document.getElementById('chat-box');
 const chatInput = document.getElementById('chat-input');
@@ -16,7 +16,7 @@ let chatBoxTimer = null;
 //   remoteBusy：主进程广播"有一条消息在等回复"（包括聊天记录窗口发的那条）
 let localSending = false;
 let remoteBusy = false;
-// 主进程锁当前所处阶段：'summarizing' 跨天总结整理中 / 'waiting' 等待回复；没人在等时为 null。
+// 主进程锁当前所处阶段：'summarizing' 跨天总结整理中 / 'merging' 合并剧情总览中 / 'waiting' 等待回复；没人在等时为 null。
 // 本窗口刚点发送、主进程推送还没到的那一瞬间也当作 'waiting'，推送到了再按真实阶段更新
 let pendingPhase = null;
 let pendingSummaryDay = null; // 总结阶段被总结的那天（YYYY-MM-DD），提示里要写具体日期
@@ -26,9 +26,9 @@ export const isChatBusy = () => isBusy();
 export const isVoiceInputActive = () => voiceState !== 'idle';
 
 // 各阶段给人看的提示：气泡 / 输入框 placeholder（总结阶段写具体日期，不写"上一日"——被总结的通常比昨天更早）
-const currentPhase = () => (pendingPhase === 'summarizing' ? 'summarizing' : 'waiting');
-const phaseBubble = () => (currentPhase() === 'summarizing' ? summarizingHint(pendingSummaryDay, true) : '等待回复中…');
-const phasePlaceholder = () => (currentPhase() === 'summarizing' ? summarizingHint(pendingSummaryDay, false) : '等待回复中…');
+const currentPhase = () => (pendingPhase === 'summarizing' || pendingPhase === 'merging' ? pendingPhase : 'waiting');
+const phaseBubble = () => phaseHint(currentPhase(), pendingSummaryDay, true);
+const phasePlaceholder = () => phaseHint(currentPhase(), pendingSummaryDay, false);
 // AI 回复气泡的显示时长
 const REPLY_BUBBLE_MS = 5000;
 // 等回复期间的气泡：本窗口自己发的才显示（别的窗口发的，这里仍只收起输入框，不弹气泡）。

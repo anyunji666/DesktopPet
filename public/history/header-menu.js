@@ -1,13 +1,15 @@
-// ---------------- 头部"⋯"更多菜单：插入消息 / 清空对话（参照 plot-assistant 手机私信页） ----------------
+// ---------------- 头部"⋯"更多菜单：插入消息 / 剧情总览 / 记录导出导入 / 清空对话（参照 plot-assistant 手机私信页） ----------------
 import { characterName, list, emptyEl, view } from './state.js';
 import { editLocked, notifyEditLocked, onPendingChange } from './pending.js';
 import { alertError, showToast } from './toast.js';
 import { appendMsg, reload } from './messages.js';
 import { confirmDialog } from './confirm-dialog.js';
+import { dayLabelCN } from '../day-label.js';
 
 const menuWrap = document.getElementById('menu-wrap');
 const menu = document.getElementById('menu');
 const menuInsertBtn = document.getElementById('menu-insert');
+const menuOverviewBtn = document.getElementById('menu-overview');
 const menuClearBtn = document.getElementById('menu-clear');
 const menuExportBtn = document.getElementById('menu-export');
 const menuImportBtn = document.getElementById('menu-import');
@@ -77,6 +79,63 @@ async function doInsert(role) {
 insertAsUser.addEventListener('click', () => doInsert('user'));
 insertAsAssistant.addEventListener('click', () => doInsert('assistant'));
 
+// ---- 剧情总览：查看 / 手动编辑 ----
+// 总览由日总结攒够字数后自动合并生成（主进程 story-overview.js），这里只改正文；水位线（"已整理到哪天"）只读展示。
+// 等回复期间（含总结 / 合并总览）不能保存：合并那次调用马上要写同一个文件，主进程也会拦。
+const overviewOverlay = document.getElementById('overview-overlay');
+const overviewText = document.getElementById('overview-text');
+const overviewCovered = document.getElementById('overview-covered');
+const overviewCount = document.getElementById('overview-count');
+const overviewSave = document.getElementById('overview-save');
+let overviewMax = 1200;
+
+function refreshOverviewCount() {
+  const n = overviewText.value.trim().length;
+  overviewCount.textContent = `${n} / ${overviewMax} 字`;
+  overviewCount.classList.toggle('over', n > overviewMax);
+  overviewSave.disabled = n > overviewMax || editLocked();
+}
+overviewText.addEventListener('input', refreshOverviewCount);
+
+async function openOverview() {
+  closeMenu();
+  let data;
+  try {
+    data = await window.petAPI.getStoryOverview(characterName);
+  } catch (err) {
+    return alertError(err);
+  }
+  overviewMax = data.maxChars || 1200;
+  overviewText.value = data.text || '';
+  const label = dayLabelCN(data.coveredUntil);
+  overviewCovered.textContent = label ? `已整理到 ${label}（这天及以前的日总结不再单独发送）` : '';
+  refreshOverviewCount();
+  overviewOverlay.classList.remove('hidden');
+  setTimeout(() => overviewText.focus(), 50);
+}
+function closeOverview() {
+  overviewOverlay.classList.add('hidden');
+}
+menuOverviewBtn.addEventListener('click', openOverview);
+document.getElementById('overview-close').addEventListener('click', closeOverview);
+document.getElementById('overview-cancel').addEventListener('click', closeOverview);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !overviewOverlay.classList.contains('hidden')) closeOverview();
+});
+overviewSave.addEventListener('click', async () => {
+  if (editLocked()) return notifyEditLocked();
+  overviewSave.disabled = true;
+  try {
+    await window.petAPI.saveStoryOverview(characterName, overviewText.value);
+    closeOverview();
+    showToast('剧情总览已保存', 'info');
+  } catch (err) {
+    alertError(err);
+  } finally {
+    refreshOverviewCount();
+  }
+});
+
 // ---- 清空对话 ----
 menuClearBtn.addEventListener('click', async () => {
   closeMenu();
@@ -125,12 +184,13 @@ menuImportBtn.addEventListener('click', async () => {
   }
 });
 
-// 等回复期间不允许改记录：插入/清空/导入菜单项和插入弹窗的按钮禁用，已展开的菜单收起
+// 等回复期间不允许改记录：插入/清空/导入菜单项、插入弹窗和剧情总览弹窗的保存按钮禁用，已展开的菜单收起（查看总览仍可用）
 onPendingChange(() => {
   const el = editLocked();
   menuInsertBtn.disabled = el;
   menuClearBtn.disabled = el;
   menuImportBtn.disabled = el;
+  if (!overviewOverlay.classList.contains('hidden')) refreshOverviewCount(); // 弹窗开着时跟着锁状态更新保存按钮
   insertAsUser.disabled = el;
   insertAsAssistant.disabled = el;
   if (el) closeMenu();

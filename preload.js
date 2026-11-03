@@ -93,6 +93,9 @@ contextBridge.exposeInMainWorld('petAPI', {
   clearChatHistory: (characterName) => ipcRenderer.invoke('clear-chat-history', characterName),
   exportChatHistory: (characterName) => ipcRenderer.invoke('export-chat-history', characterName),
   importChatHistory: (characterName) => ipcRenderer.invoke('import-chat-history', characterName),
+  // 剧情总览（聊天记录窗口 ⋯ 菜单里查看 / 手动编辑）：get 返回 { text, coveredUntil, maxChars }
+  getStoryOverview: (characterName) => ipcRenderer.invoke('get-story-overview', characterName),
+  saveStoryOverview: (characterName, text) => ipcRenderer.invoke('save-story-overview', characterName, text),
 
   // ---- LLM 调用记录窗口（审查用）----
   getLlmLog: () => ipcRenderer.invoke('get-llm-log'),

@@ -5,10 +5,11 @@
 //   2) 不允许改动同一角色的聊天记录（编辑/插入/删除/清空），否则 chat-send 结尾整份落盘时会把改动覆盖掉
 // 锁放在主进程，不依赖任何一个窗口自己的界面状态；界面上的禁用只是给人看的，真正的拦截在这里。
 // 状态存在 state.chatPending 上，开始/结束都会广播给主窗口和聊天记录窗口，两边按钮据此联动。
-// 锁内分两个阶段（phase），只影响界面上给人看的提示文案，不影响拦截规则：
+// 锁内分三个阶段（phase），只影响界面上给人看的提示文案，不影响拦截规则：
 //   'summarizing'：跨天了，正在先给某一天生成总结（这次 LLM 调用完才会去生成回复）。被总结的不一定是昨天：
-//                  昨天是"上一个封印包"、保持展开，通常摘的是更早的一天，日期放在 summaryDay 里给界面显示
-//   'waiting'    ：等待 LLM 回复（没有总结要做的对话从头到尾都是这个阶段）
+//                  昨天是"上一天"、发原文，被总结的通常是更早的一天，日期放在 summaryDay 里给界面显示
+//   'merging'    ：日总结攒够字数，正在把它们并进剧情总览（story-overview.js）；总览整理完才会去生成回复
+//   'waiting'    ：等待 LLM 回复（没有总结/合并要做的对话从头到尾都是这个阶段）
 const { state } = require('./state');
 
 function sendTo(win, channel, payload) {
@@ -28,7 +29,7 @@ function broadcastPending() {
 }
 
 // 开始一轮对话：已经有一轮在等就抛错（这就是"一次只能发一条"的兜底），否则上锁并广播
-// phase 是起始阶段：已知要先做跨天总结就传 'summarizing'，这样界面从一开始就显示对的提示，不会先闪一下"等待回复"
+// phase 是起始阶段：已知要先做跨天总结就传 'summarizing'（只欠合并总览就传 'merging'），这样界面从一开始就显示对的提示，不会先闪一下"等待回复"
 // summaryDay：phase 为 'summarizing' 时被总结的那天（YYYY-MM-DD），只用于界面提示
 function beginChat({ character, source, user, imageDataURL, phase = 'waiting', summaryDay = null }) {
   if (state.chatPending) throw new Error('上一条消息还没有回复，请等它回复或报错后再发送');

@@ -1,10 +1,9 @@
-// ---------- 聊天历史处理：文本清洗 / 按天封存 / 摊平成 prompt 文本 ----------
-// 只管"历史怎么变成一段文本"：<story_overview> 摘要块拆分、自然日分组、封存天总结预算、
+// ---------- 聊天历史处理：文本清洗 / 按天分层 / 摊平成 prompt 文本 ----------
+// 只管"历史怎么变成一段文本"：<story_overview> 摘要块拆分、自然日分组、未并入总览的日总结、
 // 轮次压缩、跨天总结的解析。不碰 API 配置、不碰 prompt 模板、不发请求。
-// 依赖方向：本文件只依赖 chat-store / date-detect，被 llm.js（拼 prompt）和 chat-turn.js（一轮对话流程）引用，
-// 不能反过来 require llm.js，否则会循环依赖。
-const { loadDaySummary, loadOpenedDay, saveOpenedDay } = require('./chat-store');
-const { extractMentionedDayKeys } = require('./date-detect');
+// 依赖方向：本文件只依赖 chat-store，被 llm.js（拼 prompt）、chat-turn.js（一轮对话流程）和
+// story-overview.js（合并剧情总览）引用，不能反过来 require llm.js，否则会循环依赖。
+const { loadDaySummaries, loadStoryOverview } = require('./chat-store');
 
 // SUMMARY_FOOTER 要求模型在回复末尾输出的摘要块标签（<story_overview>故事时间/概述</story_overview>）。
 // 用带闭合标签的正则匹配，而不是简单地"从某个标记切到字符串末尾"——这样即使标签前后顺序有变化
@@ -82,14 +81,14 @@ function dayKeyOf(ts) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-// 封印包一行的日期展示格式："YYYY年M月D日"（不补零）
+// 日期展示格式："YYYY年M月D日"（不补零）
 function formatDayCN(dayKey) {
   const [y, m, d] = dayKey.split('-').map(Number);
   return `${y}年${m}月${d}日`;
 }
 
-// "上一个封存包"：history 里所有早于 refDayKey 的日子中最新的那一天（不管隔了几天），没有则返回 null。
-// 摊平历史（今天 vs 上一个封存包）、以及主进程判断"跨天了要不要先补总结"都靠这个算，抽出来两边共用。
+// "上一天"：history 里所有早于 refDayKey 的日子中最新的那一天（不管隔了几天），没有则返回 null。
+// 摊平历史（今天 + 上一天发原文）、以及主进程判断"跨天了要不要先补总结"都靠这个算，抽出来两边共用。
 function computeLastPastDayKey(history, refDayKey) {
   let lastPastDayKey = null;
   for (const h of history) {
@@ -149,56 +148,56 @@ function parseSummaryAndMemory(rawText) {
   return { summary: summaryPart, memoryLines };
 }
 
-// "当前打开的封印包"：跟 today / lastPastDayKey 不一样，这个是跨轮持久的——用户提到某天后，
-// 哪怕后面几轮不再重复提这个日期，这天也会一直保持展开，直到过了自然日自动失效，或者被新提到的
-// 另一个日期替换掉。同一时间只能有一个（不算 today / lastPastDayKey 这两个恒定展开的）：
-//   - 本轮没提到日期，或者一句话里提到了不止一个日期（判定为“提及失败”）=> 不改动槽位，原样返回
-//   - 提到的日期正好是 today 或 lastPastDayKey => 这两天反正本来就展开，不占槽位，不改动
-//   - 提到唯一一个、且不是 today/lastPastDayKey 的日期 => 替换槽位为这天，并写盘持久化
-// 过期判定：槽位的 markedOnDay（标记发生在哪个自然日）只要不等于当前 todayKey 就算过期，
-// 复用跟 lastPastDayKey 一样的自然日口径，不引入额外的时间窗概念。
-function resolveOpenedDayKey(characterName, currentInputText, todayKey, lastPastDayKey) {
-  const mentioned = extractMentionedDayKeys(currentInputText || '');
-  if (mentioned.length === 1) {
-    const day = mentioned[0];
-    if (day !== todayKey && day !== lastPastDayKey) {
-      saveOpenedDay(characterName, day, todayKey);
-    }
-  }
-  const stored = loadOpenedDay(characterName);
-  return stored && stored.markedOnDay === todayKey ? stored.dayKey : null;
+// 剧情总览的标题行："元时间 X年X月X日 及之前的旧剧情总览："（水位线 coveredUntil 为空 = 用户手写、还没合并过的总览，不带日期）。
+// 摊平历史（发给模型）和合并总览的提示词（llm.js 的 buildOverviewPrompt）共用
+function overviewHeading(coveredUntil) {
+  return coveredUntil ? `元时间 ${formatDayCN(coveredUntil)} 及之前的旧剧情总览：` : '旧剧情总览：';
 }
 
-// 所有"封存天"（不展开、只发总结那些天）的总结正文加起来的总字数预算：这个才是会随着用的
-// 时间变长一直往上涨的量。今天 / 上一个封印包 / 当前打开的封印包 都是全量发送，不设阈值——
-// 一天内聊多少都不压缩，真正需要管的是"聊了多少天"，不是"某一天聊了多少"。
-const SEALED_SUMMARY_BUDGET_CHARS = 2000;
+// 还没并进剧情总览的日总结：早于"上一天"（原文发送的那天）、晚于总览水位线 coveredUntil、并且已经生成过总结的那些天，
+// 按日期从早到晚返回 [{ dayKey, text }]。摊平历史（发给模型）和判断"要不要合并总览"都用这一份，口径保持一致。
+// 只看 history 里实际还有消息的天：整天的消息被用户删光后，遗留的总结不再发送。
+function collectUnmergedSummaries(characterName, history, todayKey = dayKeyOf(Date.now())) {
+  const lastPastDayKey = computeLastPastDayKey(history, todayKey);
+  if (lastPastDayKey === null) return [];
+  const { coveredUntil } = loadStoryOverview(characterName);
+  const summaries = loadDaySummaries(characterName);
+  const days = new Set();
+  for (const h of history) {
+    if (typeof h.ts !== 'number') continue;
+    const dk = dayKeyOf(h.ts);
+    if (dk < lastPastDayKey && (!coveredUntil || dk > coveredUntil)) days.add(dk);
+  }
+  return [...days]
+    .sort()
+    .filter((dk) => typeof summaries[dk] === 'string' && summaries[dk])
+    .map((dk) => ({ dayKey: dk, text: summaries[dk] }));
+}
 
 // 把聊天记录摊平成文本：用户说的话标"用户"，AI 说的话标"你"（不用角色名——发给 LLM 的历史里，
 // AI 自己的发言统一用"你"指代，因为 AI 实际扮演的身份可能被角色资料/世界背景改写，不一定等于角色名本身）
 // 图片消息在文字侧降级成 "[图片:文件名]" 标记：不支持识图的模型看文字标记也能知道"这里发过一张叫xxx的图"；
 // 图片本身只在 vision 开启时对"本轮"消息以视觉格式直发，历史图片不重发（省 token）
 //
-// 历史按"自然日"分组做压缩，避免多日累积后上下文过长：
-//   - 今天；"上一个封印包"（历史里早于今天的最新一天，不管隔了几天）；以及"当前打开的封印包"
-//     （见 resolveOpenedDayKey：提到某个日期后跨轮持久展开，直到过了自然日或被新日期替换）=> 正常展开
-//   - 其余更早的日子 => 只输出一行 "YYYY年M月D日 旧对话封印包"，具体内容不发给模型
+// 历史分三层，越早越概括，都在同一条时间线里依次输出：
+//   1. 剧情总览：水位线 coveredUntil 以前的所有日子，已经被压缩成一份不超过 1000 字的总览，作为开头：标题行 `元时间 X 及之前的旧剧情总览：` + 总览正文（不加标签）
+//   2. 日总结：总览水位线之后、早于"上一天"的每一天各一行 "元时间 YYYY年M月D日 的故事总结：…"（还没生成过总结的天不输出）
+//   3. 原文：今天和"上一天"（历史里早于今天的最新一天，不管隔了几天）；内部再按轮次压缩（见下）
 // 时间戳：用户消息若与上一条间隔 >= 5 分钟，或者跨天了（哪怕间隔很短），都会带 [元时间 YYYY年M月D日 HH:mm] 前缀；
 // 角色的回复永远不带时间戳，但"跨天"是按实际发送时间判断的，不看是谁发的这条。
-function flattenChatHistory(characterName, history, currentInputText) {
+function flattenChatHistory(characterName, history) {
   const GAP_MS = 5 * 60 * 1000;
   const todayKey = dayKeyOf(Date.now());
 
-  // 上一个封印包：历史里所有早于今天的日子中最新的那一天（不管隔了几天）
+  // 上一天：历史里所有早于今天的日子中最新的那一天（不管隔了几天）
   const lastPastDayKey = computeLastPastDayKey(history, todayKey);
 
-  const openedDayKey = resolveOpenedDayKey(characterName, currentInputText, todayKey, lastPastDayKey);
-  const unsealed = new Set([todayKey]);
-  if (lastPastDayKey !== null) unsealed.add(lastPastDayKey);
-  if (openedDayKey !== null) unsealed.add(openedDayKey);
+  const rawDays = new Set([todayKey]);
+  if (lastPastDayKey !== null) rawDays.add(lastPastDayKey);
+  const summaryOfDay = new Map(collectUnmergedSummaries(characterName, history, todayKey).map((x) => [x.dayKey, x.text]));
 
-  // 第一遍：只按天分组，暂不决定封存天要不要发总结——先把 history 摊成 { dayKey, sealed, msgs } 的天块列表，
-  // sealed = true 表示这天不在 unsealed 集合里，属于要收起来的"封存天"
+  // 第一遍：只按天分组，把 history 摊成 { dayKey, old, msgs } 的天块列表，
+  // old = true 表示这天不发原文（要么已并进总览，要么只发日总结）
   let prevTs = null;
   let prevDayKey = null;
   let curDayKey = null;
@@ -207,7 +206,7 @@ function flattenChatHistory(characterName, history, currentInputText) {
 
   const flushDay = () => {
     if (curDayKey === null) return;
-    dayBlocks.push({ dayKey: curDayKey, sealed: !unsealed.has(curDayKey), msgs: curDayMsgs });
+    dayBlocks.push({ dayKey: curDayKey, old: !rawDays.has(curDayKey), msgs: curDayMsgs });
     curDayMsgs = [];
   };
 
@@ -234,36 +233,22 @@ function flattenChatHistory(characterName, history, currentInputText) {
   }
   flushDay();
 
-  // 第二遍：给封存天的总结做总字数预算——从最新的封存天往回累加，超过 SEALED_SUMMARY_BUDGET_CHARS
-  // 字就不再发更早那些天的总结正文了（本地 -summaries.json 不受影响，之后提到那天照样能拆包展开）
-  let budget = SEALED_SUMMARY_BUDGET_CHARS;
-  const sendableSummary = new Map(); // dayKey -> summary 文本（只放"预算内、真发的"那些）
-  for (let i = dayBlocks.length - 1; i >= 0; i--) {
-    const block = dayBlocks[i];
-    if (!block.sealed) continue;
-    const summary = loadDaySummary(characterName, block.dayKey);
-    if (!summary) continue; // 还没生成过总结，走占位文案，不占预算
-    if (summary.length > budget) continue; // 超预算：这天退化成占位文案，不是报错
-    sendableSummary.set(block.dayKey, summary);
-    budget -= summary.length;
-  }
-
-  // 第二点五遍：未封存天（今天/上一个封印包/打开的封印包）内部再按"轮次"压缩一层——
-  // 这些天不管聊多少条，之前是无脑全量展开原文，天数一多同样会把 prompt 撑爆。
-  // 做法：把所有未封存天的消息摊平成一条时间线（不看日期边界），按 user→assistant 配对切成"轮"，
+  // 第二遍：原文天（今天 / 上一天）内部再按"轮次"压缩一层——
+  // 这些天不管聊多少条，之前是无脑全量展开原文，聊得多了同样会把 prompt 撑爆。
+  // 做法：把原文天的消息摊平成一条时间线（不看日期边界），按 user→assistant 配对切成"轮"，
   // 落单的消息（没配对上）自己算一轮；最近 RECENT_RAW_ROUNDS 轮保留原文，
   // 更早的轮尝试用该轮 assistant 回复自带的 [摘要] 块替换原文——找不到就整轮退回原文兜底，不丢内容。
   // 在 { h, prefix } 这些包装对象上直接标 renderMode，不动 h 本身，也不落盘，只影响这次拼 prompt。
   const RECENT_RAW_ROUNDS = 2;
-  const unsealedItems = [];
+  const rawItems = [];
   for (const block of dayBlocks) {
-    if (block.sealed) continue;
-    for (const item of block.msgs) unsealedItems.push(item);
+    if (block.old) continue;
+    for (const item of block.msgs) rawItems.push(item);
   }
   const rounds = [];
-  for (let i = 0; i < unsealedItems.length; i++) {
-    const item = unsealedItems[i];
-    const next = unsealedItems[i + 1];
+  for (let i = 0; i < rawItems.length; i++) {
+    const item = rawItems[i];
+    const next = rawItems[i + 1];
     if (item.h.role === 'user' && next && next.h.role === 'assistant') {
       rounds.push([item, next]);
       i++; // next 已配进这一轮，跳过
@@ -293,41 +278,44 @@ function flattenChatHistory(characterName, history, currentInputText) {
   // sawCompact/sepInserted：压缩摘要行 和 保留原文的最近轮次 之间插一条 "——" 分隔线，只插一次——
   // 在第一条"原文"行前面、且前面确实出现过压缩摘要时插入，让模型一眼分清"这段是概述，这段是原话"。
   const lines = [];
+  const overview = loadStoryOverview(characterName);
+  if (overview.text) lines.push(overviewHeading(overview.coveredUntil), overview.text);
   let sawCompact = false;
   let sepInserted = false;
   for (const block of dayBlocks) {
-    if (!block.sealed) {
-      // 今天 / 上一个封印包 / 本轮提到的日期：按上面标好的 renderMode 输出（原文 / 压缩摘要 / 跳过）
-      for (const item of block.msgs) {
-        const { h, prefix } = item;
-        if (item.renderMode === 'skip') continue;
-        if (item.renderMode === 'compact') {
-          lines.push(item.compactText);
-          sawCompact = true;
-          continue;
-        }
-        if (sawCompact && !sepInserted) {
-          lines.push('——');
-          sepInserted = true;
-        }
-        // assistant 存档内容末尾拼着 <story_overview> 摘要块（给轮次压缩当数据源用），
-        // 这里是"发原文"的分支，只要正文，摘要块不发（避免最近两轮也带一份摘要块，显得重复）
-        const rawContent = h.role === 'assistant' ? splitTurnSummary(h.content).body : h.content;
-        const imageTag = h.image ? `[图片:${h.image}]` : '';
-        const content = imageTag ? (rawContent ? `${imageTag} ${rawContent}` : imageTag) : rawContent;
-        const speaker = h.role === 'user' ? '用户' : '你';
-        lines.push(`${prefix}${speaker}: ${content}`);
-        // 每轮原文 assistant 回复后面跟一行它自己的故事时间（文案和聊天记录窗口气泡末尾的标签一致）：
-        // 摘要块不发，模型就看不到"故事走到什么时间"，估算本轮故事时间没有锚点。
-        // 逐轮贴在自己那条下面，最近两轮各有一行；压缩成摘要的轮次本来就在摘要里带着故事时间，不重复补。
-        if (h.role === 'assistant') {
-          const storyTime = extractStoryTime(h.content);
-          if (storyTime) lines.push(`故事时间 · ${storyTime}`);
-        }
+    if (block.old) {
+      // 已并进总览的天（水位线以前）不输出；其余只发日总结，没生成过总结的天也不输出
+      const summary = summaryOfDay.get(block.dayKey);
+      if (summary) lines.push(`元时间 ${formatDayCN(block.dayKey)} 的故事总结：${summary}`);
+      continue;
+    }
+    // 今天 / 上一天：按上面标好的 renderMode 输出（原文 / 压缩摘要 / 跳过）
+    for (const item of block.msgs) {
+      const { h, prefix } = item;
+      if (item.renderMode === 'skip') continue;
+      if (item.renderMode === 'compact') {
+        lines.push(item.compactText);
+        sawCompact = true;
+        continue;
       }
-    } else {
-      const summary = sendableSummary.get(block.dayKey);
-      lines.push(summary ? `元时间 ${formatDayCN(block.dayKey)} 的总结：${summary}` : `元时间 ${formatDayCN(block.dayKey)} 的旧对话封印包`);
+      if (sawCompact && !sepInserted) {
+        lines.push('——');
+        sepInserted = true;
+      }
+      // assistant 存档内容末尾拼着 <story_overview> 摘要块（给轮次压缩当数据源用），
+      // 这里是"发原文"的分支，只要正文，摘要块不发（避免最近两轮也带一份摘要块，显得重复）
+      const rawContent = h.role === 'assistant' ? splitTurnSummary(h.content).body : h.content;
+      const imageTag = h.image ? `[图片:${h.image}]` : '';
+      const content = imageTag ? (rawContent ? `${imageTag} ${rawContent}` : imageTag) : rawContent;
+      const speaker = h.role === 'user' ? '用户' : '你';
+      lines.push(`${prefix}${speaker}: ${content}`);
+      // 每轮原文 assistant 回复后面跟一行它自己的故事时间（文案和聊天记录窗口气泡末尾的标签一致）：
+      // 摘要块不发，模型就看不到"故事走到什么时间"，估算本轮故事时间没有锚点。
+      // 逐轮贴在自己那条下面，最近两轮各有一行；压缩成摘要的轮次本来就在摘要里带着故事时间，不重复补。
+      if (h.role === 'assistant') {
+        const storyTime = extractStoryTime(h.content);
+        if (storyTime) lines.push(`故事时间 · ${storyTime}`);
+      }
     }
   }
 
@@ -343,6 +331,8 @@ module.exports = {
   dayKeyOf,
   formatDayCN,
   computeLastPastDayKey,
+  overviewHeading,
+  collectUnmergedSummaries,
   flattenDayLines,
   parseSummaryAndMemory,
   flattenChatHistory,

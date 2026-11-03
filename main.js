@@ -39,7 +39,10 @@ const {
   loadMemoryIndex,
   saveMemoryIndexManual,
   MEMORY_MAX_CHARS,
-  clearOpenedDay,
+  STORY_OVERVIEW_MAX_CHARS,
+  loadStoryOverview,
+  saveStoryOverview,
+  clearStoryOverview,
 } = require('./main-modules/chat-store');
 const { loadAssets, saveAssetsFile, currentStoryDate } = require('./main-modules/assets');
 const { getTtsConfig, saveTtsConfig, getPresets, testVoice } = require('./main-modules/tts');
@@ -709,7 +712,7 @@ ipcMain.handle('chat-send', async (e, characterName, message, imageDataURL) => {
 
   // === 上锁 ===
   // 已经有一条在等回复时 beginChat 会直接抛错，本次发送被拒绝（不影响正在进行的那一条）
-  // 先判断要不要做跨天总结，锁一开始就带上对应阶段（同步、无 await，判断到上锁之间不会有别的改动插进来）
+  // 先判断要不要做跨天总结 / 合并剧情总览，锁一开始就带上对应阶段（同步、无 await，判断到上锁之间不会有别的改动插进来）
   const summaryPlan = planCrossDaySummary(characterName);
   const fromMainWindow = state.win && !state.win.isDestroyed() && e.sender === state.win.webContents;
   beginChat({
@@ -717,8 +720,8 @@ ipcMain.handle('chat-send', async (e, characterName, message, imageDataURL) => {
     source: fromMainWindow ? 'main' : 'history',
     user: text,
     imageDataURL,
-    phase: summaryPlan ? 'summarizing' : 'waiting',
-    summaryDay: summaryPlan ? summaryPlan.dayToSummarize : null, // 界面提示里要写具体是哪一天
+    phase: summaryPlan ? summaryPlan.startPhase : 'waiting', // summarizing 跨天总结 / merging 只欠合并剧情总览 / waiting
+    summaryDay: summaryPlan ? summaryPlan.dayToSummarize : null, // 总结阶段界面提示里要写具体是哪一天
   });
 
   // === 跑一轮对话，成功/失败都要解锁 ===
@@ -1062,6 +1065,27 @@ ipcMain.handle('truncate-chat-history', (_e, characterName, fromIndex) => {
   return removed.length;
 });
 
+// 剧情总览（聊天记录窗口"⋯ → 剧情总览"）：读取 / 手动保存。总览由跨天总结后的合并流程自动生成（story-overview.js），
+// 这里允许用户读和改正文；水位线 coveredUntil 只读，保存时原样保留。
+// 保存时这个角色正在等回复 / 做总结 / 合并总览会拦下：合并那次调用马上要写同一个文件，手动保存会和它互相覆盖
+ipcMain.handle('get-story-overview', (_e, characterName) => {
+  if (!validCharacter(characterName)) throw new Error('未知角色');
+  return { ...loadStoryOverview(characterName), maxChars: STORY_OVERVIEW_MAX_CHARS };
+});
+ipcMain.handle('save-story-overview', (_e, characterName, text) => {
+  if (!validCharacter(characterName)) throw new Error('未知角色');
+  assertHistoryEditable(characterName);
+  const t = typeof text === 'string' ? text.trim() : '';
+  if (t.length > STORY_OVERVIEW_MAX_CHARS) {
+    throw new Error(`剧情总览超过 ${STORY_OVERVIEW_MAX_CHARS} 字上限（当前 ${t.length} 字），请删减后再保存`);
+  }
+  const cur = loadStoryOverview(characterName);
+  // 全部清空 = 用户想去掉总览：水位线保留（那些天的日总结不会因此重新冒出来）；本来就没有总览、又保存空文本则什么都不写
+  if (!t && !cur.text && !cur.coveredUntil) return true;
+  saveStoryOverview(characterName, { text: t, coveredUntil: cur.coveredUntil });
+  return true;
+});
+
 // 聊天记录导出 / 导入（文件格式和校验见 chat-transfer.js）。取消选择文件返回 null
 ipcMain.handle('export-chat-history', async (e, characterName) => {
   if (!validCharacter(characterName)) throw new Error('未知角色');
@@ -1100,7 +1124,7 @@ ipcMain.handle('clear-chat-history', (_e, characterName) => {
   clearChatImages(characterName); // 图片文件夹整个清掉
   clearChatVoices(characterName); // 回复语音文件夹也整个清掉
   clearDaySummaries(characterName); // 按天总结缓存也一起清掉
-  clearOpenedDay(characterName); // 当前打开的封印包也跟着清掉，避免指向已经不存在的历史
+  clearStoryOverview(characterName); // 剧情总览也一起清掉
   return true;
 });
 

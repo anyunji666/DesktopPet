@@ -150,7 +150,8 @@ function saveChatHistory(characterName, history) {
 
 // ---------- 历史总结缓存：chat-history/<角色名>-summaries.json，{ "YYYY-MM-DD": "总结文本" } ----------
 // 跨天时把"刚结束那天"的原文总结一次并缓存在这里，之后 flattenChatHistory 摊平历史时，
-// 不在展开范围内的天直接读这里的总结，不用每次都重新让 LLM 总结。
+// 不在"今天 / 上一天"原文范围内、又还没并进剧情总览的天直接读这里的总结，不用每次都重新让 LLM 总结。
+// 日总结本身永远保留（并进总览之后只是不再发送），总览出问题时随时有素材可以重做。
 function summaryPath(characterName) {
   const dir = getChatDir();
   fs.mkdirSync(dir, { recursive: true });
@@ -194,43 +195,54 @@ function clearDaySummaries(characterName) {
   }
 }
 
-// ---------- 打开的封印包槽位：chat-history/<角色名>-opened-day.json ----------
-// 用户提到某个已封印的日期时，把那天记在这里、标成"当前打开"，直到过了自然日自动失效——
-// 让"展开"这件事跨轮持久，而不是像 date-detect.js 那样只在提到日期的当轮临时生效。
-// 全局只有一个槽位（同一时间只能展开一个非今天/非上一个封印包的日子），格式：
-// { "dayKey": "被展开的那天", "markedOnDay": "标记发生在哪个自然日，用于判断是否已过期" }
-function openedDayPath(characterName) {
+// ---------- 剧情总览：chat-history/<角色名>-story-overview.json ----------
+// 日总结攒到一定字数后，由 story-overview.js 把"上一版总览 + 这批日总结"再压缩成一份不超过 1000 字的剧情总览，存在这里：
+//   { "text": "总览正文", "coveredUntil": "YYYY-MM-DD" }
+// coveredUntil 是水位线：这一天（含）以前的日总结都已经并进 text，之后不再单独发给模型；
+// 只有合并成功才会前移水位线，合并失败时那几天的日总结照常发送，不会丢内容。
+// 用户也可以在聊天记录窗口的"⋯ → 剧情总览"里手动改 text，水位线不受影响。
+const STORY_OVERVIEW_MAX_CHARS = 1200; // 总览正文上限（提示词要求 AI 控制在 1000 字内，留一点余量；手动保存同样按这个上限）
+
+function storyOverviewPath(characterName) {
   const dir = getChatDir();
   fs.mkdirSync(dir, { recursive: true });
-  return path.join(dir, assertSafeName(characterName) + '-opened-day.json');
+  return path.join(dir, assertSafeName(characterName) + '-story-overview.json');
 }
 
-// 读取当前槽位；没有/格式不对返回 null，是否过期由调用方拿 markedOnDay 跟当前 todayKey 比较判断
-function loadOpenedDay(characterName) {
+// 读取总览；没有/格式不对返回 { text: '', coveredUntil: '' }（调用方据此不发送这一段）
+function loadStoryOverview(characterName) {
   try {
-    const data = JSON.parse(fs.readFileSync(openedDayPath(characterName), 'utf-8'));
-    if (data && typeof data.dayKey === 'string' && typeof data.markedOnDay === 'string') return data;
+    const data = JSON.parse(fs.readFileSync(storyOverviewPath(characterName), 'utf-8'));
+    const text = data && typeof data.text === 'string' ? data.text.trim() : '';
+    const coveredUntil = data && typeof data.coveredUntil === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(data.coveredUntil) ? data.coveredUntil : '';
+    return { text, coveredUntil };
   } catch (err) {
     if (err.code !== 'ENOENT') {
-      console.warn(`[pet] 角色 "${characterName}" 的打开槽读取失败: ${err.message}`);
+      console.warn(`[pet] 角色 "${characterName}" 的剧情总览读取失败: ${err.message}`);
+      if (err instanceof SyntaxError) backupCorruptFile(storyOverviewPath(characterName)); // 损坏的留底，免得下一次保存把它盖掉
     }
-  }
-  return null;
-}
-
-function saveOpenedDay(characterName, dayKey, markedOnDay) {
-  try {
-    fs.writeFileSync(openedDayPath(characterName), JSON.stringify({ dayKey, markedOnDay }, null, 2));
-  } catch (err) {
-    console.error(`[pet] 保存打开槽失败: ${err.message}`);
+    return { text: '', coveredUntil: '' };
   }
 }
 
-function clearOpenedDay(characterName) {
+// 写盘失败要抛出去：合并 / 手动保存据此报错，而不是误以为已经保存（用原子写入，写到一半不会留下半截文件）
+function saveStoryOverview(characterName, { text, coveredUntil }) {
+  const t = typeof text === 'string' ? text.trim() : '';
+  const c = typeof coveredUntil === 'string' ? coveredUntil : '';
   try {
-    fs.unlinkSync(openedDayPath(characterName));
+    writeFileAtomic(storyOverviewPath(characterName), JSON.stringify({ text: t, coveredUntil: c }, null, 2));
   } catch (err) {
-    if (err.code !== 'ENOENT') console.warn(`[pet] 清空打开槽失败: ${err.message}`);
+    console.error(`[pet] 保存剧情总览失败: ${err.message}`);
+    throw new Error('保存剧情总览失败：' + err.message);
+  }
+}
+
+// 清空角色全部聊天记录 / 导入覆盖时，总览一起清掉
+function clearStoryOverview(characterName) {
+  try {
+    fs.unlinkSync(storyOverviewPath(characterName));
+  } catch (err) {
+    if (err.code !== 'ENOENT') console.warn(`[pet] 清空剧情总览失败: ${err.message}`);
   }
 }
 
@@ -478,9 +490,10 @@ module.exports = {
   loadDaySummary,
   saveDaySummary,
   clearDaySummaries,
-  loadOpenedDay,
-  saveOpenedDay,
-  clearOpenedDay,
+  STORY_OVERVIEW_MAX_CHARS,
+  loadStoryOverview,
+  saveStoryOverview,
+  clearStoryOverview,
   loadMemoryIndex,
   saveMemoryIndex,
   saveMemoryIndexManual,

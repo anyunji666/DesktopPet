@@ -6,7 +6,7 @@ const { loadPersona, loadStoryBackground, loadReaderInfo, loadMemoryIndex } = re
 const { buildFinancialBlock } = require('./assets');
 const { toneEnabled } = require('./tts/tone');
 const { getSpecialRoles, anyVoiceConfigured, COMMON_LABEL } = require('./tts/config');
-const { flattenChatHistory, formatDayCN } = require('./history-flatten');
+const { flattenChatHistory, formatDayCN, overviewHeading } = require('./history-flatten');
 const { buildFestivalBlock } = require('./holiday');
 const { generateToken, maskSecret, resolveSecretInput } = require('./security');
 
@@ -274,6 +274,36 @@ function buildSummaryPrompt(dayKey, dayLines) {
   return parts.join('\n');
 }
 
+// 生成"剧情总览"用的 prompt：把 上一版总览 + 一批日总结 再压缩成一份不超过 1000 字的总览。
+// 和 buildSummaryPrompt 一样是单独的一次总结任务：不带角色人设/语气/输出格式约束，只带全局前置词；指令放在素材后面。
+// prevOverview 为空表示还没有过总览（第一次合并）；items = [{ dayKey, text }]，按日期从早到晚。
+// tooLong=true 是上一次输出超字数后的重试，额外强调一次长度。
+function buildOverviewPrompt(prevOverview, prevCoveredUntil, items, tooLong = false) {
+  const { prefix } = getPromptConfig();
+  const parts = [];
+  if (prefix.trim()) {
+    parts.push(prefix.trim());
+    parts.push('');
+  }
+  parts.push('<story_history>');
+  if (prevOverview) {
+    parts.push(overviewHeading(prevCoveredUntil)); // 用户手写的总览可能还没有水位线，标题行里就不带日期
+    parts.push(prevOverview);
+    parts.push('——');
+  }
+  for (const it of items) parts.push(`元时间 ${formatDayCN(it.dayKey)} 的故事总结：${it.text}`);
+  parts.push('</story_history>');
+  parts.push('');
+  parts.push(
+    prevOverview
+      ? '<story_history>是这个故事按时间顺序排列的分段事件概述。请把旧剧情总览和之后的日总结重新提炼成一份不超过1000字的新剧情总览。'
+      : '<story_history>是这个故事按时间顺序排列的分段事件概述。请把这些日总结提炼成一份不超过1000字的剧情总览。'
+  );
+  parts.push('要求：按事件顺序展现故事的完整脉络；保留人物关系的变化、尚未兑现的承诺/约定；不要加"新剧情总览："这类前缀和分点符号，直接输出总览内容；内容不足1000字时不要硬凑。');
+  if (tooLong) parts.push('注意：上一次输出超过了字数限制。这次务必精简，总字数严格控制在1000字以内。');
+  return parts.join('\n');
+}
+
 // 按“酒馆式”单块模板拼装整份 prompt：
 // 固定前缀（用户自定义前置文本 + <character_card> + <user_persona> + <memory_index>）
 // --- 可变部分（<chat_history> + <user_input>）
@@ -283,7 +313,7 @@ function buildPromptText(characterName, history, text) {
   const readerInfo = loadReaderInfo(characterName); // 你的资料：跟随角色
   const storyBackground = loadStoryBackground(characterName);
   const characterCard = loadPersona(characterName);
-  const chatHistoryText = flattenChatHistory(characterName, history, text);
+  const chatHistoryText = flattenChatHistory(characterName, history);
 
   // 固定内容（前缀/世界背景/角色卡/用户设定/输出说明）全部前置且逐字节不变，聊天历史/本轮输入这些每次都在变的内容后置，
   // 这样发给 DeepSeek / Gemini 这类"自动前缀缓存"的 API 时，前面这一大段固定前缀才能被复用命中、省 token。
@@ -326,7 +356,7 @@ function buildPromptText(characterName, history, text) {
   parts.push('---');
   // ---- 以上是固定前缀，以下是每轮都会变化的内容 ----
   if (chatHistoryText.trim()) {
-    parts.push(`<chat_history>\n<!-- 对话记录，按时间顺序排列；元时间指实际聊天日期，不同于故事时间 -->\n${chatHistoryText}\n</chat_history>`);
+    parts.push(`<chat_history>\n<!-- 故事/对话 记录；元时间指实际聊天日期，不同于故事时间 -->\n${chatHistoryText}\n</chat_history>`);
   }
   // 故事时间的星期 + 国际/中国节日（取自上一轮摘要的"故事时间"，解析不出日期就不发这一段）。
   // 每轮都会变，所以放在固定前缀之后、紧贴 user_input，不破坏前缀缓存
@@ -363,4 +393,5 @@ module.exports = {
   savePromptConfig,
   buildPromptText,
   buildSummaryPrompt,
+  buildOverviewPrompt,
 };

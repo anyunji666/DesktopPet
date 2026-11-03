@@ -1,8 +1,9 @@
 // ---------- AI 对话：一轮对话的完整流程 ----------
-// 跨天总结 -> 存图 -> 拼 prompt -> 调 LLM -> 落盘 -> 触发 TTS。
+// 跨天总结 -> 剧情总览合并（日总结攒够字数时）-> 存图 -> 拼 prompt -> 调 LLM -> 落盘 -> 触发 TTS。
 // 只管"这一轮怎么跑"：不碰 IPC、不上锁——上锁/解锁、校验角色名、把回复推给窗口都在 main.js 的 chat-send 里；
-// 这里只在跨天总结做完时通过 chat-lock.js 的 setChatPhase 把锁的阶段切到"等待回复"，界面提示随之切换。
+// 这里只在阶段变化时通过 chat-lock.js 的 setChatPhase 切换锁的阶段（总结 -> 合并总览 -> 等待回复），界面提示随之切换。
 const { setChatPhase } = require('./chat-lock');
+const { needsOverviewMerge, mergeCoolingDown, tryMergeStoryOverview } = require('./story-overview');
 const {
   loadChatHistory,
   saveChatHistory,
@@ -26,7 +27,7 @@ const { callLLM } = require('./llm-client');
 const { speakReply } = require('./tts');
 const { stripTones, stripSpeakers } = require('./tts/tone');
 
-// 一轮对话的完整流程：跨天总结 -> 存图 -> 拼 prompt -> 调 LLM -> 落盘 -> 触发 TTS。
+// 一轮对话的完整流程：跨天总结 -> 合并剧情总览 -> 存图 -> 拼 prompt -> 调 LLM -> 落盘 -> 触发 TTS。
 // 成功返回 { reply, committed, startIndex }；任何一步抛错都不会落历史。
 // imageDataURL 可选：用户随这条消息发的图片（选文件/粘贴/截图）。图片会：
 // 1) 存进 chat-history/images/<角色>/，消息里记文件名（记录窗口里能回看）
@@ -43,38 +44,56 @@ async function runChatTurn(characterName, text, imageDataURL, summaryPlan) {
   }
 }
 
-// 判断这一轮要不要先做跨天总结：跨天了（本轮消息和历史最后一条不是同一天），"旧的上一个封存包"要从"上一个封存包"
-// 退到"更早"了，退之前得先把那天总结好、缓存起来（没缓存过才需要总结）。
-// 需要就返回 { dayToSummarize, dayLines }，不需要返回 null。纯同步、只读磁盘：chat-send 上锁前先调它，
-// 这样锁一开始就能带上正确的阶段（summarizing / waiting），runChatTurnInner 再按这份结果去执行总结。
+// 判断这一轮要不要先做"整理"：
+//   1) 跨天总结：跨天了（本轮消息和历史最后一条不是同一天），"上一天"要往前挪一格，原文不再发送，
+//      退之前得先把被挪出去的那天总结好、缓存起来（没缓存过才需要总结）；
+//   2) 合并剧情总览：未并入总览的日总结超过 1000 字（见 story-overview.js）。刚生成完新日总结时在 runChatTurnInner 里判断；
+//      这里只处理"日总结都齐了、但上次合并失败还欠着"的情况。
+// 需要就返回 { dayToSummarize, dayLines, startPhase }（只欠合并时 dayToSummarize / dayLines 为 null），不需要返回 null。
+// 纯同步、只读磁盘：chat-send 上锁前先调它，这样锁一开始就能带上正确的阶段（summarizing / merging / waiting），
+// runChatTurnInner 再按这份结果去执行。
 function planCrossDaySummary(characterName) {
   const history = loadChatHistory(characterName);
   if (!history.length) return null;
   const lastMsgDayKey = dayKeyOf(history[history.length - 1].ts || Date.now());
-  if (dayKeyOf(Date.now()) === lastMsgDayKey) return null;
-  const dayToSummarize = computeLastPastDayKey(history, lastMsgDayKey);
-  if (!dayToSummarize || loadDaySummary(characterName, dayToSummarize)) return null;
-  const dayLines = flattenDayLines(characterName, history, dayToSummarize);
-  return dayLines.length ? { dayToSummarize, dayLines } : null;
+  if (dayKeyOf(Date.now()) !== lastMsgDayKey) {
+    const dayToSummarize = computeLastPastDayKey(history, lastMsgDayKey);
+    if (dayToSummarize && !loadDaySummary(characterName, dayToSummarize)) {
+      const dayLines = flattenDayLines(characterName, history, dayToSummarize);
+      if (dayLines.length) return { dayToSummarize, dayLines, startPhase: 'summarizing' };
+    }
+  }
+  if (needsOverviewMerge(characterName, history) && !mergeCoolingDown(characterName)) {
+    return { dayToSummarize: null, dayLines: null, startPhase: 'merging' };
+  }
+  return null;
 }
 
 async function runChatTurnInner(characterName, text, imageDataURL, imageHolder, summaryPlan) {
   const history = loadChatHistory(characterName);
 
-  // === 跨天总结 ===
-  // 这次总结调用和下面生成回复的调用串行执行，不并发；总结这次要是失败了（网络/接口报错），
-  // 直接抛出去，本轮不生成回复、不落历史，跟 callLLM 本身失败的表现一致。
-  // 总结落盘后把锁切到"等待回复"阶段，界面提示随之切换。
+  // === 跨天总结 + 合并剧情总览 ===
+  // 这两次调用和下面生成回复的调用串行执行，不并发。
+  // 日总结失败了（网络/接口报错）直接抛出去，本轮不生成回复、不落历史，跟 callLLM 本身失败的表现一致；
+  // 合并总览失败不抛：水位线不动，那几天的日总结照常发送，下次再试（见 story-overview.js）。
+  // 日总结落盘后，如果未并入总览的日总结超过 1000 字，紧接着合并一次（"当日总结字数到了就跟着做大总结"），然后才去生成回复。
+  // 每个阶段结束都把锁切到下一个阶段，界面提示随之切换。
   if (summaryPlan) {
-    const { dayToSummarize, dayLines } = summaryPlan;
-    const summaryPrompt = buildSummaryPrompt(dayToSummarize, dayLines);
-    const rawSummary = await callLLM(
-      [{ role: 'user', content: summaryPrompt }],
-      `总结生成 - ${characterName}`
-    );
-    const { summary, memoryLines } = parseSummaryAndMemory(rawSummary);
-    saveDaySummary(characterName, dayToSummarize, summary || rawSummary.trim());
-    if (memoryLines.length) appendMemoryLines(memoryLines);
+    if (summaryPlan.dayToSummarize) {
+      const { dayToSummarize, dayLines } = summaryPlan;
+      const summaryPrompt = buildSummaryPrompt(dayToSummarize, dayLines);
+      const rawSummary = await callLLM(
+        [{ role: 'user', content: summaryPrompt }],
+        `总结生成 - ${characterName}`
+      );
+      const { summary, memoryLines } = parseSummaryAndMemory(rawSummary);
+      saveDaySummary(characterName, dayToSummarize, summary || rawSummary.trim());
+      if (memoryLines.length) appendMemoryLines(memoryLines);
+    }
+    if (needsOverviewMerge(characterName, history)) {
+      setChatPhase('merging');
+      await tryMergeStoryOverview(characterName, history);
+    }
     setChatPhase('waiting');
   }
 
