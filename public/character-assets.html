@@ -41,6 +41,17 @@
   button { padding: 8px 12px; border-radius: 8px; font-size: 13px; cursor: pointer; font-family: inherit; }
   button:disabled { opacity: 0.5; cursor: default; }
 
+  /* ---------- 视图切换：初始资产设定 / 故事资产结算 ---------- */
+  .view-row { display: flex; gap: 0; margin: 12px 0 0; }
+  .view-btn { flex: 1; border: 1px solid #e8c9d1; background: #fff; color: #a02440; padding: 7px 10px; }
+  .view-btn:first-child { border-radius: 8px 0 0 8px; }
+  .view-btn:last-child { border-radius: 0 8px 8px 0; border-left: none; }
+  .view-btn.active { background: #a02440; border-color: #a02440; color: #fff; }
+  #view-tip { margin: 6px 0 0; }
+  #party-root.locked { opacity: 0.55; }
+  #party-root.locked input, #party-root.locked select, #party-root.locked textarea { background: #f3f3f3; cursor: not-allowed; }
+  #party-root.locked button { cursor: not-allowed; }
+
   /* ---------- 顶部：货币单位 + 角色 / 用户标签 ---------- */
   .top-row { display: flex; align-items: flex-end; gap: 12px; margin: 12px 0 0; }
   .top-row .cur { width: 90px; flex: none; }
@@ -59,8 +70,11 @@
   /* ---------- 故事日期 ---------- */
   .story-row { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; margin: 12px 0 0; }
   .story-row label { margin: 0; font-size: 13px; color: #555; }
-  .story-row input[type="date"] { width: auto; }
-  .story-row .tip { margin: 0; }
+  .story-row .date-inputs { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: #555; }
+  .story-row .date-inputs input { width: 48px; text-align: center; padding: 7px 4px; }
+  .story-row .date-inputs input.y { width: 62px; }
+  .story-row .date-inputs input.bad { border-color: #c93454; background: #fff5f7; }
+  .story-row .tip { margin: 0; flex-basis: 100%; } /* 当前故事时间另起一行，放在日期输入框下面 */
 
   /* ---------- 看板 ---------- */
   .dash { margin-top: 14px; background: #fff; border: 1px solid #f0dfe4; border-radius: 12px; padding: 12px 14px; }
@@ -147,6 +161,12 @@
   </p>
   <div id="load-status" class="status inline"></div>
 
+  <div class="view-row">
+    <button class="view-btn active" id="view-initial" type="button">初始资产设定</button>
+    <button class="view-btn" id="view-story" type="button">故事资产结算</button>
+  </div>
+  <p class="tip" id="view-tip"></p>
+
   <div class="top-row">
     <div class="cur">
       <label>货币单位</label>
@@ -158,9 +178,13 @@
     </div>
   </div>
 
-  <div class="story-row">
-    <label for="story-start">故事开始日期</label>
-    <input id="story-start" type="date" />
+  <div class="story-row" id="story-row">
+    <label for="story-y">故事开始日期</label>
+    <span class="date-inputs" id="story-start">
+      <input id="story-y" class="y" type="text" inputmode="numeric" maxlength="4" autocomplete="off" /> 年
+      <input id="story-m" type="text" inputmode="numeric" maxlength="2" autocomplete="off" /> 月
+      <input id="story-d" type="text" inputmode="numeric" maxlength="2" autocomplete="off" /> 日
+    </span>
     <p class="tip" id="story-now"></p>
     <div id="story-status" class="status inline"></div>
   </div>

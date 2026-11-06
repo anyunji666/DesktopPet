@@ -44,7 +44,7 @@ const {
   saveStoryOverview,
   clearStoryOverview,
 } = require('./main-modules/chat-store');
-const { loadAssets, saveAssetsFile, currentStoryDate } = require('./main-modules/assets');
+const { loadAssetSet, saveInitialAssets, saveStoryAssets, deleteStoryAssets, currentStoryDate } = require('./main-modules/assets');
 const { getTtsConfig, saveTtsConfig, getPresets, testVoice } = require('./main-modules/tts');
 const { maskProviders, resolveProvidersInput } = require('./main-modules/tts/config');
 const { getAsrConfig, saveAsrConfig } = require('./main-modules/asr/config');
@@ -795,11 +795,16 @@ ipcMain.handle('save-persona', (_e, characterName, data) => {
 // 读取 / 保存都经过 assets-calc 的 sanitize，页面拿到和存进去的永远是整理过的合法数据
 ipcMain.handle('get-assets', (_e, characterName) => {
   if (!validCharacter(characterName)) throw new Error('未知角色');
-  return loadAssets(characterName, loadChatHistory(characterName)); // 推算到当前故事日期
+  return loadAssetSet(characterName, loadChatHistory(characterName)); // { initial, story, now }：故事资产已推算到当前故事日期
 });
-ipcMain.handle('save-assets', (_e, characterName, data) => {
+// view：'initial'（初始资产设定）或 'story'（故事资产结算）；保存后把两份最新的都返回
+ipcMain.handle('save-assets', (_e, characterName, view, data) => {
   if (!validCharacter(characterName)) throw new Error('未知角色');
-  return saveAssetsFile(characterName, data && typeof data === 'object' ? data : {}, loadChatHistory(characterName));
+  if (view !== 'initial' && view !== 'story') throw new Error('未知的资产视图');
+  const d = data && typeof data === 'object' ? data : {};
+  if (view === 'initial') saveInitialAssets(characterName, d);
+  else saveStoryAssets(characterName, d);
+  return loadAssetSet(characterName, loadChatHistory(characterName));
 });
 // 聊天记录一写盘（新回复 / 编辑 / 删除 / 重新生成 / 清空）就把当前故事日期告诉已打开的资产配置窗口，
 // 页面据此刷新推算后的数字（有未保存修改时只提示，不覆盖）
@@ -808,6 +813,16 @@ onChatHistorySaved((characterName, history) => {
   if (!w || w.isDestroyed() || state.assetsWinCharacter !== characterName) return;
   w.webContents.send('assets-story-changed', currentStoryDate(history));
 });
+// 聊天记录被整份清空 / 导入覆盖：删掉故事资产结算（初始资产设定保留），并通知已打开的资产配置窗口（force：即使故事日期显示没变也要刷新）
+function resetAssetsStoryClock(characterName) {
+  if (!deleteStoryAssets(characterName)) return;
+  notifyAssetsStoryReset(characterName);
+}
+function notifyAssetsStoryReset(characterName) {
+  const w = state.assetsWin;
+  if (!w || w.isDestroyed() || state.assetsWinCharacter !== characterName) return;
+  w.webContents.send('assets-story-changed', '', true);
+}
 // 角色资产配置窗口：页面在浮层里确认"放弃修改并切换"后，主进程把窗口原地重载成目标角色
 ipcMain.on('assets-switch-confirm', (_e, characterName) => {
   confirmAssetsSwitch(characterName);
@@ -1114,7 +1129,9 @@ ipcMain.handle('import-chat-history', async (e, characterName) => {
   const r = await (parent ? dialog.showOpenDialog(parent, opts) : dialog.showOpenDialog(opts));
   if (r.canceled || !r.filePaths.length) return null;
   assertHistoryEditable(characterName); // 选文件期间可能刚好发出了新消息，落盘前再查一次
-  return importFromFile(characterName, r.filePaths[0]);
+  const result = importFromFile(characterName, r.filePaths[0]); // 里面已经处理了故事资产：文件里有就还原，没有就删掉当前的
+  notifyAssetsStoryReset(characterName);
+  return result;
 });
 
 ipcMain.handle('clear-chat-history', (_e, characterName) => {
@@ -1125,6 +1142,7 @@ ipcMain.handle('clear-chat-history', (_e, characterName) => {
   clearChatVoices(characterName); // 回复语音文件夹也整个清掉
   clearDaySummaries(characterName); // 按天总结缓存也一起清掉
   clearStoryOverview(characterName); // 剧情总览也一起清掉
+  resetAssetsStoryClock(characterName); // 故事资产结算跟着删除，之后回到初始资产设定
   return true;
 });
 

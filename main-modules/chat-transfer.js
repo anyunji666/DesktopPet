@@ -20,6 +20,8 @@ const {
   clearChatVoices,
 } = require('./chat-store');
 
+const { exportStoryAssets, restoreStoryAssets } = require('./assets');
+
 const FORMAT = 'desktop-pet-chat';
 const VERSION = 1;
 const MAX_IMPORT_BYTES = 300 * 1024 * 1024; // 图片是 base64 内嵌的，文件可能不小；再大就当异常文件
@@ -36,7 +38,7 @@ function buildExport(characterName) {
     }
     return rest;
   });
-  return {
+  const out = {
     format: FORMAT,
     version: VERSION,
     character: characterName,
@@ -45,6 +47,10 @@ function buildExport(characterName) {
     daySummaries: loadDaySummaries(characterName),
     storyOverview: loadStoryOverview(characterName), // { text, coveredUntil }；没有总览时是空文本
   };
+  // 故事资产结算（手动调整过的资产和物品，带故事开始日期 / 截至日期）跟着这段故事走；初始资产设定属于角色，不导出
+  const storyAssets = exportStoryAssets(characterName);
+  if (storyAssets) out.storyAssets = storyAssets;
+  return out;
 }
 
 function exportToFile(characterName, filePath) {
@@ -59,6 +65,7 @@ function parseImport(data) {
   let rawMessages;
   let rawSummaries = {};
   let rawOverview = null;
+  let rawStoryAssets = null;
   if (Array.isArray(data)) {
     rawMessages = data; // 兼容只有消息数组的简化文件
   } else if (data && typeof data === 'object') {
@@ -71,6 +78,7 @@ function parseImport(data) {
       rawSummaries = data.daySummaries;
     }
     if (data.storyOverview && typeof data.storyOverview === 'object') rawOverview = data.storyOverview; // 旧版导出文件没有这个字段
+    if (data.storyAssets && typeof data.storyAssets === 'object') rawStoryAssets = data.storyAssets; // 旧版导出文件 / 当时没建立故事资产：没有这个字段
     // 旧版导出文件里的 memoryIndex（当时附加要求跟随角色）直接忽略：附加要求现在是全局共用的，不随单个角色的聊天记录导入导出
   } else {
     throw new Error('不是桌宠导出的聊天记录文件');
@@ -108,7 +116,7 @@ function parseImport(data) {
     const coveredUntil = typeof rawOverview.coveredUntil === 'string' && DAY_KEY_RE.test(rawOverview.coveredUntil) ? rawOverview.coveredUntil : '';
     if (text.length <= STORY_OVERVIEW_MAX_CHARS) storyOverview = { text, coveredUntil: text ? coveredUntil : '' };
   }
-  return { messages, daySummaries, storyOverview, skipped };
+  return { messages, daySummaries, storyOverview, storyAssets: rawStoryAssets, skipped };
 }
 
 // ---------- 导入：落盘 ----------
@@ -116,7 +124,7 @@ function parseImport(data) {
 // 如果一上来就清空旧图片 / 旧总结，中途失败（磁盘满、写入出错）时旧记录还在、它引用的图片却已经没了；
 // 现在中途失败会把已存的新图片回滚掉，原有的记录、图片、总结原封不动。
 function applyImport(characterName, data) {
-  const { messages, daySummaries, storyOverview, skipped } = parseImport(data);
+  const { messages, daySummaries, storyOverview, storyAssets, skipped } = parseImport(data);
 
   const history = [];
   const newImages = new Set(); // 这次导入新存下来的图片文件名
@@ -148,6 +156,7 @@ function applyImport(characterName, data) {
   clearStoryOverview(characterName);
   for (const [k, v] of Object.entries(daySummaries)) saveDaySummary(characterName, k, v);
   if (storyOverview.text) saveStoryOverview(characterName, storyOverview);
+  restoreStoryAssets(characterName, storyAssets); // 文件里有故事资产就还原，没有就删掉当前的（之后按初始资产重新生成）
 
   return { count: history.length, skipped, imageFailed };
 }

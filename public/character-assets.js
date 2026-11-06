@@ -43,20 +43,27 @@
   }
 
   // ---------- 状态 ----------
-  let data = null; // { currency, character: party, user: party, userKnown }，null = 还没加载成功（此时不允许保存）
+  // 两份资产：初始资产设定（initial）/ 故事资产结算（story）。story 为 null = 存档里还没有故事资产，
+  // 切到该视图时临时用初始资产复制一份草稿（_draft），填了故事开始日期保存后才真正建立
+  let docs = { initial: null, story: null };
+  let view = null; // 'initial' | 'story'，第一次加载完成后才有值
+  // 故事资产结算已经建立（不是页面临时草稿）：故事进行中初始资产锁定，清空聊天记录后才能改
+  const initialLocked = () => view === 'initial' && !!docs.story && !docs.story._draft;
+  let data = null; // 当前视图正在编辑的那份：{ currency, character: party, user: party, userKnown, ... }，null = 还没加载成功（此时不允许保存）
   let activeTab = 'character';
   let newerNow = null; // 主进程通知过来的最新故事日期（页面有未保存修改时暂存，只用来提示）
   const cur = () => (data && data.currency) || '元';
 
   // ---------- 未保存提示 / 关窗口确认（做法同「角色与音色设置」窗口：页面内浮层，不弹系统对话框）----------
-  let dirty = false;
-  function markDirty() {
-    dirty = true;
-    $('dirty').classList.add('show');
+  let dirty = false; // 任一视图有没保存的修改
+  const dirtyViews = { initial: false, story: false };
+  function syncDirty() {
+    dirty = dirtyViews.initial || dirtyViews.story;
+    $('dirty').classList.toggle('show', dirty);
   }
-  function clearDirty() {
-    dirty = false;
-    $('dirty').classList.remove('show');
+  function markDirty() {
+    dirtyViews[view || 'initial'] = true;
+    syncDirty();
   }
   const CLOSE_MSG = '还有没保存的修改，关掉窗口后这些修改会丢失。';
   let allowUnload = false; // 用户确认过"放弃修改"：之后再关窗口 / 重载页面就直接放行
@@ -451,6 +458,12 @@
       root.append(lab, t);
     }
     updateDash();
+    // 初始资产锁定：下面的输入框、按钮、货币单位全部置灰，保存按钮也不可用（角色 / 用户标签和视图切换不受影响）
+    const locked = initialLocked();
+    $('currency').disabled = locked;
+    $('save-btn').disabled = locked;
+    root.classList.toggle('locked', locked);
+    if (locked) for (const el of root.querySelectorAll('input, select, textarea, button')) el.disabled = true;
   }
 
   function switchTab(tab) {
@@ -477,9 +490,33 @@
     return d;
   }
 
-  // 顶部：故事开始日期（可改）+ 当前故事时间（只读，资产已经推算到这一天）
+  // 顶部：故事开始日期（年 / 月 / 日三个输入框，只在「故事资产结算」视图里出现）+ 当前故事时间（只读，资产已经推算到这一天）
+  const storyBoxes = [$('story-y'), $('story-m'), $('story-d')];
+  let storyInvalid = false; // 三个框里的内容不合法时为 true：此时 data.storyStart 保持旧值，框里的内容也不被覆盖
+
+  function setStoryInvalid(bad, msg) {
+    storyInvalid = bad;
+    for (const b of storyBoxes) b.classList.toggle('bad', bad);
+    setStatus(bad ? msg : '', bad ? 'err' : '', 'story-status');
+  }
+
   function renderStoryRow() {
-    $('story-start').value = (data && data.storyStart) || '';
+    $('story-row').style.display = view === 'story' ? '' : 'none';
+    $('view-initial').classList.toggle('active', view === 'initial');
+    $('view-story').classList.toggle('active', view === 'story');
+    $('view-tip').textContent =
+      view === 'story'
+        ? '「故事资产结算」用于手动根据故事发展调整数据，让 AI 知道角色的资产和携带物品。'
+        : initialLocked()
+          ? '故事进行中，初始资产已锁定（只读）；清空聊天记录后可以修改。'
+          : '清空聊天记录后回到的初始资产设定。「故事资产结算」的故事开始日期被填写后不会发送这份。';
+    if (view !== 'story') return;
+    if (!storyInvalid) {
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec((data && data.storyStart) || '');
+      storyBoxes[0].value = m ? m[1] : '';
+      storyBoxes[1].value = m ? String(+m[2]) : '';
+      storyBoxes[2].value = m ? String(+m[3]) : '';
+    }
     const now = data && C.dateCN(data.now);
     let text = `已读取到的 当前故事时间：${now || ''}`; // 没读到就留空
     // 页面上有没保存的修改时，故事时间推进了：不覆盖正在填的内容，只提示；保存后数字会更新到最新
@@ -488,22 +525,76 @@
     }
     $('story-now').textContent = text;
   }
-  $('story-start').addEventListener('change', () => {
-    if (!data) return;
-    data.storyStart = $('story-start').value; // 空串 = 留空，故事第一次写出时间时自动填
+
+  // 只允许输入数字
+  for (const b of storyBoxes) {
+    b.addEventListener('input', () => {
+      const clean = b.value.replace(/\D/g, '');
+      if (clean !== b.value) b.value = clean;
+    });
+  }
+
+  // 失焦 / 改完后校验：三个框全空 = 留空（故事第一次写出时间时自动填）；填了就必须是真实存在的日期
+  function commitStoryBoxes() {
+    if (!data || view !== 'story') return;
+    const [y, m, d] = storyBoxes.map((b) => b.value.trim());
+    let iso = '';
+    if (y || m || d) {
+      if (!/^\d{4}$/.test(y) || !/^\d{1,2}$/.test(m) || !/^\d{1,2}$/.test(d)) {
+        setStoryInvalid(true, '故事开始日期请把年（4 位）、月、日都填上，或者三个框都留空');
+        return;
+      }
+      iso = C.validDate(`${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`);
+      if (!iso) {
+        setStoryInvalid(true, `${y} 年 ${m} 月 ${d} 日 不是一个有效的日期`);
+        return;
+      }
+    }
+    setStoryInvalid(false);
+    if (iso === (data.storyStart || '')) { renderStoryRow(); return; } // 没变化（只是补零之类），只整理显示
+    data.storyStart = iso;
     markDirty();
     render(); // 负债卡片里的「故事时间开始于…」要跟着变
-  });
+  }
+  for (const b of storyBoxes) b.addEventListener('change', commitStoryBoxes);
+
+  // 当前视图要编辑的那份：故事资产还没有时用初始资产复制一份草稿
+  function makeStoryDraft() {
+    const d = JSON.parse(JSON.stringify(docs.initial));
+    d.storyStart = '';
+    d.asOf = '';
+    d._draft = true;
+    return d;
+  }
+  function useView(v) {
+    view = v;
+    // 没有故事资产就用初始资产复制一份草稿；上一份草稿没被改过的话重新复制，跟上初始资产里刚改的内容
+    if (v === 'story' && (!docs.story || (docs.story._draft && !dirtyViews.story))) docs.story = makeStoryDraft();
+    data = docs[v];
+    setStoryInvalid(false);
+    $('currency').value = data.currency;
+    render();
+  }
+  $('view-initial').addEventListener('click', () => { if (data && view !== 'initial') useView('initial'); });
+  $('view-story').addEventListener('click', () => { if (data && view !== 'story') useView('story'); });
+
+  // 用主进程返回的 { initial, story } 换掉页面上的数据；keepDirty 里的视图有没保存的修改就不动它
+  function adopt(set, keepDirty) {
+    if (!keepDirty || !dirtyViews.initial) docs.initial = prepare(set.initial);
+    if (!keepDirty || !dirtyViews.story) docs.story = set.story ? prepare(set.story) : null;
+  }
 
   async function load() {
     $('save-btn').disabled = true;
     try {
       newerNow = null;
       setStatus('', '', 'load-status');
-      data = prepare(await window.petAPI.getAssets(character));
-      $('currency').value = data.currency;
-      render();
-      $('save-btn').disabled = false;
+      const set = await window.petAPI.getAssets(character);
+      adopt(set, false);
+      dirtyViews.initial = dirtyViews.story = false;
+      syncDirty();
+      // 第一次进来：已经有故事资产就先看它（故事进行中以它为准），否则看初始资产设定
+      useView(view || (docs.story ? 'story' : 'initial')); // render 里决定保存按钮是否可用
     } catch (err) {
       setStatus('加载失败：' + errText(err), 'err', 'load-status');
     }
@@ -515,14 +606,26 @@
       setStatus('资产配置还没加载成功，无法保存', 'err');
       return;
     }
+    // 先把还没触发 change 的输入框内容校验一遍；故事开始日期不合法就不保存
+    commitStoryBoxes();
+    if (storyInvalid) {
+      setStatus('故事开始日期格式不对，请改正后再保存', 'err');
+      return;
+    }
+    // 保存有修改的那几份；一份都没改就保存当前视图这份
+    const todo = ['initial', 'story'].filter((v) => dirtyViews[v] && docs[v]);
+    if (!todo.length) todo.push(view);
     setStatus('保存中…', 'busy');
     try {
-      // 主进程会整理一遍（丢掉全空的行、修正非法值），这里直接换成它返回的版本，页面和存档保持一致
       newerNow = null;
-      data = prepare(await window.petAPI.saveAssets(character, data));
-      $('currency').value = data.currency;
-      clearDirty();
-      render();
+      for (const v of todo) {
+        // 主进程会整理一遍（丢掉全空的行、修正非法值），保存后直接换成它返回的版本，页面和存档保持一致
+        const set = await window.petAPI.saveAssets(character, v, docs[v]);
+        dirtyViews[v] = false;
+        adopt(set, true); // 另一份有没保存的修改就不覆盖
+      }
+      syncDirty();
+      useView(view);
       setStatus('已保存', 'ok');
     } catch (err) {
       setStatus('保存失败：' + errText(err), 'err');
@@ -530,24 +633,30 @@
   });
 
   // 故事时间变了（新回复 / 编辑或删除聊天记录等）：没有未保存修改就直接刷新数字，有就只提示
-  window.petAPI.onAssetsStoryChanged(async (now) => {
-    if (!data || (now || '') === (data.now || '')) return;
-    if (dirty) {
-      newerNow = now || '';
-      renderStoryRow();
+  // force：聊天记录被清空 / 覆盖导入，主进程已经把故事资产结算删掉了，即使故事日期显示没变也要刷新
+  window.petAPI.onAssetsStoryChanged(async (now, force) => {
+    if (!data) return;
+    if (force) {
+      docs.story = null;
+      dirtyViews.story = false; // 没保存的故事资产修改跟着作废
+      newerNow = null;
+    } else if ((now || '') === (data.now || '')) {
       return;
     }
     try {
-      const fresh = prepare(await window.petAPI.getAssets(character));
-      if (dirty) { // 取数据的这一小会儿里用户开始编辑了：不覆盖
-        newerNow = fresh.now || '';
-        renderStoryRow();
-        return;
+      const set = await window.petAPI.getAssets(character);
+      let notice = '';
+      // 故事资产结算已经建立（比如故事第一次写出时间，程序自动生成）：初始资产锁定，没保存的修改丢掉
+      if (set.story && dirtyViews.initial) {
+        dirtyViews.initial = false;
+        notice = '故事已开始，初始资产已锁定，未保存的修改已丢弃。';
       }
-      data = fresh;
-      setStatus('', '', 'story-status');
-      $('currency').value = data.currency;
-      render();
+      adopt(set, true); // 还有没保存修改的那份不覆盖
+      if (dirtyViews.initial && docs.initial) docs.initial.now = set.now || '';
+      if (dirtyViews.story) newerNow = set.now || ''; // 故事资产有没保存的修改：只提示故事时间变了，保存后数字按最新推算
+      syncDirty();
+      useView(view);
+      if (notice) setStatus(notice, 'err');
     } catch (err) {
       setStatus('刷新失败：' + errText(err), 'err', 'story-status');
     }
