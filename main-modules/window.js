@@ -208,6 +208,55 @@ function openCharacterVoiceWindow(characterName) {
   });
 }
 
+// ---------- 角色服饰配置窗口 ----------
+// 和「角色资产配置」同一套打开 / 换角色逻辑：每次只开一个，点已打开的角色直接聚焦，点另一个角色交给页面判断有没有未保存的修改。
+function outfitsPageUrl(characterName) {
+  return `http://127.0.0.1:${state.serverPort}/public/character-outfits.html?character=${encodeURIComponent(characterName)}`;
+}
+
+function confirmOutfitsSwitch(characterName) {
+  if (typeof characterName !== 'string') return;
+  if (!state.characters.some((c) => c.name === characterName)) return;
+  const win = state.outfitsWin;
+  if (!win || win.isDestroyed()) return;
+  state.outfitsWinCharacter = characterName;
+  win.setTitle('角色服饰配置 - ' + characterName);
+  win.loadURL(outfitsPageUrl(characterName));
+}
+
+function openOutfitsWindow(characterName) {
+  const win = state.outfitsWin;
+  if (win && !win.isDestroyed()) {
+    win.show();
+    win.focus();
+    if (state.outfitsWinCharacter !== characterName) win.webContents.send('outfits-switch-ask', characterName);
+    return;
+  }
+  state.outfitsWinCharacter = characterName;
+  withRenderPause(() => {
+    state.outfitsWin = new BrowserWindow({
+      width: 560,
+      height: 760,
+      minWidth: 500,
+      minHeight: 560,
+      title: '角色服饰配置 - ' + characterName,
+      webPreferences: securePrefs(),
+    });
+    // 见 openSettingsWindow 里的同名调用注释
+    state.outfitsWin.webContents.setBackgroundThrottling(false);
+    state.outfitsWin.setMenu(null);
+    const created = state.outfitsWin;
+    // 有未保存修改时页面会拦住关闭（beforeunload），这里只把窗口提到前面让页面自己的确认浮层被看到
+    created.webContents.on('will-prevent-unload', () => {
+      if (created.isDestroyed()) return;
+      created.show();
+      created.focus();
+    });
+    created.loadURL(outfitsPageUrl(characterName));
+    return created;
+  });
+}
+
 // ---------- 角色资产配置窗口 ----------
 // 和「角色与音色设置」同一套打开 / 换角色逻辑：每次只开一个，按角色打开，不用先切换桌宠当前角色；
 // 点的是已打开的那个角色就直接聚焦，点另一个角色交给页面判断有没有未保存的修改（见 character-assets.html）。
@@ -520,6 +569,11 @@ function buildMenu() {
       submenu: state.characters.map((c) => ({ label: c.name, click: () => openCharacterVoiceWindow(c.name) })),
     },
     {
+      // 一级：角色列表；点某个角色 -> 弹出该角色的"角色服饰配置"窗口（服饰图片 + 描述，当前穿着的那套会写进 LLM 提示词）
+      label: '👗 角色服饰配置',
+      submenu: state.characters.map((c) => ({ label: c.name, click: () => openOutfitsWindow(c.name) })),
+    },
+    {
       // 一级：角色列表；点某个角色 -> 弹出该角色的"角色资产配置"窗口（角色和用户两方的资产 / 负债 / 收支）
       // 资产设定会写进 LLM 提示词，影响角色的底气和行动
       label: '🧰 角色资产配置',
@@ -774,6 +828,8 @@ module.exports = {
   openSettingsWindow,
   openCharacterVoiceWindow,
   confirmCharacterVoiceSwitch,
+  openOutfitsWindow,
+  confirmOutfitsSwitch,
   openAssetsWindow,
   confirmAssetsSwitch,
   openHistoryWindow,

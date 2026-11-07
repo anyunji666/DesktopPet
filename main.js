@@ -45,6 +45,8 @@ const {
   clearStoryOverview,
 } = require('./main-modules/chat-store');
 const { loadAssetSet, saveInitialAssets, saveStoryAssets, deleteStoryAssets, currentStoryDate } = require('./main-modules/assets');
+const { loadOutfits, saveOutfits, setActiveOutfit } = require('./main-modules/outfits');
+const { recognizeOutfit } = require('./main-modules/outfit-recognize');
 const { getTtsConfig, saveTtsConfig, getPresets, testVoice } = require('./main-modules/tts');
 const { maskProviders, resolveProvidersInput } = require('./main-modules/tts/config');
 const { getAsrConfig, saveAsrConfig } = require('./main-modules/asr/config');
@@ -78,6 +80,7 @@ const {
   openHistoryWindow,
   confirmCharacterVoiceSwitch,
   confirmAssetsSwitch,
+  confirmOutfitsSwitch,
   send,
   currentCharacterPayload,
   currentScene,
@@ -826,6 +829,29 @@ function notifyAssetsStoryReset(characterName) {
 // 角色资产配置窗口：页面在浮层里确认"放弃修改并切换"后，主进程把窗口原地重载成目标角色
 ipcMain.on('assets-switch-confirm', (_e, characterName) => {
   confirmAssetsSwitch(characterName);
+});
+// ---------- IPC：指定角色的服饰配置（角色服饰配置窗口用，按窗口打开的角色，不跟桌宠当前角色） ----------
+// 存档在 userData/outfits/<角色>/，细节见 main-modules/outfits.js；返回给页面的都是整理过的合法数据
+ipcMain.handle('get-outfits', (_e, characterName) => {
+  if (!validCharacter(characterName)) throw new Error('未知角色');
+  return loadOutfits(characterName);
+});
+ipcMain.handle('save-outfits', (_e, characterName, data) => {
+  if (!validCharacter(characterName)) throw new Error('未知角色');
+  return saveOutfits(characterName, data);
+});
+ipcMain.handle('set-active-outfit', (_e, characterName, id) => {
+  if (!validCharacter(characterName)) throw new Error('未知角色');
+  return setActiveOutfit(characterName, typeof id === 'string' ? id : '');
+});
+// AI 识别：图片 + 内置识别词发给已配置的 LLM（需开启 vision），结果只回给页面，不自动保存
+ipcMain.handle('recognize-outfit', (_e, characterName, imageDataURL) => {
+  if (!validCharacter(characterName)) throw new Error('未知角色');
+  return recognizeOutfit(characterName, imageDataURL);
+});
+// 角色服饰配置窗口：页面在浮层里确认"放弃修改并切换"后，主进程把窗口原地重载成目标角色
+ipcMain.on('outfits-switch-confirm', (_e, characterName) => {
+  confirmOutfitsSwitch(characterName);
 });
 // ---------- IPC：附加要求（memory index）编辑（API 与全局设置窗口用） ----------
 // 附加要求 = 跨天总结时 AI 从元交流里自动提炼的长期设定/要求，这里允许用户手动增删改。全局共用一份，不区分角色。

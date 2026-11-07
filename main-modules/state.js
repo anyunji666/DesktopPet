@@ -12,6 +12,8 @@ const state = {
   settingsWin: null, // API 与全局设置窗口（全局唯一，不区分角色）
   characterVoiceWin: null, // 角色与音色设置窗口（角色设定 + 音色设置同一页，跟随角色）
   characterVoiceWinCharacter: null, // 角色与音色设置窗口当前打开的角色名
+  outfitsWin: null, // 角色服饰配置窗口（服饰图片 + 描述，跟随角色）
+  outfitsWinCharacter: null, // 角色服饰配置窗口当前打开的角色名
   assetsWin: null, // 角色资产配置窗口（角色 + 用户两方的资产，跟随角色）
   assetsWinCharacter: null, // 角色资产配置窗口当前打开的角色名
   historyWin: null, // 聊天记录窗口

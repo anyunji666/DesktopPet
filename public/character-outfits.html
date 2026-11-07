@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>角色服饰配置</title>
+<style>
+  body {
+    font-family: "Microsoft YaHei", sans-serif;
+    margin: 0;
+    padding: 16px 20px 28px;
+    background: #faf7f6;
+    color: #333;
+  }
+  .page-title {
+    margin: 0 0 4px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid #f0dfe4;
+    font-size: 16px;
+    color: #a02440;
+  }
+  /* 未保存标记：标题右侧的红点小字，改过但还没保存时显示 */
+  .dirty { display: none; margin-left: 6px; font-size: 11px; font-weight: normal; color: #e04060; }
+  .dirty.show { display: inline; }
+  .tip { font-size: 11px; color: #aaa; line-height: 1.6; margin: 4px 0 0; }
+  label { display: block; font-size: 12px; color: #777; margin: 0 0 3px; }
+  input, textarea {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 7px 9px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    font-size: 13px;
+    outline: none;
+    font-family: inherit;
+    background: #fff;
+    color: #333;
+  }
+  input:focus, textarea:focus { border-color: #e04060; }
+  textarea { resize: vertical; min-height: 220px; line-height: 1.6; }
+  button { padding: 8px 12px; border-radius: 8px; font-size: 13px; cursor: pointer; font-family: inherit; }
+  button:disabled { opacity: 0.5; cursor: default; }
+
+  /* ---------- 服饰列表：缩略图卡片 ---------- */
+  .section-head { display: flex; align-items: center; justify-content: space-between; margin: 16px 0 6px; }
+  .section-title { font-size: 13px; color: #a02440; font-weight: bold; }
+  .count { font-size: 11px; color: #aaa; }
+  .strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; }
+  .card {
+    position: relative;
+    border: 2px solid #eee;
+    border-radius: 10px;
+    background: #fff;
+    padding: 0;
+    overflow: hidden;
+    text-align: center;
+  }
+  .card:hover { border-color: #e8c9d1; }
+  .card.sel { border-color: #e04060; }
+  .card .thumb { display: block; width: 100%; aspect-ratio: 3 / 4; object-fit: cover; background: #f3eef0; }
+  .card .noimg { display: flex; align-items: center; justify-content: center; width: 100%; aspect-ratio: 3 / 4; background: #f3eef0; color: #bbb; font-size: 11px; }
+  .card .nm { display: block; padding: 4px 4px 5px; font-size: 11px; color: #555; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card .badge { position: absolute; top: 4px; left: 4px; padding: 1px 6px; border-radius: 8px; background: #2a8f4e; color: #fff; font-size: 10px; }
+  .card .unsaved { position: absolute; top: 4px; right: 4px; padding: 1px 6px; border-radius: 8px; background: #e04060; color: #fff; font-size: 10px; }
+  .card.add { border: 2px dashed #e8c9d1; background: #fff; color: #e04060; font-size: 12px; aspect-ratio: 3 / 4; display: flex; align-items: center; justify-content: center; line-height: 1.5; }
+  .card.add:hover { background: #ffe9ee; }
+  .empty { font-size: 12px; color: #bbb; padding: 12px 0; text-align: center; grid-column: 1 / -1; }
+
+  /* ---------- 编辑区 ---------- */
+  .editor { margin-top: 16px; background: #fff; border: 1px solid #f0dfe4; border-radius: 12px; padding: 12px 14px; }
+  .editor.hidden { display: none; }
+  .preview-wrap { margin-top: 10px; text-align: center; background: #f8f4f5; border-radius: 8px; padding: 8px; }
+  .preview-wrap img { max-width: 100%; max-height: 300px; border-radius: 6px; }
+  .preview-wrap .noimg-big { font-size: 12px; color: #bbb; padding: 24px 0; }
+  .btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .btn-line { border: 1px solid #e04060; background: #fff; color: #e04060; padding: 6px 12px; font-size: 12px; }
+  .btn-line:active:not(:disabled) { background: #ffe9ee; }
+  .btn-green { border: 1px solid #2a8f4e; background: #fff; color: #2a8f4e; padding: 6px 12px; font-size: 12px; }
+  .btn-green.on { background: #2a8f4e; color: #fff; }
+  .btn-del { border: 1px solid #ddd; background: #fff; color: #999; padding: 6px 12px; font-size: 12px; margin-left: auto; }
+  .btn-del:hover:not(:disabled) { border-color: #e04060; color: #e04060; }
+  .field { margin-top: 10px; }
+
+  .btn-row { display: flex; gap: 10px; margin-top: 22px; }
+  .save-btn { flex: 1; border: none; background: #e04060; color: #fff; padding: 10px; font-size: 14px; }
+  .save-btn:active:not(:disabled) { background: #c93454; }
+  .status { margin-top: 10px; font-size: 12px; min-height: 16px; line-height: 1.6; word-break: break-all; }
+  .status.ok { color: #2a8f4e; }
+  .status.err { color: #c93454; }
+  .status.busy { color: #999; }
+  .status.inline { margin-top: 4px; min-height: 0; }
+  .status.inline:empty { display: none; }
+
+  /* ---------- 确认浮层（替代系统对话框，样式跟「角色资产配置」窗口一致） ---------- */
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.35);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+  }
+  .overlay.hidden { display: none; }
+  #confirm-dialog {
+    width: min(320px, calc(100vw - 32px));
+    background: #fff;
+    border-radius: 12px;
+    padding: 16px 18px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+    box-sizing: border-box;
+  }
+  #confirm-msg { font-size: 13px; line-height: 1.6; color: #333; margin-bottom: 14px; }
+  .dialog-btns { display: flex; gap: 8px; justify-content: flex-end; }
+  .dialog-btns button { border: none; border-radius: 8px; padding: 7px 14px; font-size: 13px; color: #fff; }
+  #confirm-cancel { background: #f0f0f0; color: #888; }
+  #confirm-ok { background: #d33; }
+</style>
+</head>
+<body>
+  <h2 class="page-title">👗 角色服饰配置 <span class="dirty" id="dirty">● 未保存</span></h2>
+  <p class="tip">
+    给角色存几套穿搭，每套一张图加一段描述。点「设为穿着中」的那套描述会写进 LLM 提示词，AI 据此描写角色的穿着；换装时在这里切换即可。图片只用来预览和识别，不会发给 AI。
+  </p>
+  <div id="load-status" class="status inline"></div>
+
+  <div class="section-head">
+    <span class="section-title">服饰列表</span>
+    <span class="count" id="count"></span>
+  </div>
+  <div class="strip" id="strip"></div>
+  <input id="file" type="file" accept="image/*" hidden />
+  <p class="tip">也可以把图片拖进窗口，或直接粘贴截图，都会新建一套服饰。</p>
+
+  <div class="editor hidden" id="editor">
+    <label for="name">服饰名称</label>
+    <input id="name" maxlength="30" placeholder="如：休闲学院风" />
+
+    <div class="preview-wrap" id="preview"></div>
+    <div class="btns">
+      <button class="btn-line" id="change-img" type="button">🖼 更换图片</button>
+      <button class="btn-line" id="copy-prompt" type="button">📋 复制识别词</button>
+      <button class="btn-line" id="recognize" type="button">🤖 AI 识别</button>
+    </div>
+    <div id="recog-status" class="status inline"></div>
+    <p class="tip">
+      「复制识别词」：连同图片发给任意带识图的 AI，把回复粘贴到下面。「AI 识别」：用你在「API 与全局设置」里配置的模型直接识别（需勾选"模型支持图片识别"），结果填进下面的描述框，不会自动保存。
+    </p>
+
+    <div class="field">
+      <label for="text">穿搭描述（发给 AI 的内容）</label>
+      <textarea id="text" maxlength="2000" spellcheck="false" placeholder="整体风格：休闲学院风&#10;&#10;头部：棕色齐肩直发；白色棒球帽&#10;耳朵：双耳戴银色耳钉&#10;上身：&#10;  内衣：黑色蕾丝胸罩，不可见，描写时不要提及&#10;  内搭：白色棉质衬衣，领口开两颗扣&#10;  外层：浅灰色短款外套，敞开未拉拉链&#10;……"></textarea>
+      <p class="tip">
+        识别结果里写"不可见"的部位只是图里看不到，请自己补全或删掉那一行。被遮住的内衣可以照样写上并标注"不可见"，描述里出现"不可见"时程序会自动附上"不可见的衣物描写时不要提及，除非被脱下或露出"的说明。
+      </p>
+    </div>
+
+    <div class="btns">
+      <button class="btn-green" id="set-active" type="button">👗 设为穿着中</button>
+      <button class="btn-del" id="delete" type="button">🗑 删除这套</button>
+    </div>
+    <div id="active-status" class="status inline"></div>
+  </div>
+
+  <div class="btn-row">
+    <button id="save-btn" class="save-btn" type="button">保存服饰配置</button>
+  </div>
+  <div id="status" class="status"></div>
+  <p class="tip">「设为穿着中」立即生效（该套需已保存）；当前穿着为空 = 不向 AI 发送服饰。清空聊天记录不影响这里的服饰。</p>
+
+  <!-- 确认浮层：关窗口 / 切换角色 / 删除 / 覆盖描述前的确认，页面内浮层，不用系统对话框 -->
+  <div id="confirm-overlay" class="overlay hidden">
+    <div id="confirm-dialog">
+      <div id="confirm-msg"></div>
+      <div class="dialog-btns">
+        <button id="confirm-cancel" type="button">取消</button>
+        <button id="confirm-ok" type="button">确定</button>
+      </div>
+    </div>
+  </div>
+
+<script src="image-utils.js"></script>
+<script src="outfit-prompt.js"></script>
+<script src="character-outfits.js"></script>
+</body>
+</html>

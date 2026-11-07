@@ -54,6 +54,13 @@ contextBridge.exposeInMainWorld('petAPI', {
   onAssetsStoryChanged: (cb) => ipcRenderer.on('assets-story-changed', (_e, now, force) => cb(now, force)),
   onAssetsSwitchAsk: (cb) => ipcRenderer.on('assets-switch-ask', (_e, name) => cb(name)),
   assetsSwitch: (characterName) => ipcRenderer.send('assets-switch-confirm', characterName),
+  // 角色服饰配置窗口：服饰列表读取 / 保存 / 设为当前穿着 / AI 识别；换角色时主进程先问页面有没有未保存的修改
+  getOutfits: (characterName) => ipcRenderer.invoke('get-outfits', characterName),
+  saveOutfits: (characterName, data) => ipcRenderer.invoke('save-outfits', characterName, data),
+  setActiveOutfit: (characterName, id) => ipcRenderer.invoke('set-active-outfit', characterName, id),
+  recognizeOutfit: (characterName, imageDataURL) => ipcRenderer.invoke('recognize-outfit', characterName, imageDataURL),
+  onOutfitsSwitchAsk: (cb) => ipcRenderer.on('outfits-switch-ask', (_e, name) => cb(name)),
+  outfitsSwitch: (characterName) => ipcRenderer.send('outfits-switch-confirm', characterName),
   // 附加要求（memory index，全局共用）读取 / 保存（API 与全局设置窗口用）
   getMemoryIndex: () => ipcRenderer.invoke('get-memory-index'),
   saveMemoryIndex: (text) => ipcRenderer.invoke('save-memory-index', text),

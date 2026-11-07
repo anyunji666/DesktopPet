@@ -4,6 +4,7 @@
 const { loadConfig, updateConfig } = require('./config');
 const { loadPersona, loadStoryBackground, loadReaderInfo, loadMemoryIndex } = require('./chat-store');
 const { buildFinancialBlock } = require('./assets');
+const { buildOutfitBlock } = require('./outfits');
 const { toneEnabled } = require('./tts/tone');
 const { getSpecialRoles, anyVoiceConfigured, COMMON_LABEL } = require('./tts/config');
 const { flattenChatHistory, formatDayCN, overviewHeading } = require('./history-flatten');
@@ -340,6 +341,9 @@ function buildPromptText(characterName, history, text) {
   if (readerInfo.trim()) {
     parts.push(`<user_persona>\n<!-- 用户所扮演的角色设定资料 -->\n${readerInfo.trim()}\n</user_persona>`);
   }
+  // 角色当前穿搭（角色服饰配置里设为"穿着中"的那套的描述），没选就不发这一段；切换服饰那一轮前缀缓存失效一次
+  const outfitBlock = buildOutfitBlock(characterName);
+  if (outfitBlock) parts.push(outfitBlock);
   // 财产状况：角色和用户两方的资产 / 负债 / 收支（角色资产配置里填的），都没填就不发这一段
   const financialBlock = buildFinancialBlock(characterName, history); // 里面按最新的故事时间推算资产
   if (financialBlock) parts.push(financialBlock);
