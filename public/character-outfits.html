@@ -76,7 +76,6 @@
   .btn-line:active:not(:disabled) { background: #ffe9ee; }
   .btn-green { border: 1px solid #2a8f4e; background: #fff; color: #2a8f4e; padding: 6px 12px; font-size: 12px; }
   .btn-green.on { background: #2a8f4e; color: #fff; }
-  .btn-green.wide { flex: 1; padding: 10px; font-size: 14px; }
   .btn-del { border: 1px solid #ddd; background: #fff; color: #999; padding: 6px 12px; font-size: 12px; margin-left: auto; }
   .btn-del:hover:not(:disabled) { border-color: #e04060; color: #e04060; }
   .field { margin-top: 10px; }
@@ -157,16 +156,16 @@
     </div>
 
     <div class="btns">
-      <button id="save-btn" class="save-btn" type="button">保存服饰配置</button>
+      <button class="btn-green" id="set-active" type="button">👗 设为穿着中</button>
       <button class="btn-del" id="delete" type="button">🗑 删除这套</button>
     </div>
-    <div id="status" class="status inline"></div>
+    <div id="active-status" class="status inline"></div>
   </div>
 
   <div class="btn-row">
-    <button class="btn-green wide" id="set-active" type="button">👗 设为穿着中</button>
+    <button id="save-btn" class="save-btn" type="button">保存服饰配置</button>
   </div>
-  <div id="active-status" class="status inline"></div>
+  <div id="status" class="status"></div>
   <p class="tip">「设为穿着中」立即生效（该套需已保存）；当前穿着为空 = 不向 AI 发送服饰。清空聊天记录不影响这里的服饰。</p>
 
   <!-- 确认浮层：关窗口 / 切换角色 / 删除 / 覆盖描述前的确认，页面内浮层，不用系统对话框 -->
