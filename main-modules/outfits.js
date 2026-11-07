@@ -1,4 +1,4 @@
-// ---------- 角色服饰：存取 + 拼进 prompt 的 <current_outfit> 文本 ----------
+// ---------- 角色服饰：存取 + 拼进 prompt 的 <character_outfit> 文本 ----------
 // 每个角色一份存档，放在用户数据目录（和聊天记录同级，不污染 Character/ 文件夹）：
 //   userData/outfits/<角色名>/outfits.json   { activeId, items: [{ id, name, text, image }] }
 //   userData/outfits/<角色名>/images/<文件>   服饰图片（png / jpeg / gif / webp），json 里只记文件名
@@ -15,9 +15,6 @@ const MAX_NAME_CHARS = 30;
 const MAX_TEXT_CHARS = 2000;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const IMAGE_MIME_EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
-
-// 描写说明：描述里出现「不可见」时自动附在 <current_outfit> 里，用户不用每套都自己写
-const OUTFIT_NOTE = '标注"不可见"的衣物当前被外层遮住，描写时不要提及，除非剧情中被脱下、掀开或意外露出。';
 
 let rootCache = null;
 function outfitsRoot() {
@@ -207,9 +204,7 @@ function buildOutfitBlock(characterName) {
   }
   const cur = doc.items.find((it) => it.id === doc.activeId);
   if (!cur || !cur.text.trim()) return '';
-  const lines = ['<current_outfit>', '<!-- 角色当前的穿搭。描写角色外貌、动作时以此为准，除非剧情中发生了换装 -->', cur.text.trim()];
-  if (cur.text.includes('不可见')) lines.push(OUTFIT_NOTE);
-  lines.push('</current_outfit>');
+  const lines = [`<character_outfit character="${characterName}">`, '<!-- 角色当前的穿搭。描写角色外貌、动作时以此为准，除非剧情中发生了换装 -->', cur.text.trim(), '</character_outfit>'];
   return lines.join('\n');
 }
 

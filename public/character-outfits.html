@@ -71,11 +71,12 @@
   .preview-wrap { margin-top: 10px; text-align: center; background: #f8f4f5; border-radius: 8px; padding: 8px; }
   .preview-wrap img { max-width: 100%; max-height: 300px; border-radius: 6px; }
   .preview-wrap .noimg-big { font-size: 12px; color: #bbb; padding: 24px 0; }
-  .btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .btns { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
   .btn-line { border: 1px solid #e04060; background: #fff; color: #e04060; padding: 6px 12px; font-size: 12px; }
   .btn-line:active:not(:disabled) { background: #ffe9ee; }
   .btn-green { border: 1px solid #2a8f4e; background: #fff; color: #2a8f4e; padding: 6px 12px; font-size: 12px; }
   .btn-green.on { background: #2a8f4e; color: #fff; }
+  .btn-green.wide { flex: 1; padding: 10px; font-size: 14px; }
   .btn-del { border: 1px solid #ddd; background: #fff; color: #999; padding: 6px 12px; font-size: 12px; margin-left: auto; }
   .btn-del:hover:not(:disabled) { border-color: #e04060; color: #e04060; }
   .field { margin-top: 10px; }
@@ -143,28 +144,29 @@
     </div>
     <div id="recog-status" class="status inline"></div>
     <p class="tip">
-      「复制识别词」：连同图片发给任意带识图的 AI，把回复粘贴到下面。「AI 识别」：用你在「API 与全局设置」里配置的模型直接识别（需勾选"模型支持图片识别"），结果填进下面的描述框，不会自动保存。
+      「复制识别词」：连同图片发给任意带识图的 AI ，把生成的服饰描述词粘贴到下面。<br>
+      「AI 识别」：用你在「API 与全局设置」里配置的模型直接识别（需勾选"模型支持图片识别"），结果填进下面的描述框，不会自动保存。
     </p>
 
     <div class="field">
       <label for="text">穿搭描述（发给 AI 的内容）</label>
       <textarea id="text" maxlength="2000" spellcheck="false" placeholder="整体风格：休闲学院风&#10;&#10;头部：棕色齐肩直发；白色棒球帽&#10;耳朵：双耳戴银色耳钉&#10;上身：&#10;  内衣：黑色蕾丝胸罩，不可见，描写时不要提及&#10;  内搭：白色棉质衬衣，领口开两颗扣&#10;  外层：浅灰色短款外套，敞开未拉拉链&#10;……"></textarea>
       <p class="tip">
-        识别结果里写"不可见"的部位只是图里看不到，请自己补全或删掉那一行。被遮住的内衣可以照样写上并标注"不可见"，描述里出现"不可见"时程序会自动附上"不可见的衣物描写时不要提及，除非被脱下或露出"的说明。
+        识别结果里写"不可见"的部位只是图里看不到，请自己补全或删掉那一行。
       </p>
     </div>
 
     <div class="btns">
-      <button class="btn-green" id="set-active" type="button">👗 设为穿着中</button>
+      <button id="save-btn" class="save-btn" type="button">保存服饰配置</button>
       <button class="btn-del" id="delete" type="button">🗑 删除这套</button>
     </div>
-    <div id="active-status" class="status inline"></div>
+    <div id="status" class="status inline"></div>
   </div>
 
   <div class="btn-row">
-    <button id="save-btn" class="save-btn" type="button">保存服饰配置</button>
+    <button class="btn-green wide" id="set-active" type="button">👗 设为穿着中</button>
   </div>
-  <div id="status" class="status"></div>
+  <div id="active-status" class="status inline"></div>
   <p class="tip">「设为穿着中」立即生效（该套需已保存）；当前穿着为空 = 不向 AI 发送服饰。清空聊天记录不影响这里的服饰。</p>
 
   <!-- 确认浮层：关窗口 / 切换角色 / 删除 / 覆盖描述前的确认，页面内浮层，不用系统对话框 -->
