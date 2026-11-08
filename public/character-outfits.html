@@ -74,9 +74,9 @@
   .btns { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
   .btn-line { border: 1px solid #e04060; background: #fff; color: #e04060; padding: 6px 12px; font-size: 12px; }
   .btn-line:active:not(:disabled) { background: #ffe9ee; }
-  .btn-green { border: 1px solid #2a8f4e; background: #fff; color: #2a8f4e; padding: 6px 12px; font-size: 12px; }
+  .btn-green { border: 1px solid #2a8f4e; background: #fff; color: #2a8f4e; padding: 6px 12px; font-size: 12px; margin-left: auto; }
   .btn-green.on { background: #2a8f4e; color: #fff; }
-  .btn-del { border: 1px solid #ddd; background: #fff; color: #999; padding: 6px 12px; font-size: 12px; margin-left: auto; }
+  .btn-del { border: 1px solid #ddd; background: #fff; color: #999; padding: 6px 12px; font-size: 12px; }
   .btn-del:hover:not(:disabled) { border-color: #e04060; color: #e04060; }
   .field { margin-top: 10px; }
 
@@ -156,8 +156,8 @@
     </div>
 
     <div class="btns">
-      <button class="btn-green" id="set-active" type="button">👗 设为穿着中</button>
       <button class="btn-del" id="delete" type="button">🗑 删除这套</button>
+      <button class="btn-green" id="set-active" type="button">👗 设为穿着中</button>
     </div>
     <div id="active-status" class="status inline"></div>
   </div>
