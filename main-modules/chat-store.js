@@ -196,12 +196,12 @@ function clearDaySummaries(characterName) {
 }
 
 // ---------- 剧情总览：chat-history/<角色名>-story-overview.json ----------
-// 日总结攒到一定字数后，由 story-overview.js 把"上一版总览 + 这批日总结"再压缩成一份不超过 1000 字的剧情总览，存在这里：
+// 日总结攒到一定字数后，由 story-overview.js 把"上一版总览 + 这批日总结"再压缩成一份不超过 1200 字的剧情总览，存在这里：
 //   { "text": "总览正文", "coveredUntil": "YYYY-MM-DD" }
 // coveredUntil 是水位线：这一天（含）以前的日总结都已经并进 text，之后不再单独发给模型；
 // 只有合并成功才会前移水位线，合并失败时那几天的日总结照常发送，不会丢内容。
 // 用户也可以在聊天记录窗口的"⋯ → 剧情总览"里手动改 text，水位线不受影响。
-const STORY_OVERVIEW_MAX_CHARS = 1200; // 总览正文上限（提示词要求 AI 控制在 1000 字内，留一点余量；手动保存同样按这个上限）
+const STORY_OVERVIEW_MAX_CHARS = 1600; // 总览正文上限（提示词要求 AI 控制在 1200 字内，留一点余量；手动保存同样按这个上限）
 
 function storyOverviewPath(characterName) {
   const dir = getChatDir();

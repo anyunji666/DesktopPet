@@ -1,8 +1,8 @@
 // ---------- 剧情总览：日总结攒够字数后，再压缩成一份总览 ----------
 // 发给模型的历史分三层（见 history-flatten.js 的 flattenChatHistory）：剧情总览 → 日总结 → 最近的对话原文。
-// 日总结每天一段（约 100 字），天数多了会越攒越长；这里负责"再压缩一层"：
+// 日总结每天一段（约 200 字），天数多了会越攒越长；这里负责"再压缩一层"：
 // 还没并进总览的日总结加起来超过 MERGE_THRESHOLD_CHARS 字，就把"上一版总览 + 这批日总结"交给 LLM，
-// 提炼成一份不超过 1000 字的新总览，并把水位线 coveredUntil 前移到这批里最晚的一天——
+// 提炼成一份不超过 1200 字的新总览，并把水位线 coveredUntil 前移到这批里最晚的一天——
 // 之后这些天的日总结不再单独发送。日总结本身仍留在磁盘上，总览出问题时随时可以重做。
 // 合并在跨天总结之后、生成回复之前串行执行（chat-turn.js），仍在聊天锁内，不会和别的写入冲突。
 // 合并失败（接口报错 / 输出太长 / 空输出）不会让这一轮对话失败：水位线不动，那几天的日总结照常发送，
@@ -12,7 +12,7 @@ const { collectUnmergedSummaries } = require('./history-flatten');
 const { buildOverviewPrompt } = require('./llm');
 const { callLLM } = require('./llm-client');
 
-const MERGE_THRESHOLD_CHARS = 1000; // 未并入总览的日总结总字数超过这个数就触发合并
+const MERGE_THRESHOLD_CHARS = 2000; // 未并入总览的日总结总字数超过这个数就触发合并
 const RETRY_COOLDOWN_MS = 30 * 60 * 1000;
 const failedAt = new Map(); // 角色名 -> 上次合并失败的时间（只在内存里，重启后清零）
 
@@ -51,7 +51,7 @@ async function mergeStoryOverview(characterName, history) {
       `剧情总览 - ${characterName}`
     );
     text = cleanOverviewText(raw);
-    if (text && text.length <= STORY_OVERVIEW_MAX_CHARS) break; // 偶尔略超 1000 字可以接受，超过上限才重试
+    if (text && text.length <= STORY_OVERVIEW_MAX_CHARS) break; // 偶尔略超 1200 字可以接受，超过上限才重试
     text = '';
   }
   if (!text) throw new Error('剧情总览生成失败：模型输出为空或超出字数上限');

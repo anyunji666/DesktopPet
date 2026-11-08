@@ -87,7 +87,7 @@ const overviewText = document.getElementById('overview-text');
 const overviewCovered = document.getElementById('overview-covered');
 const overviewCount = document.getElementById('overview-count');
 const overviewSave = document.getElementById('overview-save');
-let overviewMax = 1200;
+let overviewMax = 1600;
 
 function refreshOverviewCount() {
   const n = overviewText.value.trim().length;
@@ -105,7 +105,7 @@ async function openOverview() {
   } catch (err) {
     return alertError(err);
   }
-  overviewMax = data.maxChars || 1200;
+  overviewMax = data.maxChars || 1600;
   overviewText.value = data.text || '';
   const label = dayLabelCN(data.coveredUntil);
   overviewCovered.textContent = label ? `已整理到 ${label}（这天及以前的日总结不再单独发送）` : '';

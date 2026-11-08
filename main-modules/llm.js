@@ -276,7 +276,7 @@ function buildSummaryPrompt(dayKey, dayLines) {
   parts.push('');
   parts.push('请严格按下面的格式输出：');
   parts.push('[总结]');
-  parts.push('<不超100字总结<historical_conversation>里的故事；按时间顺序列出关键事件，平铺直叙，不用比喻，内容太多压不进100字就列几个要点，不要分段；[总结]标记下面直接写总结正文，不要加"总结："这类前缀和分点符号。>');
+  parts.push('<不超200字总结<historical_conversation>里的故事；按时间顺序列出关键事件，平铺直叙，不用比喻，内容太多压不进200字就列几个要点，不要分段；[总结]标记下面直接写总结正文，不要加"总结："这类前缀和分点符号。>');
   parts.push('[记忆]');
   parts.push('<只有元交流中确实出现了用户提出的值得长期记忆的 设定/要求 时，才输出[记忆]段；不要和<memory_index>里已有的条目重复；每条新 设定/要求 不超过20字，一条一行，不编号。没有可记的内容就整段省略——不要输出"[记忆]"标记，也不要写"无"或留空行>');
   parts.push('');
@@ -284,7 +284,7 @@ function buildSummaryPrompt(dayKey, dayLines) {
   return parts.join('\n');
 }
 
-// 生成"剧情总览"用的 prompt：把 上一版总览 + 一批日总结 再压缩成一份不超过 1000 字的总览。
+// 生成"剧情总览"用的 prompt：把 上一版总览 + 一批日总结 再压缩成一份不超过 1200 字的总览。
 // 和 buildSummaryPrompt 一样是单独的一次总结任务：不带角色人设/语气/输出格式约束，只带全局前置词；指令放在素材后面。
 // prevOverview 为空表示还没有过总览（第一次合并）；items = [{ dayKey, text }]，按日期从早到晚。
 // tooLong=true 是上一次输出超字数后的重试，额外强调一次长度。
@@ -306,11 +306,11 @@ function buildOverviewPrompt(prevOverview, prevCoveredUntil, items, tooLong = fa
   parts.push('');
   parts.push(
     prevOverview
-      ? '<story_history>是这个故事按时间顺序排列的分段事件概述。请把旧剧情总览和之后的日总结重新提炼成一份不超过1000字的新剧情总览。'
-      : '<story_history>是这个故事按时间顺序排列的分段事件概述。请把这些日总结提炼成一份不超过1000字的剧情总览。'
+      ? '<story_history>是这个故事按时间顺序排列的分段事件概述。请把旧剧情总览和之后的日总结重新提炼成一份不超过1200字的新剧情总览。'
+      : '<story_history>是这个故事按时间顺序排列的分段事件概述。请把这些日总结提炼成一份不超过1200字的剧情总览。'
   );
-  parts.push('要求：按事件顺序展现故事的完整脉络；保留人物关系的变化；不要加"新剧情总览："这类前缀和分点符号，直接输出总览内容；内容不足1000字时不要硬凑。');
-  if (tooLong) parts.push('注意：上一次输出超过了字数限制。这次务必精简，总字数严格控制在1000字以内。');
+  parts.push('要求：按事件顺序展现故事的完整脉络；保留人物关系的变化；不要加"新剧情总览："这类前缀和分点符号，直接输出总览内容；内容不足1200字时不要硬凑。');
+  if (tooLong) parts.push('注意：上一次输出超过了字数限制。这次务必精简，总字数严格控制在1200字以内。');
   return parts.join('\n');
 }
 

@@ -47,7 +47,7 @@ async function runChatTurn(characterName, text, imageDataURL, summaryPlan) {
 // 判断这一轮要不要先做"整理"：
 //   1) 跨天总结：跨天了（本轮消息和历史最后一条不是同一天），"上一天"要往前挪一格，原文不再发送，
 //      退之前得先把被挪出去的那天总结好、缓存起来（没缓存过才需要总结）；
-//   2) 合并剧情总览：未并入总览的日总结超过 1000 字（见 story-overview.js）。刚生成完新日总结时在 runChatTurnInner 里判断；
+//   2) 合并剧情总览：未并入总览的日总结超过 2000 字（见 story-overview.js）。刚生成完新日总结时在 runChatTurnInner 里判断；
 //      这里只处理"日总结都齐了、但上次合并失败还欠着"的情况。
 // 需要就返回 { dayToSummarize, dayLines, startPhase }（只欠合并时 dayToSummarize / dayLines 为 null），不需要返回 null。
 // 纯同步、只读磁盘：chat-send 上锁前先调它，这样锁一开始就能带上正确的阶段（summarizing / merging / waiting），
@@ -76,7 +76,7 @@ async function runChatTurnInner(characterName, text, imageDataURL, imageHolder, 
   // 这两次调用和下面生成回复的调用串行执行，不并发。
   // 日总结失败了（网络/接口报错）直接抛出去，本轮不生成回复、不落历史，跟 callLLM 本身失败的表现一致；
   // 合并总览失败不抛：水位线不动，那几天的日总结照常发送，下次再试（见 story-overview.js）。
-  // 日总结落盘后，如果未并入总览的日总结超过 1000 字，紧接着合并一次（"当日总结字数到了就跟着做大总结"），然后才去生成回复。
+  // 日总结落盘后，如果未并入总览的日总结超过 2000 字，紧接着合并一次（"当日总结字数到了就跟着做大总结"），然后才去生成回复。
   // 每个阶段结束都把锁切到下一个阶段，界面提示随之切换。
   if (summaryPlan) {
     if (summaryPlan.dayToSummarize) {
