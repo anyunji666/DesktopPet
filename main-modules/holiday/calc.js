@@ -85,4 +85,4 @@ function buildFestivalTag(timeText) {
   return `<${TAG_NAME}>\n<!-- 上述最近的故事时间的星期，以及节日播报，仅供剧情参考 -->\n${parsed.year}年${parsed.month}月${parsed.day}日 是 星期${weekday} [本月共${monthDays}天] ${suffix}\n</${TAG_NAME}>`;
 }
 
-module.exports = { buildFestivalTag, parseStoryDate, buildHolidaySuffix, TAG_NAME };
+module.exports = { buildFestivalTag, parseStoryDate, buildHolidaySuffix, TAG_NAME, WEEKDAY_LABELS, daysInMonth };

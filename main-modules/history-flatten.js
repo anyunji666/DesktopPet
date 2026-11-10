@@ -190,7 +190,7 @@ function collectUnmergedSummaries(characterName, history, todayKey = dayKeyOf(Da
 // 角色的回复永远不带时间戳，但"跨天"是按实际发送时间判断的，不看是谁发的这条。
 //
 // 对话模式（mode === 'chat'）和上面的差别：不做轮次压缩（今天 / 上一天的消息全部发原文，不用每轮摘要块）；
-// 不输出"故事时间"行；时间戳前缀写 [时间 …] 而不是 [元时间 …]，日总结 / 总览的标题也不带"元时间""故事"字样。
+// 不输出"故事时间"行；时间戳前缀只写 [YYYY年M月D日 HH:mm]（没有"元时间"字样），日总结 / 总览的标题也不带"元时间""故事"字样。
 // 日总结和总览仍然保留。
 function flattenChatHistory(characterName, history, mode = 'story') {
   const chat = mode === 'chat';
@@ -230,7 +230,7 @@ function flattenChatHistory(characterName, history, mode = 'story') {
     if (h.role === 'user' && hasTs) {
       const crossedDay = prevDayKey !== null && dk !== prevDayKey;
       if (prevTs === null || h.ts - prevTs >= GAP_MS || crossedDay) {
-        prefix = `[${chat ? '时间' : '元时间'} ${formatMinuteTime(h.ts)}] `;
+        prefix = chat ? `[${formatMinuteTime(h.ts)}] ` : `[元时间 ${formatMinuteTime(h.ts)}] `;
       }
     }
     if (hasTs) {
