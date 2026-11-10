@@ -412,8 +412,11 @@ function buildPromptText(characterName, history, text) {
   // 这样发给 DeepSeek / Gemini 这类"自动前缀缓存"的 API 时，前面这一大段固定前缀才能被复用命中、省 token。
   const parts = [];
   // 对话模式不发用户的前置设定词（那是给故事模式设定 AI 身份用的）
-  if (!chat && prefix.trim()) parts.push(prefix.trim());
-  parts.push('---');
+  // 有前置文本才发它和分隔线，否则 prompt 开头是一根孤零零的 `---`（对话模式永远没有前置文本，故直接以角色卡开头）
+  if (!chat && prefix.trim()) {
+    parts.push(prefix.trim());
+    parts.push('---');
+  }
   // 世界背景拼在角色资料前面，没填就不发这一段；对话模式不是写故事，不发世界背景
   if (!chat && storyBackground.trim()) {
     parts.push(`<story_background>\n<!-- 故事的世界背景以及设定 -->\n${storyBackground.trim()}\n</story_background>`);
