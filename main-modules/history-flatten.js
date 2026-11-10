@@ -103,7 +103,8 @@ function computeLastPastDayKey(history, refDayKey) {
 // 和 flattenChatHistory 里发给正式回复 prompt 的格式（带时间戳、按天分组）是两回事。
 // AI 回复只取正文，去掉存档末尾拼着的 <story_overview> 摘要块，只在行尾留一个 [故事时间:…]
 // （跟聊天记录窗口气泡末尾的时间标签一致；用方括号而不是圆括号，圆括号在这套约定里是元指令）。
-function flattenDayLines(characterName, history, dayKey) {
+// 对话模式（mode === 'chat'）没有故事时间这个概念，行尾不加 [故事时间:…]（切换前留下的老消息也不加）。
+function flattenDayLines(characterName, history, dayKey, mode = 'story') {
   const lines = [];
   for (const h of history) {
     if (typeof h.ts !== 'number' || dayKeyOf(h.ts) !== dayKey) continue;
@@ -111,7 +112,7 @@ function flattenDayLines(characterName, history, dayKey) {
     let text = h.content;
     if (h.role === 'assistant') {
       text = splitTurnSummary(h.content).body;
-      const storyTime = extractStoryTime(h.content);
+      const storyTime = mode === 'chat' ? '' : extractStoryTime(h.content);
       if (storyTime) text = `${text} [故事时间:${storyTime}]`;
     }
     const content = imageTag ? (text ? `${imageTag} ${text}` : imageTag) : text;
@@ -150,7 +151,9 @@ function parseSummaryAndMemory(rawText) {
 
 // 剧情总览的标题行："元时间 X年X月X日 及之前的旧剧情总览："（水位线 coveredUntil 为空 = 用户手写、还没合并过的总览，不带日期）。
 // 摊平历史（发给模型）和合并总览的提示词（llm.js 的 buildOverviewPrompt）共用
-function overviewHeading(coveredUntil) {
+// 对话模式叫"对话总览"，日期前不带"元时间"（对话模式里只有现实时间，不需要区分故事时间）
+function overviewHeading(coveredUntil, mode = 'story') {
+  if (mode === 'chat') return coveredUntil ? `${formatDayCN(coveredUntil)} 及之前的旧对话总览：` : '旧对话总览：';
   return coveredUntil ? `元时间 ${formatDayCN(coveredUntil)} 及之前的旧剧情总览：` : '旧剧情总览：';
 }
 
@@ -185,7 +188,12 @@ function collectUnmergedSummaries(characterName, history, todayKey = dayKeyOf(Da
 //   3. 原文：今天和"上一天"（历史里早于今天的最新一天，不管隔了几天）；内部再按轮次压缩（见下）
 // 时间戳：用户消息若与上一条间隔 >= 5 分钟，或者跨天了（哪怕间隔很短），都会带 [元时间 YYYY年M月D日 HH:mm] 前缀；
 // 角色的回复永远不带时间戳，但"跨天"是按实际发送时间判断的，不看是谁发的这条。
-function flattenChatHistory(characterName, history) {
+//
+// 对话模式（mode === 'chat'）和上面的差别：不做轮次压缩（今天 / 上一天的消息全部发原文，不用每轮摘要块）；
+// 不输出"故事时间"行；时间戳前缀写 [时间 …] 而不是 [元时间 …]，日总结 / 总览的标题也不带"元时间""故事"字样。
+// 日总结和总览仍然保留。
+function flattenChatHistory(characterName, history, mode = 'story') {
+  const chat = mode === 'chat';
   const GAP_MS = 5 * 60 * 1000;
   const todayKey = dayKeyOf(Date.now());
 
@@ -222,7 +230,7 @@ function flattenChatHistory(characterName, history) {
     if (h.role === 'user' && hasTs) {
       const crossedDay = prevDayKey !== null && dk !== prevDayKey;
       if (prevTs === null || h.ts - prevTs >= GAP_MS || crossedDay) {
-        prefix = `[元时间 ${formatMinuteTime(h.ts)}] `;
+        prefix = `[${chat ? '时间' : '元时间'} ${formatMinuteTime(h.ts)}] `;
       }
     }
     if (hasTs) {
@@ -259,7 +267,7 @@ function flattenChatHistory(characterName, history) {
   const recentStart = Math.max(0, rounds.length - RECENT_RAW_ROUNDS);
   for (let r = 0; r < rounds.length; r++) {
     const round = rounds[r];
-    if (r >= recentStart) {
+    if (chat || r >= recentStart) { // 对话模式不压缩：每一轮都发原文
       for (const item of round) item.renderMode = 'raw';
       continue;
     }
@@ -279,14 +287,14 @@ function flattenChatHistory(characterName, history) {
   // 在第一条"原文"行前面、且前面确实出现过压缩摘要时插入，让模型一眼分清"这段是概述，这段是原话"。
   const lines = [];
   const overview = loadStoryOverview(characterName);
-  if (overview.text) lines.push(overviewHeading(overview.coveredUntil), overview.text);
+  if (overview.text) lines.push(overviewHeading(overview.coveredUntil, mode), overview.text);
   let sawCompact = false;
   let sepInserted = false;
   for (const block of dayBlocks) {
     if (block.old) {
       // 已并进总览的天（水位线以前）不输出；其余只发日总结，没生成过总结的天也不输出
       const summary = summaryOfDay.get(block.dayKey);
-      if (summary) lines.push(`元时间 ${formatDayCN(block.dayKey)} 的故事总结：${summary}`);
+      if (summary) lines.push(chat ? `${formatDayCN(block.dayKey)} 的聊天总结：${summary}` : `元时间 ${formatDayCN(block.dayKey)} 的故事总结：${summary}`);
       continue;
     }
     // 今天 / 上一天：按上面标好的 renderMode 输出（原文 / 压缩摘要 / 跳过）
@@ -312,7 +320,7 @@ function flattenChatHistory(characterName, history) {
       // 每轮原文 assistant 回复后面跟一行它自己的故事时间（文案和聊天记录窗口气泡末尾的标签一致）：
       // 摘要块不发，模型就看不到"故事走到什么时间"，估算本轮故事时间没有锚点。
       // 逐轮贴在自己那条下面，最近两轮各有一行；压缩成摘要的轮次本来就在摘要里带着故事时间，不重复补。
-      if (h.role === 'assistant') {
+      if (h.role === 'assistant' && !chat) {
         const storyTime = extractStoryTime(h.content);
         if (storyTime) lines.push(`故事时间 · ${storyTime}`);
       }

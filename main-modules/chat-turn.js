@@ -24,6 +24,7 @@ const {
   parseSummaryAndMemory,
 } = require('./history-flatten');
 const { callLLM } = require('./llm-client');
+const { getChatMode } = require('./chat-mode');
 const { speakReply } = require('./tts');
 const { stripTones, stripSpeakers } = require('./tts/tone');
 
@@ -59,7 +60,7 @@ function planCrossDaySummary(characterName) {
   if (dayKeyOf(Date.now()) !== lastMsgDayKey) {
     const dayToSummarize = computeLastPastDayKey(history, lastMsgDayKey);
     if (dayToSummarize && !loadDaySummary(characterName, dayToSummarize)) {
-      const dayLines = flattenDayLines(characterName, history, dayToSummarize);
+      const dayLines = flattenDayLines(characterName, history, dayToSummarize, getChatMode(characterName));
       if (dayLines.length) return { dayToSummarize, dayLines, startPhase: 'summarizing' };
     }
   }
@@ -81,14 +82,14 @@ async function runChatTurnInner(characterName, text, imageDataURL, imageHolder, 
   if (summaryPlan) {
     if (summaryPlan.dayToSummarize) {
       const { dayToSummarize, dayLines } = summaryPlan;
-      const summaryPrompt = buildSummaryPrompt(dayToSummarize, dayLines);
+      const summaryPrompt = buildSummaryPrompt(dayToSummarize, dayLines, getChatMode(characterName));
       const rawSummary = await callLLM(
         [{ role: 'user', content: summaryPrompt }],
         `总结生成 - ${characterName}`
       );
       const { summary, memoryLines } = parseSummaryAndMemory(rawSummary);
       saveDaySummary(characterName, dayToSummarize, summary || rawSummary.trim());
-      if (memoryLines.length) appendMemoryLines(memoryLines);
+      if (memoryLines.length) appendMemoryLines(memoryLines, getChatMode(characterName)); // 提炼出的要求记进当前模式自己的那份
     }
     if (needsOverviewMerge(characterName, history)) {
       setChatPhase('merging');
@@ -122,7 +123,9 @@ async function runChatTurnInner(characterName, text, imageDataURL, imageHolder, 
   // 回复末尾会带一个 <story_overview> 摘要块（给历史轮次压缩用）；配音语气则写在正文每个「」里面、台词前面
   // （例：「【嗔怪，语速偏快】你不要过来～」），和摘要块的位置互不影响。
   const rawReply = await callLLM(messages, `对话回复 - ${characterName}`);
-  const { body: replyBody, summaryBlock } = splitTurnSummary(rawReply);
+  const { body: replyBody, summaryBlock: rawSummaryBlock } = splitTurnSummary(rawReply);
+  // 对话模式不要求摘要块；模型万一还是写了也丢掉，不落档（聊天记录里不出现故事时间标签）
+  const summaryBlock = getChatMode(characterName) === 'chat' ? '' : rawSummaryBlock;
   // 摘要块 / 语气都不该进气泡、聊天记录、IPC 返回值：reply 是摘掉所有语气后的干净正文，气泡 / 返回值 / 落档都用它；
   // replyBody 还带着逐句语气，只给朗读用（TTS 按「」拆出每段自己的语气）
   const replyKeepSpeakers = stripTones(characterName, replyBody); // 去了语气、还带说话者前缀：落档 / 回传给模型用

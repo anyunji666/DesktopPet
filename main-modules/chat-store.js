@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const { CHARACTER_ROOT } = require('./character');
 const { assertSafeName } = require('./security');
+const { getChatMode } = require('./chat-mode');
 
 let chatDirCache = null;
 function getChatDir() {
@@ -80,22 +81,32 @@ function savePersonaFile(characterName, { system, storyBackground, aliases, read
   fs.writeFileSync(p, JSON.stringify({ system: sys, storyBackground: bg, aliases: al, readerInfo: reader }, null, 2), 'utf-8');
 }
 
-function chatHistoryPath(characterName) {
+// 故事模式和对话模式的聊天数据（聊天记录 / 每日总结 / 总览 / 图片 / 语音）分开存、互不打扰：
+// 故事模式沿用原来的文件名（<角色名>…，老用户的数据不用迁移），对话模式在角色名后面加 @chat（<角色名>@chat…）。
+// 下面所有按角色存取的路径都经过 storeName，按"当前模式"自动选；mode 参数可选，显式指定时不看当前模式
+// （资产配置这类只属于故事模式的功能固定传 'story'）。附加要求（__global-memory.md）本来就是全局的，两个模式共用。
+const CHAT_MODE_SUFFIX = '@chat';
+function storeName(characterName, mode) {
+  const base = assertSafeName(characterName);
+  return (mode || getChatMode(characterName)) === 'chat' ? base + CHAT_MODE_SUFFIX : base;
+}
+
+function chatHistoryPath(characterName, mode) {
   const dir = getChatDir();
   fs.mkdirSync(dir, { recursive: true });
-  return path.join(dir, assertSafeName(characterName) + '.json');
+  return path.join(dir, storeName(characterName, mode) + '.json');
 }
 
 // 全量聊天记录（不做截断/压缩，发给 LLM 的也是全量历史）
-function loadChatHistory(characterName) {
+function loadChatHistory(characterName, mode) {
   try {
-    const data = JSON.parse(fs.readFileSync(chatHistoryPath(characterName), 'utf-8'));
+    const data = JSON.parse(fs.readFileSync(chatHistoryPath(characterName, mode), 'utf-8'));
     return Array.isArray(data) ? data : [];
   } catch (err) {
     if (err.code !== 'ENOENT') {
       console.warn(`[pet] 角色 "${characterName}" 的聊天记录读取失败: ${err.message}`);
       // 文件存在但解析失败（损坏）：先留一份备份，否则下一次保存会把它覆盖成空记录，数据就彻底丢了
-      if (err instanceof SyntaxError) backupCorruptFile(chatHistoryPath(characterName));
+      if (err instanceof SyntaxError) backupCorruptFile(chatHistoryPath(characterName, mode));
     }
     return [];
   }
@@ -138,8 +149,8 @@ function saveChatHistory(characterName, history) {
     console.error(`[pet] 保存聊天记录失败: ${err.message}`);
     throw new Error('保存聊天记录失败：' + err.message);
   }
-  // 只有写盘成功才通知监听（失败已经抛出，不会走到这里）
-  if (historySavedListener) {
+  // 只有写盘成功才通知监听（失败已经抛出，不会走到这里）。监听方（资产配置窗口）只关心故事时间，对话模式的记录不通知
+  if (historySavedListener && getChatMode(characterName) === 'story') {
     try {
       historySavedListener(characterName, history);
     } catch (err) {
@@ -155,7 +166,7 @@ function saveChatHistory(characterName, history) {
 function summaryPath(characterName) {
   const dir = getChatDir();
   fs.mkdirSync(dir, { recursive: true });
-  return path.join(dir, assertSafeName(characterName) + '-summaries.json');
+  return path.join(dir, storeName(characterName) + '-summaries.json');
 }
 
 function loadDaySummaries(characterName) {
@@ -206,7 +217,7 @@ const STORY_OVERVIEW_MAX_CHARS = 1600; // 总览正文上限（提示词要求 A
 function storyOverviewPath(characterName) {
   const dir = getChatDir();
   fs.mkdirSync(dir, { recursive: true });
-  return path.join(dir, assertSafeName(characterName) + '-story-overview.json');
+  return path.join(dir, storeName(characterName) + '-story-overview.json');
 }
 
 // 读取总览；没有/格式不对返回 { text: '', coveredUntil: '' }（调用方据此不发送这一段）
@@ -255,10 +266,12 @@ function clearStoryOverview(characterName) {
 const MEMORY_MAX_CHARS = 200;
 const MEMORY_TAG_MAX_CHARS = 20;
 
-function memoryPath() {
+// 附加要求也按聊天模式分成两份（跨角色共用，但故事模式和对话模式各读各的）：
+// 故事模式 __global-memory.md（原文件，不用迁移），对话模式 __global-memory@chat.md。mode 省略 = 'story'。
+function memoryPath(mode) {
   const dir = getChatDir();
   fs.mkdirSync(dir, { recursive: true });
-  return path.join(dir, '__global-memory.md');
+  return path.join(dir, mode === 'chat' ? '__global-memory@chat.md' : '__global-memory.md');
 }
 
 // 从头部整行丢弃直到不超过 maxChars，保留最新内容
@@ -269,9 +282,9 @@ function trimToCharLimit(text, maxChars) {
   return lines.join('\n');
 }
 
-function loadMemoryIndex() {
+function loadMemoryIndex(mode) {
   try {
-    return fs.readFileSync(memoryPath(), 'utf-8');
+    return fs.readFileSync(memoryPath(mode), 'utf-8');
   } catch (err) {
     if (err.code !== 'ENOENT') console.warn(`[pet] 附加要求（记忆索引）读取失败: ${err.message}`);
     return '';
@@ -279,10 +292,10 @@ function loadMemoryIndex() {
 }
 
 // 整份覆盖保存（预留给"设置"里手动编辑用），同样做字符上限截断
-function saveMemoryIndex(text) {
+function saveMemoryIndex(text, mode) {
   const trimmed = trimToCharLimit(typeof text === 'string' ? text : '', MEMORY_MAX_CHARS);
   try {
-    fs.writeFileSync(memoryPath(), trimmed, 'utf-8');
+    fs.writeFileSync(memoryPath(mode), trimmed, 'utf-8');
   } catch (err) {
     console.error(`[pet] 保存记忆索引失败: ${err.message}`);
   }
@@ -300,17 +313,17 @@ function normalizeMemoryText(text) {
 
 // 用户在设置页手动保存附加要求：跟自动追加不同，超过上限时不静默丢行，而是直接抛错让界面提示，
 // 免得用户改完发现少了几行。规整后为空 = 删除文件（之后不再发送 <memory_index>）。
-function saveMemoryIndexManual(text) {
+function saveMemoryIndexManual(text, mode) {
   const normalized = normalizeMemoryText(text);
   if (normalized.length > MEMORY_MAX_CHARS) {
     throw new Error(`附加要求超过 ${MEMORY_MAX_CHARS} 字上限（当前 ${normalized.length} 字），请删减后再保存`);
   }
   if (!normalized) {
-    clearMemoryIndex();
+    clearMemoryIndex(mode);
     return;
   }
   try {
-    fs.writeFileSync(memoryPath(), normalized, 'utf-8');
+    fs.writeFileSync(memoryPath(mode), normalized, 'utf-8');
   } catch (err) {
     console.error(`[pet] 保存附加要求失败: ${err.message}`);
     throw new Error('保存附加要求失败：' + err.message);
@@ -319,20 +332,20 @@ function saveMemoryIndexManual(text) {
 
 // 追加若干条新记忆（去重：整行已经出现在现有内容里的直接跳过），单条超过 20 字就截断成标签长度，
 // 总量超限时自动从头部丢旧行。由跨天总结那次 LLM 调用顺带产出，不单独发起请求。
-function appendMemoryLines(newLines) {
+function appendMemoryLines(newLines, mode) {
   if (!Array.isArray(newLines) || !newLines.length) return;
-  const cur = loadMemoryIndex();
+  const cur = loadMemoryIndex(mode);
   const toAdd = newLines
     .map((l) => (typeof l === 'string' ? l.trim().slice(0, MEMORY_TAG_MAX_CHARS) : ''))
     .filter((l) => l && !cur.includes(l));
   if (!toAdd.length) return;
   const merged = (cur ? cur.replace(/\n+$/, '') + '\n' : '') + toAdd.join('\n') + '\n';
-  saveMemoryIndex(merged);
+  saveMemoryIndex(merged, mode);
 }
 
-function clearMemoryIndex() {
+function clearMemoryIndex(mode) {
   try {
-    fs.unlinkSync(memoryPath());
+    fs.unlinkSync(memoryPath(mode));
   } catch (err) {
     if (err.code !== 'ENOENT') console.warn(`[pet] 清空记忆索引失败: ${err.message}`);
   }
@@ -341,7 +354,7 @@ function clearMemoryIndex() {
 // ---------- 聊天图片：存 chat-history/images/<角色名>/ 下，消息里只记文件名 ----------
 // 图片是 dataURL 传进来的（渲染进程选文件/粘贴后本地读出），存成独立文件避免聊天记录 JSON 被撑爆。
 function chatImageDir(characterName) {
-  const dir = path.join(getChatDir(), 'images', assertSafeName(characterName));
+  const dir = path.join(getChatDir(), 'images', storeName(characterName));
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -389,7 +402,7 @@ function deleteChatImage(characterName, filename) {
 
 // 清空角色全部聊天记录时，把图片文件夹一起清掉
 function clearChatImages(characterName) {
-  const dir = path.join(getChatDir(), 'images', assertSafeName(characterName));
+  const dir = path.join(getChatDir(), 'images', storeName(characterName));
   try {
     fs.rmSync(dir, { recursive: true, force: true });
   } catch (err) {
@@ -406,7 +419,7 @@ function clearChatImages(characterName) {
 // readOffsetMs 是后加的字段，老缓存没有，播放端检测到缺失就退回用 gapBeforeMs。
 // 没调用过 TTS（或全部合成失败）的消息没有这个目录。
 function voiceCharDir(characterName) {
-  return path.join(getChatDir(), 'voices', assertSafeName(characterName));
+  return path.join(getChatDir(), 'voices', storeName(characterName));
 }
 
 // ts 只允许是有限数字，转成目录名（防路径逃逸）；不合法返回 null

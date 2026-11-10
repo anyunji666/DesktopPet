@@ -9,6 +9,8 @@ const { toneEnabled } = require('./tts/tone');
 const { getSpecialRoles, anyVoiceConfigured, COMMON_LABEL } = require('./tts/config');
 const { flattenChatHistory, formatDayCN, overviewHeading } = require('./history-flatten');
 const { buildFestivalBlock } = require('./holiday');
+const { buildHolidaySuffix } = require('./holiday/calc');
+const { getChatMode } = require('./chat-mode');
 const { generateToken, maskSecret, resolveSecretInput } = require('./security');
 
 // ---------- API 配置（存进 config.json 的 apiConfig 字段，和角色/场景选择共用同一份配置文件） ----------
@@ -235,6 +237,63 @@ const SPEAKER_RULE = `- **说话者标注：** 每句「对话」前面都必须
   - 其他店员、群演、路人以及用户所扮演的角色：前面统一写\`${COMMON_LABEL}：\`。即使这个人物有资料设定，只要不属于<special_roles>都写\`${COMMON_LABEL}：\`。
 - 一句「对话」只能是一个角色说的，不要把两个角色的话写进同一个「」里。`;
 
+// ---------- 对话模式（和角色聊天，不编故事）专用的提示词段落 ----------
+// 对话模式和故事模式的差别见 chat-mode.js。这里是对话模式独有的三段固定文本：输入说明、输出规则（同样分有 / 无语气指令两版）。
+// 对话模式没有摘要模块：回复末尾不要求 <story_overview>，所以输出规则后面不接 SUMMARY_FOOTER。
+// 朗读仍然只读「」里的台词（见 tts/text-clean.js），所以对话模式也要求角色说的话用「」包裹。
+const INPUT_NOTE_CHAT = `## **用户的输入说明**
+
+- 带括号的内容是用户直接对 你 提的要求（元指令），照着执行
+- 不带括号的内容是用户在和 你 所扮演的角色聊天，以角色的身份直接回应他`;
+
+const OUTPUT_RULES_CHAT_PLAIN = `## **必须遵守的强制性输出规则**
+
+- **对话方式：** 这是你所扮演的角色和用户之间的日常聊天，不是写故事。以角色的身份直接回应用户说的话，像面对面或发消息聊天一样自然。不要写环境描写和剧情旁白，不要替用户说话或行动，不要为了推进剧情编造事件。
+- **内容要求：**
+  - 回复长短贴合用户的话：用户随口一句就简短回应，话题展开了再多说几句
+  - 没有收到用户的元指令时，不用旁白评价角色的行为
+  - 时间只以<current_time>里的现实时间为准，可以自然地感知早晚、星期和节日，不要编造别的时间线
+- **语言：** 简体中文
+- **字数：** 总字数不超过400字，每个「」里的台词字数控制在 1~30 字。可以连发几句「」，像连着发几条消息。
+- **符号规范**（严格区分）：
+  - 对用户的元指令的回答用括号包裹
+  - 角色说的话：用「」包裹，例：「刚下班吗？」
+  - 偶尔可以用*星号*包裹一小句动作、神态或内心想法（不超过15字，不是每条都要有），例：*笑着看过来*
+- 「对话」内容灵活使用标点符号：
+  - 句末拖长音：「不要嘛～」
+  - 句末重音：「什么！」
+  - 疑问/质疑：「是这样吗？」
+- 格式示例：「你终于回来啦～」*探头看了看你*「今天累不累？」`;
+
+const OUTPUT_RULES_CHAT_TONE = `## **必须遵守的强制性输出规则**
+
+- **对话方式：** 这是你所扮演的角色和用户之间的日常聊天，不是写故事。以角色的身份直接回应用户说的话，像面对面或发消息聊天一样自然。不要写环境描写和剧情旁白，不要替用户说话或行动，不要为了推进剧情编造事件。
+- **内容要求：**
+  - 回复长短贴合用户的话：用户随口一句就简短回应，话题展开了再多说几句
+  - 没有收到用户的元指令时，不用旁白评价角色的行为
+  - 时间只以<current_time>里的现实时间为准，可以自然地感知早晚、星期和节日，不要编造别的时间线
+- **语言：** 简体中文
+- **字数：** 总字数（含「对话」、对话的语气描述和*星号*内容）不超过400字，每个「」里的台词字数控制在 1~30 字。可以连发几句「」，像连着发几条消息。
+- **符号规范**（严格区分）：
+  - 对用户的元指令的回答用括号包裹
+  - 角色说的话：用「」包裹，例：「【随口问候，语气轻快】刚下班吗？」
+  - 偶尔可以用*星号*包裹一小句动作、神态或内心想法（不超过15字，不是每条都要有），例：*笑着看过来*
+- 「对话」内容灵活使用标点符号：
+  - 句末拖长音：「【撒娇软糯，尾音拖长】不要嘛～」
+  - 句末重音：「【震惊拔高，语气急促】什么！」
+  - 疑问/质疑：「【将信将疑，语调上扬】是这样吗？」
+- **语气描述：** 每个「对话」里面、台词的第一个字之前，先用【】包裹写一句该对话的语气指导，不超过 20 字。要写成有画面感的具体描述，包含情绪和说话状态。每句只写它自己的语气，前后两句情绪有变化就要写出变化。【】只能写在「」里面、台词之前，其他地方不要使用。
+- 格式示例：「【开心上扬，语速轻快】你终于回来啦～」*探头看了看你*「【关切温柔，语速放缓】今天累不累？」`;
+
+// 对话模式的"现实当前时间"：星期 + 近三天内的国际 / 中国节日。每轮都变，所以和故事模式的节日播报一样放在固定前缀之后、紧贴 <user_input>
+function buildCurrentTimeBlock(now = new Date()) {
+  const pad = (n) => String(n).padStart(2, '0');
+  const weekday = ['日', '一', '二', '三', '四', '五', '六'][now.getDay()];
+  const holiday = buildHolidaySuffix(new Date(now.getFullYear(), now.getMonth(), now.getDate()));
+  const line = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日 星期${weekday} ${pad(now.getHours())}:${pad(now.getMinutes())}${holiday ? ' ' + holiday : ''}`;
+  return `<current_time>\n<!-- 现实的当前时间，以及近期节日播报 -->\n${line}\n</current_time>`;
+}
+
 // 摘要模块：必须放在整个回复的最末尾（解析时先摘掉摘要块，剩下的才是正文）
 const SUMMARY_FOOTER = `- **摘要模块：** 对本轮的正文内容进行一次总结。每次回复必须以摘要块结尾，缺失=不合格
   - 输出格式：
@@ -254,7 +313,9 @@ const SUMMARY_FOOTER = `- **摘要模块：** 对本轮的正文内容进行一�
 // 结构：前置词 → <memory_index> 已有记忆 → <historical_conversation> 对话记录 → 任务说明与输出格式（指令放在对话后面，长对话里不容易被冲淡）。
 // 不带角色名：故事里有具体的角色名，总结让模型直接用故事里的称呼。
 // 对话行里的括号元交流原样保留（不再在存档时过滤），[总结] 不对它做特殊处理。
-function buildSummaryPrompt(dayKey, dayLines) {
+// mode === 'chat'（对话模式）：素材是和角色的日常聊天而不是故事，总结要点和措辞随之调整，输出格式（[总结]/[记忆]）不变
+function buildSummaryPrompt(dayKey, dayLines, mode = 'story') {
+  const chat = mode === 'chat';
   const { prefix } = getPromptConfig();
   const parts = [];
   if (prefix.trim()) {
@@ -263,7 +324,7 @@ function buildSummaryPrompt(dayKey, dayLines) {
   }
   // 已有记忆索引：旧条目不在这次的对话素材里，不带这一段模型就不知道"什么已经记过"，
   // [记忆] 段也就没法真的去重（只能靠 appendMemoryLines 的整行子串匹配兜底）。没内容就不发这一段
-  const memoryIndex = loadMemoryIndex();
+  const memoryIndex = loadMemoryIndex(mode); // 故事模式 / 对话模式各读各的附加要求
   if (memoryIndex.trim()) {
     parts.push(`<memory_index>\n<!-- 之前提炼的用户 设定/要求，用于比对新[记忆]项不重复提取 -->\n${memoryIndex.trim()}\n</memory_index>`);
     parts.push('');
@@ -272,11 +333,19 @@ function buildSummaryPrompt(dayKey, dayLines) {
   parts.push(dayLines.join('\n'));
   parts.push('</historical_conversation>');
   parts.push('');
-  parts.push(`<historical_conversation>是用户和你在 ${formatDayCN(dayKey)} 扮演各自角色所创作的故事。其中带有括号的内容是用户和你的元交流，不带括号的内容是扮演各自角色的故事。需要对故事进行总结，对元交流提取 设定/要求。`);
+  parts.push(
+    chat
+      ? `<historical_conversation>是用户和你（扮演的角色）在 ${formatDayCN(dayKey)} 的聊天记录。其中带有括号的内容是用户和你的元交流，不带括号的内容是你们以角色身份的日常聊天。需要对聊天进行总结，对元交流提取 设定/要求。`
+      : `<historical_conversation>是用户和你在 ${formatDayCN(dayKey)} 扮演各自角色所创作的故事。其中带有括号的内容是用户和你的元交流，不带括号的内容是扮演各自角色的故事。需要对故事进行总结，对元交流提取 设定/要求。`
+  );
   parts.push('');
   parts.push('请严格按下面的格式输出：');
   parts.push('[总结]');
-  parts.push('<不超200字总结<historical_conversation>里的故事；按时间顺序列出关键事件，平铺直叙，不用比喻，内容太多压不进200字就列几个要点，不要分段；[总结]标记下面直接写总结正文，不要加"总结："这类前缀和分点符号。>');
+  parts.push(
+    chat
+      ? '<不超200字总结<historical_conversation>里的聊天；按时间顺序列出聊了什么话题、用户透露的近况与情绪、双方做出的约定或承诺，以及关系和态度上的变化，平铺直叙，不用比喻，内容太多压不进200字就列几个要点，不要分段；[总结]标记下面直接写总结正文，不要加"总结："这类前缀和分点符号。>'
+      : '<不超200字总结<historical_conversation>里的故事；按时间顺序列出关键事件，平铺直叙，不用比喻，内容太多压不进200字就列几个要点，不要分段；[总结]标记下面直接写总结正文，不要加"总结："这类前缀和分点符号。>'
+  );
   parts.push('[记忆]');
   parts.push('<只有元交流中确实出现了用户提出的值得长期记忆的 设定/要求 时，才输出[记忆]段；不要和<memory_index>里已有的条目重复；每条新 设定/要求 不超过20字，一条一行，不编号。没有可记的内容就整段省略——不要输出"[记忆]"标记，也不要写"无"或留空行>');
   parts.push('');
@@ -288,28 +357,42 @@ function buildSummaryPrompt(dayKey, dayLines) {
 // 和 buildSummaryPrompt 一样是单独的一次总结任务：不带角色人设/语气/输出格式约束，只带全局前置词；指令放在素材后面。
 // prevOverview 为空表示还没有过总览（第一次合并）；items = [{ dayKey, text }]，按日期从早到晚。
 // tooLong=true 是上一次输出超字数后的重试，额外强调一次长度。
-function buildOverviewPrompt(prevOverview, prevCoveredUntil, items, tooLong = false) {
+// mode === 'chat'（对话模式）：素材是聊天总结，输出叫"对话总览"，措辞随之调整
+function buildOverviewPrompt(prevOverview, prevCoveredUntil, items, tooLong = false, mode = 'story') {
+  const chat = mode === 'chat';
+  const tag = chat ? 'chat_summaries' : 'story_history';
   const { prefix } = getPromptConfig();
   const parts = [];
   if (prefix.trim()) {
     parts.push(prefix.trim());
     parts.push('');
   }
-  parts.push('<story_history>');
+  parts.push(`<${tag}>`);
   if (prevOverview) {
-    parts.push(overviewHeading(prevCoveredUntil)); // 用户手写的总览可能还没有水位线，标题行里就不带日期
+    parts.push(overviewHeading(prevCoveredUntil, mode)); // 用户手写的总览可能还没有水位线，标题行里就不带日期
     parts.push(prevOverview);
     parts.push('——');
   }
-  for (const it of items) parts.push(`元时间 ${formatDayCN(it.dayKey)} 的故事总结：${it.text}`);
-  parts.push('</story_history>');
+  for (const it of items) {
+    parts.push(chat ? `${formatDayCN(it.dayKey)} 的聊天总结：${it.text}` : `元时间 ${formatDayCN(it.dayKey)} 的故事总结：${it.text}`);
+  }
+  parts.push(`</${tag}>`);
   parts.push('');
-  parts.push(
-    prevOverview
-      ? '<story_history>是这个故事按时间顺序排列的分段事件概述。请把旧剧情总览和之后的日总结重新提炼成一份不超过1200字的新剧情总览。'
-      : '<story_history>是这个故事按时间顺序排列的分段事件概述。请把这些日总结提炼成一份不超过1200字的剧情总览。'
-  );
-  parts.push('要求：按事件顺序展现故事的完整脉络；保留人物关系的变化；不要加"新剧情总览："这类前缀和分点符号，直接输出总览内容；内容不足1200字时不要硬凑。');
+  if (chat) {
+    parts.push(
+      prevOverview
+        ? `<${tag}>是你和用户按时间顺序排列的分段聊天概述。请把旧对话总览和之后的聊天总结重新提炼成一份不超过1200字的新对话总览。`
+        : `<${tag}>是你和用户按时间顺序排列的分段聊天概述。请把这些聊天总结提炼成一份不超过1200字的对话总览。`
+    );
+    parts.push('要求：按时间顺序展现聊天的完整脉络；保留双方的约定、用户透露的重要信息和关系的变化；不要加"新对话总览："这类前缀和分点符号，直接输出总览内容；内容不足1200字时不要硬凑。');
+  } else {
+    parts.push(
+      prevOverview
+        ? '<story_history>是这个故事按时间顺序排列的分段事件概述。请把旧剧情总览和之后的日总结重新提炼成一份不超过1200字的新剧情总览。'
+        : '<story_history>是这个故事按时间顺序排列的分段事件概述。请把这些日总结提炼成一份不超过1200字的剧情总览。'
+    );
+    parts.push('要求：按事件顺序展现故事的完整脉络；保留人物关系的变化；不要加"新剧情总览："这类前缀和分点符号，直接输出总览内容；内容不足1200字时不要硬凑。');
+  }
   if (tooLong) parts.push('注意：上一次输出超过了字数限制。这次务必精简，总字数严格控制在1200字以内。');
   return parts.join('\n');
 }
@@ -318,12 +401,17 @@ function buildOverviewPrompt(prevOverview, prevCoveredUntil, items, tooLong = fa
 // 固定前缀（用户自定义前置文本 + <character_card> + <user_persona> + <memory_index>）
 // --- 可变部分（<chat_history> + <user_input>）
 // --- 尾部固定说明（用户输入说明 + 必须遵守的强制性输出规则，两段都紧跟在最新内容后面，强化权重）
+//
+// 对话模式（chat-mode.js）下的差别：不发 <character_outfit> 服饰和财产状况两段；历史不做每轮摘要压缩；
+// 用 <current_time> 现实时间代替故事时间的节日播报；输入说明 / 输出规则换成对话版，输出规则后面不接摘要模块。
 function buildPromptText(characterName, history, text) {
+  const mode = getChatMode(characterName);
+  const chat = mode === 'chat';
   const { prefix } = getPromptConfig();
   const readerInfo = loadReaderInfo(characterName); // 你的资料：跟随角色
   const storyBackground = loadStoryBackground(characterName);
   const characterCard = loadPersona(characterName);
-  const chatHistoryText = flattenChatHistory(characterName, history);
+  const chatHistoryText = flattenChatHistory(characterName, history, mode);
 
   // 固定内容（前缀/世界背景/角色卡/用户设定/输出说明）全部前置且逐字节不变，聊天历史/本轮输入这些每次都在变的内容后置，
   // 这样发给 DeepSeek / Gemini 这类"自动前缀缓存"的 API 时，前面这一大段固定前缀才能被复用命中、省 token。
@@ -342,14 +430,14 @@ function buildPromptText(characterName, history, text) {
     parts.push(`<user_persona>\n<!-- 用户所扮演的角色设定资料 -->\n${readerInfo.trim()}\n</user_persona>`);
   }
   // 角色当前穿搭（角色服饰配置里设为"穿着中"的那套的描述），没选就不发这一段；切换服饰那一轮前缀缓存失效一次
-  const outfitBlock = buildOutfitBlock(characterName);
+  const outfitBlock = chat ? '' : buildOutfitBlock(characterName); // 对话模式不发服饰配置
   if (outfitBlock) parts.push(outfitBlock);
   // 财产状况：角色和用户两方的资产 / 负债 / 收支（角色资产配置里填的），都没填就不发这一段
-  const financialBlock = buildFinancialBlock(characterName, history); // 里面按最新的故事时间推算资产
+  const financialBlock = chat ? '' : buildFinancialBlock(characterName, history); // 里面按最新的故事时间推算资产；对话模式不发资产配置
   if (financialBlock) parts.push(financialBlock);
   // hot 记忆索引：常驻的、只存没有时效性的附加要求的小索引，由跨天总结/滚动总结
   // 那次 LLM 调用顺带产出并追加，不需要每轮从全量历史里现猜。没内容就不发这一段
-  const memoryIndex = loadMemoryIndex(); // 附加要求：全局共用，不区分角色
+  const memoryIndex = loadMemoryIndex(mode); // 附加要求：跨角色共用，但故事模式和对话模式各一份
   if (memoryIndex.trim()) {
     parts.push(`<memory_index>\n<!-- 用户的长期设定与创作要求，来自元交流，需持续遵守 -->\n${memoryIndex.trim()}\n</memory_index>`);
   }
@@ -357,7 +445,8 @@ function buildPromptText(characterName, history, text) {
   // 不影响前缀缓存）。名单只用来让模型标注说话者时对照角色名，不代表这些角色一定出现在当前故事里。
   // 至少有一个角色配置了语音才发，同时输出规则里会追加 SPEAKER_RULE（见下面 footerParts）；
   // 朗读时据此把台词路由到各自的音色，没配置语音的角色台词整句跳过
-  const speakerMode = anyVoiceConfigured(); // 一个角色都没配语音就不用标注说话者
+  // 对话模式只扮演当前这一个角色，不需要多角色说话者标注（不发 <special_roles>，也不追加 SPEAKER_RULE）；没有前缀的台词朗读时默认就是当前角色
+  const speakerMode = !chat && anyVoiceConfigured(); // 一个角色都没配语音就不用标注说话者
   const specialRoles = speakerMode ? getSpecialRoles() : [];
   if (specialRoles.length) {
     // 键值式排版：`角色名：Saber ；别名：阿尔托莉雅、Saber酱`（没别名就是 `角色名：TohsakaRin ；`），
@@ -369,15 +458,17 @@ function buildPromptText(characterName, history, text) {
   parts.push('---');
   // ---- 以上是固定前缀，以下是每轮都会变化的内容 ----
   if (chatHistoryText.trim()) {
-    parts.push(`<chat_history>\n<!-- 故事/对话 记录；元时间指实际聊天日期，不同于故事时间 -->\n${chatHistoryText}\n</chat_history>`);
+    const historyNote = chat ? '你和用户的聊天记录；[时间] 指实际聊天时间' : '故事/对话 记录；元时间指实际聊天日期，不同于故事时间';
+    parts.push(`<chat_history>\n<!-- ${historyNote} -->\n${chatHistoryText}\n</chat_history>`);
   }
   // 故事时间的星期 + 国际/中国节日（取自上一轮摘要的"故事时间"，解析不出日期就不发这一段）。
   // 每轮都会变，所以放在固定前缀之后、紧贴 user_input，不破坏前缀缓存
-  const festivalBlock = buildFestivalBlock(history);
+  // 对话模式没有故事时间：改发现实的当前时间（星期 + 近期节日）
+  const festivalBlock = chat ? buildCurrentTimeBlock() : buildFestivalBlock(history);
   if (festivalBlock) parts.push(festivalBlock);
   parts.push(`<user_input>\n<!-- 用户本轮最新输入 -->\n${text}\n</user_input>`);
   parts.push('---');
-  parts.push(INPUT_NOTE);
+  parts.push(chat ? INPUT_NOTE_CHAT : INPUT_NOTE);
   parts.push('---');
   // 输出规则挪到全篇末尾、紧跟在输入说明后面，让模型读完"这轮要看什么、怎么解读"之后
   // 立刻看到"必须怎么写"，强化权重；代价是这段固定内容不再享受前缀缓存（见上面 parts 顺序的注释），
@@ -386,9 +477,10 @@ function buildPromptText(characterName, history, text) {
   // 否则发不提语气的 OUTPUT_RULES_PLAIN；后面都接摘要模块（和模型实际输出的顺序一致：正文 → 摘要块）。
   // 语气开关的判定已含多角色场景（见 tone.js）：别的已配置语音的角色是豆包/MiMo 时也发语气版。
   // 多角色语音：至少有一个角色配置了语音时再追加"说话者标注"规则，末尾仍是摘要模块
-  const footerParts = [toneEnabled(characterName) ? OUTPUT_RULES_TONE : OUTPUT_RULES_PLAIN];
+  const tone = toneEnabled(characterName);
+  const footerParts = [chat ? (tone ? OUTPUT_RULES_CHAT_TONE : OUTPUT_RULES_CHAT_PLAIN) : (tone ? OUTPUT_RULES_TONE : OUTPUT_RULES_PLAIN)];
   if (speakerMode) footerParts.push(SPEAKER_RULE);
-  footerParts.push(SUMMARY_FOOTER);
+  if (!chat) footerParts.push(SUMMARY_FOOTER); // 对话模式不要求每轮摘要块
   parts.push(footerParts.join('\n'));
 
   return parts.join('\n\n');

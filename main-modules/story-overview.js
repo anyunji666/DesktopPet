@@ -11,6 +11,7 @@ const { loadStoryOverview, saveStoryOverview, STORY_OVERVIEW_MAX_CHARS } = requi
 const { collectUnmergedSummaries } = require('./history-flatten');
 const { buildOverviewPrompt } = require('./llm');
 const { callLLM } = require('./llm-client');
+const { getChatMode } = require('./chat-mode');
 
 const MERGE_THRESHOLD_CHARS = 2000; // 未并入总览的日总结总字数超过这个数就触发合并
 const RETRY_COOLDOWN_MS = 30 * 60 * 1000;
@@ -31,9 +32,9 @@ function mergeCoolingDown(characterName) {
 // 去掉模型可能多带的"新剧情总览："之类的前缀 / 回显的 <story_history> 标签 / 首尾空白
 function cleanOverviewText(raw) {
   return String(raw || '')
-    .replace(/<\/?story_history>/g, '')
+    .replace(/<\/?(?:story_history|chat_summaries)>/g, '')
     .trim()
-    .replace(/^(?:新?剧情总览|总览)\s*[:：]\s*/, '')
+    .replace(/^(?:新?剧情总览|新?对话总览|总览)\s*[:：]\s*/, '')
     .trim();
 }
 
@@ -43,11 +44,12 @@ async function mergeStoryOverview(characterName, history) {
   if (!items.length) return null;
   const prev = loadStoryOverview(characterName);
   const coveredUntil = items[items.length - 1].dayKey;
+  const mode = getChatMode(characterName); // 对话模式下总览按"聊天总结"的口径写
 
   let text = '';
   for (let attempt = 0; attempt < 2; attempt++) {
     const raw = await callLLM(
-      [{ role: 'user', content: buildOverviewPrompt(prev.text, prev.coveredUntil, items, attempt > 0) }],
+      [{ role: 'user', content: buildOverviewPrompt(prev.text, prev.coveredUntil, items, attempt > 0, mode) }],
       `剧情总览 - ${characterName}`
     );
     text = cleanOverviewText(raw);

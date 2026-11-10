@@ -212,6 +212,44 @@ body.edit-locked .msg-more, body.edit-locked .msg-actions { display: none !impor
   color: #333;
 }
 #overview-text:focus { border-color: rgba(224, 64, 96, 0.6); }
+/* 模式切换弹窗：两个互斥的选项卡片，当前模式高亮 */
+#mode-dialog {
+  width: min(360px, calc(100vw - 32px));
+  background: #fff;
+  border-radius: 12px;
+  padding: 14px 16px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+  box-sizing: border-box;
+}
+#mode-close {
+  border: none;
+  background: transparent;
+  font-size: 20px;
+  line-height: 1;
+  color: #aaa;
+  cursor: pointer;
+  padding: 0;
+}
+#mode-close:hover { color: #666; }
+.mode-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 1px solid #eee;
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px 12px;
+  margin-top: 8px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.mode-option:hover { background: #faf2f4; }
+.mode-option.active { border-color: rgba(224, 64, 96, 0.7); background: #fdf2f4; }
+.mode-option:disabled { opacity: 0.6; cursor: default; }
+.mode-name { display: block; font-size: 13px; font-weight: 600; color: #333; }
+.mode-option.active .mode-name { color: #a02440; }
+.mode-option.active .mode-name::after { content: ' · 当前'; font-weight: 400; font-size: 12px; color: #e04060; }
+.mode-desc { display: block; margin-top: 3px; font-size: 12px; line-height: 1.5; color: #999; }
 #overview-count { text-align: right; font-size: 12px; color: #999; margin-top: 4px; }
 #overview-count.over { color: #d33; }
 #overview-cancel { background: #f0f0f0; color: #888; }

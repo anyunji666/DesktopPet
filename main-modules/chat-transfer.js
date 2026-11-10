@@ -21,6 +21,7 @@ const {
 } = require('./chat-store');
 
 const { exportStoryAssets, restoreStoryAssets } = require('./assets');
+const { getChatMode } = require('./chat-mode');
 
 const FORMAT = 'desktop-pet-chat';
 const VERSION = 1;
@@ -48,7 +49,8 @@ function buildExport(characterName) {
     storyOverview: loadStoryOverview(characterName), // { text, coveredUntil }；没有总览时是空文本
   };
   // 故事资产结算（手动调整过的资产和物品，带故事开始日期 / 截至日期）跟着这段故事走；初始资产设定属于角色，不导出
-  const storyAssets = exportStoryAssets(characterName);
+  // 对话模式没有故事资产（那属于故事模式的数据），不导出
+  const storyAssets = getChatMode(characterName) === 'story' ? exportStoryAssets(characterName) : null;
   if (storyAssets) out.storyAssets = storyAssets;
   return out;
 }
@@ -156,7 +158,8 @@ function applyImport(characterName, data) {
   clearStoryOverview(characterName);
   for (const [k, v] of Object.entries(daySummaries)) saveDaySummary(characterName, k, v);
   if (storyOverview.text) saveStoryOverview(characterName, storyOverview);
-  restoreStoryAssets(characterName, storyAssets); // 文件里有故事资产就还原，没有就删掉当前的（之后按初始资产重新生成）
+  // 对话模式的导入只动对话模式自己的数据，不碰故事模式的故事资产结算
+  if (getChatMode(characterName) === 'story') restoreStoryAssets(characterName, storyAssets); // 文件里有故事资产就还原，没有就删掉当前的（之后按初始资产重新生成）
 
   return { count: history.length, skipped, imageFailed };
 }

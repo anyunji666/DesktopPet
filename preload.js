@@ -62,8 +62,9 @@ contextBridge.exposeInMainWorld('petAPI', {
   onOutfitsSwitchAsk: (cb) => ipcRenderer.on('outfits-switch-ask', (_e, name) => cb(name)),
   outfitsSwitch: (characterName) => ipcRenderer.send('outfits-switch-confirm', characterName),
   // 附加要求（memory index，全局共用）读取 / 保存（API 与全局设置窗口用）
-  getMemoryIndex: () => ipcRenderer.invoke('get-memory-index'),
-  saveMemoryIndex: (text) => ipcRenderer.invoke('save-memory-index', text),
+  // mode：'story'（故事模式，默认）或 'chat'（对话模式），两个模式各一份
+  getMemoryIndex: (mode) => ipcRenderer.invoke('get-memory-index', mode),
+  saveMemoryIndex: (text, mode) => ipcRenderer.invoke('save-memory-index', text, mode),
   fetchModelList: (apiUrl, apiKey) => ipcRenderer.invoke('fetch-model-list', apiUrl, apiKey),
   // Gemini 多 Key 轮询中转当前状态（是否在跑 / 端口），设置窗口打开时用来回显提示行
   getRelayStatus: () => ipcRenderer.invoke('get-relay-status'),
@@ -103,6 +104,10 @@ contextBridge.exposeInMainWorld('petAPI', {
   // 剧情总览（聊天记录窗口 ⋯ 菜单里查看 / 手动编辑）：get 返回 { text, coveredUntil, maxChars }
   getStoryOverview: (characterName) => ipcRenderer.invoke('get-story-overview', characterName),
   saveStoryOverview: (characterName, text) => ipcRenderer.invoke('save-story-overview', characterName, text),
+
+  // 聊天模式（聊天记录窗口 ⋯ 菜单里切换）：'story' 故事模式 / 'chat' 对话模式，按角色保存
+  getChatMode: (characterName) => ipcRenderer.invoke('get-chat-mode', characterName),
+  setChatMode: (characterName, mode) => ipcRenderer.invoke('set-chat-mode', characterName, mode),
 
   // ---- LLM 调用记录窗口（审查用）----
   getLlmLog: () => ipcRenderer.invoke('get-llm-log'),
