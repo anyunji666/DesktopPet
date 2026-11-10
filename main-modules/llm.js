@@ -150,8 +150,8 @@ function deleteApiProfile(url) {
 }
 
 // ---------- Prompt 模板配置（存进 config.json 的 promptConfig 字段，全局生效，不区分角色） ----------
-// 目前只有用户自定义前置文本。"你的资料"已改为跟随角色（存在各角色的 persona.json 里），
-// config.json 里残留的旧 promptConfig.readerInfo 不再读取。
+// 目前只有用户自定义前置文本（只在故事模式的对话/每日总结/剧情总览里发送，对话模式一律不发）。
+// "你的资料"已改为跟随角色（存在各角色的 persona.json 里），config.json 里残留的旧 promptConfig.readerInfo 不再读取。
 function getPromptConfig() {
   const cfg = loadConfig().promptConfig;
   return {
@@ -297,8 +297,8 @@ const SUMMARY_FOOTER = `- **摘要模块：** 对本轮的正文内容进行一�
 
 // 生成"某天聊天总结"用的 prompt：单独一次总结任务，不带角色人设/语气/输出格式那些约束，
 // 避免总结文本也带上角色口癖，污染归档内容。前置词（prefix）是全局的、给 AI 本身设定身份用的，
-// 跟 buildPromptText 一样带上，保持这次调用里模型对自己是谁的认知一致。
-// 结构：前置词 → <memory_index> 已有记忆 → <historical_conversation> 对话记录 → 任务说明与输出格式（指令放在对话后面，长对话里不容易被冲淡）。
+// 只有故事模式带上（跟 buildPromptText 一致）；对话模式的总结不带前置词，避免身份设定混进聊天总结。
+// 结构：前置词（仅故事模式） → <memory_index> 已有记忆 → <historical_conversation> 对话记录 → 任务说明与输出格式（指令放在对话后面，长对话里不容易被冲淡）。
 // 不带角色名：故事里有具体的角色名，总结让模型直接用故事里的称呼。
 // 对话行里的括号元交流原样保留（不再在存档时过滤），[总结] 不对它做特殊处理。
 // mode === 'chat'（对话模式）：素材是和角色的日常聊天而不是故事，总结要点和措辞随之调整，输出格式（[总结]/[记忆]）不变
@@ -306,7 +306,8 @@ function buildSummaryPrompt(dayKey, dayLines, mode = 'story') {
   const chat = mode === 'chat';
   const { prefix } = getPromptConfig();
   const parts = [];
-  if (prefix.trim()) {
+  // 对话模式不发用户的前置设定词
+  if (!chat && prefix.trim()) {
     parts.push(prefix.trim());
     parts.push('');
   }
@@ -346,7 +347,7 @@ function buildSummaryPrompt(dayKey, dayLines, mode = 'story') {
 }
 
 // 生成"剧情总览"用的 prompt：把 上一版总览 + 一批日总结 再压缩成一份不超过 1200 字的总览。
-// 和 buildSummaryPrompt 一样是单独的一次总结任务：不带角色人设/语气/输出格式约束，只带全局前置词；指令放在素材后面。
+// 和 buildSummaryPrompt 一样是单独的一次总结任务：不带角色人设/语气/输出格式约束，前置词只在故事模式带（对话总览不带）；指令放在素材后面。
 // prevOverview 为空表示还没有过总览（第一次合并）；items = [{ dayKey, text }]，按日期从早到晚。
 // tooLong=true 是上一次输出超字数后的重试，额外强调一次长度。
 // mode === 'chat'（对话模式）：素材是聊天总结，输出叫"对话总览"，措辞随之调整
@@ -355,7 +356,8 @@ function buildOverviewPrompt(prevOverview, prevCoveredUntil, items, tooLong = fa
   const tag = chat ? 'chat_summaries' : 'story_history';
   const { prefix } = getPromptConfig();
   const parts = [];
-  if (prefix.trim()) {
+  // 对话模式不发用户的前置设定词
+  if (!chat && prefix.trim()) {
     parts.push(prefix.trim());
     parts.push('');
   }
@@ -390,11 +392,11 @@ function buildOverviewPrompt(prevOverview, prevCoveredUntil, items, tooLong = fa
 }
 
 // 按“酒馆式”单块模板拼装整份 prompt：
-// 固定前缀（用户自定义前置文本 + <character_card> + <user_persona> + <memory_index>）
+// 固定前缀（用户自定义前置文本（仅故事模式）+ <character_card> + <user_persona> + <memory_index>）
 // --- 可变部分（<chat_history> + <user_input>）
 // --- 尾部固定说明（用户输入说明 + 必须遵守的强制性输出规则，两段都紧跟在最新内容后面，强化权重）
 //
-// 对话模式（chat-mode.js）下的差别：不发 <story_background> 世界背景、<character_outfit> 服饰和财产状况这几段；
+// 对话模式（chat-mode.js）下的差别：不发用户的前置文本、<story_background> 世界背景、<character_outfit> 服饰和财产状况这几段；
 // 历史不做每轮摘要压缩；用 <current_time> 现实时间代替故事时间的节日播报；不发用户的输入说明，输出规则换成对话版，
 // 输出规则后面也不接摘要模块。角色卡 / 附加要求的注释文案也换成对话版。
 function buildPromptText(characterName, history, text) {
@@ -409,7 +411,8 @@ function buildPromptText(characterName, history, text) {
   // 固定内容（前缀/世界背景/角色卡/用户设定/输出说明）全部前置且逐字节不变，聊天历史/本轮输入这些每次都在变的内容后置，
   // 这样发给 DeepSeek / Gemini 这类"自动前缀缓存"的 API 时，前面这一大段固定前缀才能被复用命中、省 token。
   const parts = [];
-  if (prefix.trim()) parts.push(prefix.trim());
+  // 对话模式不发用户的前置设定词（那是给故事模式设定 AI 身份用的）
+  if (!chat && prefix.trim()) parts.push(prefix.trim());
   parts.push('---');
   // 世界背景拼在角色资料前面，没填就不发这一段；对话模式不是写故事，不发世界背景
   if (!chat && storyBackground.trim()) {
