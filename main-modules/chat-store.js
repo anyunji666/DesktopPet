@@ -359,7 +359,7 @@ function chatImageDir(characterName) {
   return dir;
 }
 
-const IMAGE_MIME_EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
+const IMAGE_MIME_EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
 
 // 校验并保存 dataURL 图片，返回生成的文件名；格式不对/超过 10MB 抛错
 function saveChatImage(characterName, dataURL) {

@@ -1,7 +1,7 @@
 // ---------- 角色服饰：存取 + 拼进 prompt 的 <character_outfit> 文本 ----------
 // 每个角色一份存档，放在用户数据目录（和聊天记录同级，不污染 Character/ 文件夹）：
 //   userData/outfits/<角色名>/outfits.json   { activeId, items: [{ id, name, text, image }] }
-//   userData/outfits/<角色名>/images/<文件>   服饰图片（png / jpeg / gif / webp），json 里只记文件名
+//   userData/outfits/<角色名>/images/<文件>   服饰图片（png / jpeg / webp），json 里只记文件名
 // 服饰属于角色设定，不是故事进度：清空聊天记录、导入聊天记录都不影响它。
 // 发给 LLM 的只有「当前穿着」那套的描述文字，图片本身不发（省 token，图片只用来预览和识别）。
 // 依赖方向：llm.js -> 本文件；本文件不能 require llm.js / llm-client.js（识别调用在 outfit-recognize.js）。
@@ -14,7 +14,7 @@ const MAX_ITEMS = 30;
 const MAX_NAME_CHARS = 30;
 const MAX_TEXT_CHARS = 2000;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-const IMAGE_MIME_EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
+const IMAGE_MIME_EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
 
 let rootCache = null;
 function outfitsRoot() {

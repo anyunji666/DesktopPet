@@ -1,5 +1,5 @@
 // 公共工具：读取图片文件 -> 适当压缩 -> dataURL（聊天记录窗口和主宠物窗口发图共用）
-// 长边超过 1280 或原始超过 ~500KB 时压成 jpeg(0.85)；gif 不压缩（保留动画）
+// 长边超过 1280 或原图超过 400KB 时重绘成 jpeg(0.85)；gif 在入口直接拒绝（见下面的说明）
 (function () {
   function readAsDataURL(file) {
     return new Promise((resolve, reject) => {
@@ -19,16 +19,20 @@
     });
   }
 
+  const MAX_EDGE = 1280; // 长边上限
+  const MAX_BYTES = 400 * 1024; // 原图体积上限：超过就重绘压缩（用 file.size 比真实字节数，不拿 base64 字符长度当体积）
+  // 主进程只收 png / jpeg / webp（chat-store.js 的 saveChatImage）：其它格式（bmp / svg / avif …）
+  // 哪怕很小也要转成 jpeg，不能原样放行，否则发送时才报"不支持的图片格式"
+  const ACCEPTED = ['image/png', 'image/jpeg', 'image/webp'];
+
   async function fileToCompressedDataURL(file) {
+    // GIF 直接拒：canvas 重绘只保留第一帧、动画全丢，不重绘又会把原图原样传下去，
+    // 几十 MB 的动图要到主进程 10MB 上限才报"图片超过 10MB"，用户根本联想不到是格式问题。
+    if (file.type === 'image/gif') throw new Error('不支持 GIF 图片，请换成 PNG / JPG / WebP，或截取其中一帧再发送');
     const dataURL = await readAsDataURL(file);
-    if (file.type === 'image/gif') return dataURL;
     const img = await loadImg(dataURL);
-    const MAX = 1280;
-    const scale = Math.min(1, MAX / Math.max(img.naturalWidth, img.naturalHeight));
-    // 主进程只收 png / jpeg / gif / webp（chat-store.js 的 saveChatImage）：其它格式（bmp / svg / avif …）
-    // 哪怕很小也要转成 jpeg，不能原样放行，否则发送时才报"不支持的图片格式"
-    const accepted = ['image/png', 'image/jpeg', 'image/webp'].includes(file.type);
-    if (scale === 1 && accepted && dataURL.length < 500000) return dataURL;
+    const scale = Math.min(1, MAX_EDGE / Math.max(img.naturalWidth, img.naturalHeight));
+    if (scale === 1 && ACCEPTED.includes(file.type) && file.size <= MAX_BYTES) return dataURL;
     const canvas = document.createElement('canvas');
     canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
     canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
