@@ -60,11 +60,16 @@ function startEdit(row) {
 
   // AI 消息：编辑框里是完整原文，末尾的 <story_overview> 摘要块也在里面（摘要用于压缩历史，整块删掉 = 这一轮在历史中发原文）；
   // 保存时由主进程校验摘要块格式
+  // 对话模式没有摘要块，不显示这条提示：点编辑时现读一次当前模式（config.json 的 chatModes），读完再把提示插进去；
+  // 读取失败就不显示（提示只是辅助）。读的间隙里如果已经退出编辑态或提示已存在，就不再插
   if (row.classList.contains('assistant')) {
-    const hint = document.createElement('div');
-    hint.className = 'edit-summary-hint';
-    hint.textContent = '末尾 <story_overview> 是摘要块，用于压缩历史，整块删掉 = 这一轮发原文。Enter 保存，Shift+Enter 换行';
-    row.insertBefore(hint, row.querySelector('.msg-story-time') || row.querySelector('.msg-foot'));
+    window.petAPI.getChatMode(characterName).then((mode) => {
+      if (mode === 'chat' || !row.classList.contains('editing') || row.querySelector('.edit-summary-hint')) return;
+      const hint = document.createElement('div');
+      hint.className = 'edit-summary-hint';
+      hint.textContent = '末尾 <story_overview> 是摘要块，用于压缩历史，整块删掉 = 这一轮发原文。Enter 保存，Shift+Enter 换行';
+      row.insertBefore(hint, row.querySelector('.msg-story-time') || row.querySelector('.msg-foot'));
+    }).catch(() => {});
   }
 
   const btns = document.createElement('div');
@@ -96,7 +101,7 @@ function startEdit(row) {
       const shown = res && typeof res.display === 'string' ? res.display : text; // 气泡显示文字（AI 消息已摘掉说话者前缀和摘要块）
       row.dataset.text = res && typeof res.raw === 'string' ? res.raw : text; // 编辑框下次要显示的完整原文
       if (res && row.classList.contains('assistant')) {
-        // 同步气泡顶部的图库图片（AI 消息正文前的 [img:类别/图片名] 标签被改 / 删 / 新增后，图片跟着变）
+        // 同步气泡里的图库图片（AI 消息正文前的 [img:类别/图片名] 标签被改 / 删 / 新增后，图片跟着变）
         let img = line.querySelector('.msg-img');
         if (res.imageDataURL) {
           if (!img) {

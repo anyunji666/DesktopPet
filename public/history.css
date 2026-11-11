@@ -16,6 +16,8 @@ h2 { margin: 0 0 12px; font-size: 15px; color: #a02440; }
   line-height: 1.6;
 }
 .msg-line { display: flex; align-items: flex-start; gap: 6px; }
+/* AI 气泡里的图（图库标签对应的图片）放在文字右边，和用户自己发的图（左图右文）区分开；只调显示顺序，DOM 顺序不变 */
+.msg.assistant .msg-img { order: 2; }
 .msg-text { word-break: break-word; white-space: pre-wrap; }
 .msg.user {
   align-self: flex-end;
