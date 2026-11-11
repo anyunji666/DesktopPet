@@ -125,7 +125,7 @@ async function runChatTurnInner(characterName, text, imageDataURL, imageHolder, 
   // （例：「【嗔怪，语速偏快】你不要过来～」），和摘要块的位置互不影响。
   const rawReply = await callLLM(messages, `对话回复 - ${characterName}`);
   const { body: rawReplyBody, summaryBlock: rawSummaryBlock } = splitTurnSummary(rawReply);
-  // 图库标签：模型在正文前写的 [img:类别/图片名] 在这里摘掉（气泡 / 朗读 / 返回值都用摘干净的正文），
+  // 图库标签：模型在回复开头写的 [img:类别/图片名] 在这里摘掉（气泡 / 朗读 / 返回值都用摘干净的正文），
   // 找到图就带上 dataURL 给聊天记录窗口显示，规范化后的标签落档时再补回（见下面的 replyTextForHistory）；找不到图只摘标签
   const imagePick = pickLibraryImage(characterName, rawReplyBody);
   const replyBody = imagePick.text;

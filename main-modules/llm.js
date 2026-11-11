@@ -446,7 +446,7 @@ function buildPromptText(characterName, history, text) {
       : '角色的设定资料。设计/扮演 该角色的行为对话时，要符合该角色的个性。';
     parts.push(`<character_card>\n<!-- ${cardNote} -->\n${characterCard}\n</character_card>`);
   }
-  // 角色图库清单（Character/<角色>/images/ 现扫生成，子文件夹名 = 类别）：模型可在回复正文前用 [img:类别/图片名] 发一张图。
+  // 角色图库清单（Character/<角色>/images/ 现扫生成，子文件夹名 = 类别）：模型可在回复开头用 [img:类别/图片名] 发一张图。
   // 紧跟角色设定（“这个角色有哪些图”属于角色资料）；没有 images/ 文件夹或里面没有图片就不发这一段；
   // 两种模式都发；只有增删图片才会变
   const imageLibraryBlock = buildImageLibraryBlock(characterName);
