@@ -25,6 +25,7 @@ const {
 } = require('./history-flatten');
 const { callLLM } = require('./llm-client');
 const { getChatMode } = require('./chat-mode');
+const { pickLibraryImage, withImageTag } = require('./image-library');
 const { speakReply } = require('./tts');
 const { stripTones, stripSpeakers } = require('./tts/tone');
 
@@ -123,7 +124,11 @@ async function runChatTurnInner(characterName, text, imageDataURL, imageHolder, 
   // 回复末尾会带一个 <story_overview> 摘要块（给历史轮次压缩用）；配音语气则写在正文每个「」里面、台词前面
   // （例：「【嗔怪，语速偏快】你不要过来～」），和摘要块的位置互不影响。
   const rawReply = await callLLM(messages, `对话回复 - ${characterName}`);
-  const { body: replyBody, summaryBlock: rawSummaryBlock } = splitTurnSummary(rawReply);
+  const { body: rawReplyBody, summaryBlock: rawSummaryBlock } = splitTurnSummary(rawReply);
+  // 图库标签：模型在正文前写的 [img:类别/图片名] 在这里摘掉（气泡 / 朗读 / 返回值都用摘干净的正文），
+  // 找到图就带上 dataURL 给聊天记录窗口显示，规范化后的标签落档时再补回（见下面的 replyTextForHistory）；找不到图只摘标签
+  const imagePick = pickLibraryImage(characterName, rawReplyBody);
+  const replyBody = imagePick.text;
   // 对话模式不要求摘要块；模型万一还是写了也丢掉，不落档（聊天记录里不出现故事时间标签）
   const summaryBlock = getChatMode(characterName) === 'chat' ? '' : rawSummaryBlock;
   // 摘要块 / 语气都不该进气泡、聊天记录、IPC 返回值：reply 是摘掉所有语气后的干净正文，气泡 / 返回值 / 落档都用它；
@@ -135,7 +140,8 @@ async function runChatTurnInner(characterName, text, imageDataURL, imageHolder, 
   // 括号包裹的元指令/元回复不再在落档时过滤：聊天记录、聊天窗口、回填给模型的历史都保留原文。
   // "括号里的元交流不要总结进摘要"改由每回合摘要块的提示词约束（llm.js 的 SUMMARY_FOOTER）。
   const userContentForHistory = text;
-  const replyTextForHistory = replyKeepSpeakers; // 存档保留说话者前缀：模型看到历史里带前缀，才会继续标注
+  // 存档保留说话者前缀：模型看到历史里带前缀，才会继续标注；发过图的话正文前补回规范化的 [img:类别/图片名]，模型下一轮能看到自己发过什么
+  const replyTextForHistory = replyKeepSpeakers ? withImageTag(imagePick.id, replyKeepSpeakers) : replyKeepSpeakers;
   // 摘要块重新拼回存档内容末尾——flattenChatHistory 做轮次压缩要靠它才能把老轮次换成摘要；
   // 语气【】不拼回去，跟现在的设计一致：语气只给 TTS 用，不落档、也不发回模型
   const replyContentForHistory = summaryBlock ? `${replyTextForHistory}\n${summaryBlock}` : replyTextForHistory;
@@ -155,7 +161,7 @@ async function runChatTurnInner(characterName, text, imageDataURL, imageHolder, 
     assistantTs = ts;
     history.push({ role: 'assistant', content: replyContentForHistory, ts });
     // storyTime：摘要块里的故事时间，聊天记录窗口据此在气泡末尾打标签；摘要块没写就是空串
-    committed.push({ role: 'assistant', content: reply, rawContent: replyContentForHistory, ts, storyTime: extractStoryTime(replyContentForHistory), summaryOverview: extractOverview(replyContentForHistory) });
+    committed.push({ role: 'assistant', content: reply, rawContent: replyContentForHistory, imageDataURL: imagePick.imageDataURL, ts, storyTime: extractStoryTime(replyContentForHistory), summaryOverview: extractOverview(replyContentForHistory) });
   }
   saveChatHistory(characterName, history);
   imageHolder.file = null; // 已经写进聊天记录，之后再出任何问题都不能删这张图
@@ -166,7 +172,10 @@ async function runChatTurnInner(characterName, text, imageDataURL, imageHolder, 
   // assistantTs 让语音合成好后能存到这条 AI 消息名下（聊天记录窗口双击气泡重听）
   speakReply(characterName, replyBody, assistantTs);
 
-  return { reply, committed, startIndex };
+  // 桌宠头顶的小气泡只显示文字：发过图就把 [img:类别/图片名] 标签原样放在正文前面当提示；
+  // 聊天记录窗口的气泡（committed）仍然是图片 + 摘掉标签的正文。朗读用的 replyBody 已摘掉标签，标签不会被读出来
+  const bubbleReply = imagePick.id ? `[img:${imagePick.id}]\n${reply}` : reply;
+  return { reply: bubbleReply, committed, startIndex };
 }
 
 module.exports = { planCrossDaySummary, runChatTurn };

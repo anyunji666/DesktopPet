@@ -96,6 +96,19 @@ function startEdit(row) {
       const shown = res && typeof res.display === 'string' ? res.display : text; // 气泡显示文字（AI 消息已摘掉说话者前缀和摘要块）
       row.dataset.text = res && typeof res.raw === 'string' ? res.raw : text; // 编辑框下次要显示的完整原文
       if (res && row.classList.contains('assistant')) {
+        // 同步气泡顶部的图库图片（AI 消息正文前的 [img:类别/图片名] 标签被改 / 删 / 新增后，图片跟着变）
+        let img = line.querySelector('.msg-img');
+        if (res.imageDataURL) {
+          if (!img) {
+            img = document.createElement('img');
+            img.className = 'msg-img';
+            img.alt = '图片';
+            line.insertBefore(img, line.firstChild);
+          }
+          img.src = res.imageDataURL;
+        } else if (img) {
+          img.remove();
+        }
         const storyTime = res.storyTime || '';
         row.dataset.storyTime = storyTime;
         row.dataset.overview = res.overview || '';

@@ -65,6 +65,7 @@ const {
   savePromptConfig,
 } = require('./main-modules/llm');
 const { stripSpeakers } = require('./main-modules/tts/tone');
+const { pickLibraryImage } = require('./main-modules/image-library');
 const { getChatMode, setChatMode } = require('./main-modules/chat-mode');
 const { splitTurnSummary, extractStoryTime, extractOverview, buildSummaryBlock } = require('./main-modules/history-flatten');
 const { fetchModelList, setLlmLogListener, getRecentLlmCalls } = require('./main-modules/llm-client');
@@ -873,12 +874,15 @@ ipcMain.handle('fetch-model-list', (_e, apiUrl, apiKey) => {
 ipcMain.handle('get-chat-pending', () => getChatPending());
 ipcMain.handle('get-chat-history', (_e, characterName) => {
   if (typeof characterName !== 'string') return [];
-  return loadChatHistory(characterName).map((m) => ({
+  return loadChatHistory(characterName).map((m) => {
+    // AI 消息正文前的 [img:类别/图片名] 是图库图片标签：气泡里摘掉，按标签现读图库里的图当图片显示（编辑框的原文 rawContent 里仍保留标签）
+    const pick = m.role === 'assistant' ? pickLibraryImage(characterName, splitTurnSummary(m.content).body) : null;
+    return {
     ...m,
     // assistant 消息存盘时末尾拼了 <story_overview> 摘要块（给轮次压缩用），聊天记录窗口只是给人看的，
     // 这个标签用户不需要看到——只处理这个接口的返回值，磁盘上的历史文件本身不受影响
     // 说话者前缀（多角色语音用）也只在显示时摘掉，存档里保留
-    content: m.role === 'assistant' ? stripSpeakers(splitTurnSummary(m.content).body) : m.content,
+    content: pick ? stripSpeakers(pick.text) : m.content,
     // 编辑框用的完整原文（带说话者前缀 + 末尾的摘要块）：气泡显示摘了这些，编辑时要看到存档里的真实内容
     rawContent: m.content,
     // AI 消息的故事时间（取自被剥掉的那个摘要块），记录窗口拿去在气泡末尾打标签；摘要里没有就是空串，不显示
@@ -886,8 +890,9 @@ ipcMain.handle('get-chat-history', (_e, characterName) => {
     // 摘要的"概述"部分：平时不显示，只在编辑 AI 消息时和故事时间一起出现在两个摘要输入框里
     summaryOverview: m.role === 'assistant' ? extractOverview(m.content) : '',
     // 图片消息附带 dataURL 供记录窗口直接渲染缩略图；文件丢了就当纯文字消息
-    imageDataURL: m.image ? readChatImageDataURL(characterName, m.image) : undefined,
-  }));
+    imageDataURL: pick ? pick.imageDataURL : m.image ? readChatImageDataURL(characterName, m.image) : undefined,
+    };
+  });
 });
 // 聊天记录窗口双击 AI 气泡重听：按消息的 ts 取缓存的回复语音，没有（没调用过 TTS / 老消息）返回 null
 ipcMain.handle('get-chat-voice', (_e, characterName, ts) => {
@@ -1057,7 +1062,8 @@ ipcMain.handle('edit-chat-message', (_e, characterName, index, content) => {
   saveChatHistory(characterName, history);
   if (target.role === 'assistant') {
     const sp = splitTurnSummary(target.content);
-    return { display: stripSpeakers(sp.body), raw: target.content, storyTime: extractStoryTime(target.content), overview: extractOverview(target.content) };
+    const pick = pickLibraryImage(characterName, sp.body); // 编辑后标签可能被改 / 删，气泡图片跟着更新
+    return { display: stripSpeakers(pick.text), imageDataURL: pick.imageDataURL || null, raw: target.content, storyTime: extractStoryTime(target.content), overview: extractOverview(target.content) };
   }
   return { display: text, raw: text, storyTime: '', overview: '' };
 });

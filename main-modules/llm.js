@@ -5,6 +5,7 @@ const { loadConfig, updateConfig } = require('./config');
 const { loadPersona, loadStoryBackground, loadReaderInfo, loadMemoryIndex } = require('./chat-store');
 const { buildFinancialBlock } = require('./assets');
 const { buildOutfitBlock } = require('./outfits');
+const { buildImageLibraryBlock } = require('./image-library');
 const { toneEnabled } = require('./tts/tone');
 const { getSpecialRoles, anyVoiceConfigured, COMMON_LABEL } = require('./tts/config');
 const { flattenChatHistory, formatDayCN, overviewHeading } = require('./history-flatten');
@@ -198,10 +199,12 @@ const OUTPUT_RULES_PLAIN = `## **必须遵守的强制性输出规则**
   - 角色的内心独白：用*星号*包裹，例：*其实等你好久了*
   - 角色的对话：用「」包裹，例：「这个给你，别嫌弃呀」
 - 「对话」内容灵活使用标点符号：
+  - 正常陈述：「嗯，我知道了。」
+  - 句中停顿：「嗯……我知道了。」
   - 句末拖长音：「不要嘛～」
   - 句末重音：「什么！」
   - 疑问/质疑：「是这样吗？」
-- 格式示例：「你不要过来～」*怎么这样···*「真是服了你了～」小拳拳锤了一下{{user}}的胸口，还是默许了{{user}}的行为。`;
+- 格式示例：「你不要过来～」*怎么这样……*「真是服了你了～」小拳拳锤了一下{{user}}的胸口，还是默许了{{user}}的行为。`;
 
 const OUTPUT_RULES_TONE = `## **必须遵守的强制性输出规则**
 
@@ -219,11 +222,13 @@ const OUTPUT_RULES_TONE = `## **必须遵守的强制性输出规则**
   - 角色的内心独白：用*星号*包裹，例：*其实等你好久了*
   - 角色的对话：用「」包裹，例：「【别扭递东西，语速偏快】这个给你，别嫌弃呀」
 - 「对话」内容灵活使用标点符号：
+  - 正常陈述：「嗯，我知道了。」
+  - 句中停顿：「嗯……我知道了。」
   - 句末拖长音：「【撒娇软糯，尾音拖长】不要嘛～」
   - 句末重音：「【震惊拔高，语气急促】什么！」
   - 疑问/质疑：「【将信将疑，语调上扬】是这样吗？」
 - **语气描述：** 每个「对话」里面、台词的第一个字之前，先用【】包裹写一句该对话的语气指导，不超过 20 字。要写成有画面感的具体描述，包含情绪和说话状态。每句只写它自己的语气，前后两句情绪有变化就要写出变化。【】只能写在「」里面、台词之前，其他地方不要使用。
-- 格式示例：「【嗔怪抗拒，语速偏快】你不要过来～」*怎么这样···*「【无奈带笑，尾音上扬】真是服了你了～」小拳拳锤了一下{{user}}的胸口，还是默许了{{user}}的行为。`;
+- 格式示例：「【嗔怪抗拒，语速偏快】你不要过来～」*怎么这样……*「【无奈带笑，尾音上扬】真是服了你了～」小拳拳锤了一下{{user}}的胸口，还是默许了{{user}}的行为。`;
 
 // 多角色语音的"说话者标注"规则：至少有一个角色配置了语音时，追加到输出规则后面（见 buildPromptText 的 footerParts）。
 // 要求模型给每句「对话」前面紧挨着写 `角色名：` 前缀，分两种：
@@ -248,6 +253,8 @@ const OUTPUT_RULES_CHAT_PLAIN = `## **必须遵守的强制性输出规则**
   - 对话内容：用「」包裹，例：「刚下班吗？」
   - 动作或内心想法：用*星号*（不超过15字，不是每条都要有），例：*笑着看过来*
 - 「对话」内容灵活使用标点符号：
+  - 正常陈述：「嗯，我知道了。」
+  - 句中停顿：「嗯……我知道了。」
   - 句末拖长音：「不要嘛～」
   - 句末重音：「什么！」
   - 疑问/质疑：「是这样吗？」
@@ -261,6 +268,8 @@ const OUTPUT_RULES_CHAT_TONE = `## **必须遵守的强制性输出规则**
   - 对话内容：用「」包裹，例：「【随口问候，语气轻快】刚下班吗？」
   - 动作或内心想法：用*星号*（不超过15字，不是每条都要有），例：*笑着看过来*
 - 「对话」内容灵活使用标点符号：
+  - 正常陈述：「嗯，我知道了。」
+  - 句中停顿：「嗯……我知道了。」
   - 句末拖长音：「【撒娇软糯，尾音拖长】不要嘛～」
   - 句末重音：「【震惊拔高，语气急促】什么！」
   - 疑问/质疑：「【将信将疑，语调上扬】是这样吗？」
@@ -437,6 +446,10 @@ function buildPromptText(characterName, history, text) {
   // 财产状况：角色和用户两方的资产 / 负债 / 收支（角色资产配置里填的），都没填就不发这一段
   const financialBlock = chat ? '' : buildFinancialBlock(characterName, history); // 里面按最新的故事时间推算资产；对话模式不发资产配置
   if (financialBlock) parts.push(financialBlock);
+  // 角色图库清单（Character/<角色>/images/ 现扫生成，子文件夹名 = 类别）：模型可在回复正文前用 [img:类别/图片名] 发一张图。
+  // 没有 images/ 文件夹或里面没有图片就不发这一段；两种模式都发；只有增删图片才会变，不影响前缀缓存
+  const imageLibraryBlock = buildImageLibraryBlock(characterName);
+  if (imageLibraryBlock) parts.push(imageLibraryBlock);
   // hot 记忆索引：常驻的、只存没有时效性的附加要求的小索引，由跨天总结/滚动总结
   // 那次 LLM 调用顺带产出并追加，不需要每轮从全量历史里现猜。没内容就不发这一段
   const memoryIndex = loadMemoryIndex(mode); // 附加要求：跨角色共用，但故事模式和对话模式各一份

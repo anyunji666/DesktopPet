@@ -70,7 +70,9 @@ async function doInsert(role) {
   btn.disabled = true;
   try {
     const msg = await window.petAPI.addChatMessage(characterName, role, text);
-    appendMsg(msg.role, msg.content, msg.ts);
+    // 插入的 AI 消息里带 [img:…] 图库标签时，整页重绘一次，让标签变成图片（reload 走 get-chat-history 的标签解析）
+    if (role === 'assistant' && /\[\s*img\s*[:：]/i.test(msg.content)) await reload(true);
+    else appendMsg(msg.role, msg.content, msg.ts);
     closeInsert();
   } catch (err) {
     alertError(err);
