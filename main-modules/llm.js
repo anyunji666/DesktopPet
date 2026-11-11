@@ -402,7 +402,8 @@ function buildOverviewPrompt(prevOverview, prevCoveredUntil, items, tooLong = fa
 }
 
 // 按“酒馆式”单块模板拼装整份 prompt：
-// 固定前缀（用户自定义前置文本（仅故事模式）+ <character_card> + <user_persona> + <memory_index>）
+// 固定前缀按“变化越少越靠前”排：用户自定义前置文本（仅故事模式）+ <story_background> + <user_persona> + <character_card>
+//   + <image_library> + <special_roles> + <character_outfit> + 财产状况 + <memory_index>
 // --- 可变部分（<chat_history> + <user_input>）
 // --- 尾部固定说明（用户输入说明 + 必须遵守的强制性输出规则，两段都紧跟在最新内容后面，强化权重）
 //
@@ -421,15 +422,22 @@ function buildPromptText(characterName, history, text) {
   // 固定内容（前缀/世界背景/角色卡/用户设定/输出说明）全部前置且逐字节不变，聊天历史/本轮输入这些每次都在变的内容后置，
   // 这样发给 DeepSeek / Gemini 这类"自动前缀缓存"的 API 时，前面这一大段固定前缀才能被复用命中、省 token。
   const parts = [];
+  // 固定前缀内部按“变化越少越靠前”排：手改设定才变的（前置词/世界背景/你的资料/角色设定）在最前，
+  // 其次是很久才动一次的（图库清单/语音名单），最易变的（穿搭/财产/记忆索引）压到最后——
+  // 前缀缓存是逐 token 比对，越靠后的块变了，前面能命中的部分越多。
   // 网聊模式不发用户的前置设定词（那是给故事模式设定 AI 身份用的）
-  // 有前置文本才发它和分隔线，否则 prompt 开头是一根孤零零的 `---`（网聊模式永远没有前置文本，故直接以角色卡开头）
+  // 有前置文本才发它和分隔线，否则 prompt 开头是一根孤零零的 `---`（网聊模式永远没有前置文本，故直接以你的资料 / 角色卡开头）
   if (!chat && prefix.trim()) {
     parts.push(prefix.trim());
     parts.push('---');
   }
-  // 世界背景拼在角色资料前面，没填就不发这一段；网聊模式不是写故事，不发世界背景
+  // 世界背景没填就不发这一段；网聊模式不是写故事，不发世界背景
   if (!chat && storyBackground.trim()) {
     parts.push(`<story_background>\n<!-- 故事的世界背景以及设定 -->\n${storyBackground.trim()}\n</story_background>`);
+  }
+  // 你的资料排在角色设定前面：先读“用户是谁”再读“我是谁”，语义更顺；两者都是手改设定才变，先后不影响缓存
+  if (readerInfo.trim()) {
+    parts.push(`<user_persona>\n<!-- 用户所扮演的角色设定资料 -->\n${readerInfo.trim()}\n</user_persona>`);
   }
   // 用户没填角色资料就不发这一段
   if (characterCard.trim()) {
@@ -438,28 +446,13 @@ function buildPromptText(characterName, history, text) {
       : '角色的设定资料。设计/扮演 该角色的行为对话时，要符合该角色的个性。';
     parts.push(`<character_card>\n<!-- ${cardNote} -->\n${characterCard}\n</character_card>`);
   }
-  if (readerInfo.trim()) {
-    parts.push(`<user_persona>\n<!-- 用户所扮演的角色设定资料 -->\n${readerInfo.trim()}\n</user_persona>`);
-  }
-  // 角色当前穿搭（角色服饰配置里设为"穿着中"的那套的描述），没选就不发这一段；切换服饰那一轮前缀缓存失效一次
-  const outfitBlock = chat ? '' : buildOutfitBlock(characterName); // 网聊模式不发服饰配置
-  if (outfitBlock) parts.push(outfitBlock);
-  // 财产状况：角色和用户两方的资产 / 负债 / 收支（角色资产配置里填的），都没填就不发这一段
-  const financialBlock = chat ? '' : buildFinancialBlock(characterName, history); // 里面按最新的故事时间推算资产；网聊模式不发资产配置
-  if (financialBlock) parts.push(financialBlock);
   // 角色图库清单（Character/<角色>/images/ 现扫生成，子文件夹名 = 类别）：模型可在回复正文前用 [img:类别/图片名] 发一张图。
-  // 没有 images/ 文件夹或里面没有图片就不发这一段；两种模式都发；只有增删图片才会变，不影响前缀缓存
+  // 紧跟角色设定（“这个角色有哪些图”属于角色资料）；没有 images/ 文件夹或里面没有图片就不发这一段；
+  // 两种模式都发；只有增删图片才会变
   const imageLibraryBlock = buildImageLibraryBlock(characterName);
   if (imageLibraryBlock) parts.push(imageLibraryBlock);
-  // hot 记忆索引：常驻的、只存没有时效性的附加要求的小索引，由跨天总结/滚动总结
-  // 那次 LLM 调用顺带产出并追加，不需要每轮从全量历史里现猜。没内容就不发这一段
-  const memoryIndex = loadMemoryIndex(mode); // 附加要求：跨角色共用，但故事模式和网聊模式各一份
-  if (memoryIndex.trim()) {
-    const memoryNote = chat ? '用户的附加要求，需持续遵守' : '用户的长期设定与创作要求，来自元交流，需持续遵守';
-    parts.push(`<memory_index>\n<!-- ${memoryNote} -->\n${memoryIndex.trim()}\n</memory_index>`);
-  }
-  // 多角色语音名单 <special_roles>：全部有专属设定的角色（含当前主角色），带别名（固定前缀区，只有增删角色 / 改别名才会变，
-  // 不影响前缀缓存）。名单只用来让模型标注说话者时对照角色名，不代表这些角色一定出现在当前故事里。
+  // 多角色语音名单 <special_roles>：全部有专属设定的角色（含当前主角色），带别名（只有增删角色 / 改别名才会变，
+  // 是固定前缀里最不容易变的块之一）。名单只用来让模型标注说话者时对照角色名，不代表这些角色一定出现在当前故事里。
   // 至少有一个角色配置了语音才发，同时输出规则里会追加 SPEAKER_RULE（见下面 footerParts）；
   // 朗读时据此把台词路由到各自的音色，没配置语音的角色台词整句跳过
   // 网聊模式只扮演当前这一个角色，不需要多角色说话者标注（不发 <special_roles>，也不追加 SPEAKER_RULE）；没有前缀的台词朗读时默认就是当前角色
@@ -471,6 +464,20 @@ function buildPromptText(characterName, history, text) {
     // 名单块本身只给模型看、没有代码反向解析它
     const lines = specialRoles.map((c) => (c.aliases.length ? `角色名：${c.name} ；别名：${c.aliases.join('、')}` : `角色名：${c.name} ；`));
     parts.push(`<special_roles>\n<!-- 有专属设定的角色名单。名单只用来对照角色名，不代表这些角色一定出现在当前故事里。 -->\n${lines.join('\n')}\n</special_roles>`);
+  }
+  // 角色当前穿搭（角色服饰配置里设为"穿着中"的那套的描述），没选就不发这一段；切换服饰那一轮前缀缓存失效一次
+  const outfitBlock = chat ? '' : buildOutfitBlock(characterName); // 网聊模式不发服饰配置
+  if (outfitBlock) parts.push(outfitBlock);
+  // 财产状况：角色和用户两方的资产 / 负债 / 收支（角色资产配置里填的），都没填就不发这一段
+  const financialBlock = chat ? '' : buildFinancialBlock(characterName, history); // 里面按最新的故事时间推算资产；网聊模式不发资产配置
+  if (financialBlock) parts.push(financialBlock);
+  // hot 记忆索引：常驻的、只存没有时效性的附加要求的小索引，由跨天总结/滚动总结
+  // 那次 LLM 调用顺带产出并追加，不需要每轮从全量历史里现猜。没内容就不发这一段。
+  // 它是固定前缀里最会长大的块（每次总结都可能追加），所以压在固定前缀最末尾：它变的时候前面全部还能命中缓存
+  const memoryIndex = loadMemoryIndex(mode); // 附加要求：跨角色共用，但故事模式和网聊模式各一份
+  if (memoryIndex.trim()) {
+    const memoryNote = chat ? '用户的附加要求，需持续遵守' : '用户的长期设定与创作要求，来自元交流，需持续遵守';
+    parts.push(`<memory_index>\n<!-- ${memoryNote} -->\n${memoryIndex.trim()}\n</memory_index>`);
   }
   parts.push('---');
   // ---- 以上是固定前缀，以下是每轮都会变化的内容 ----
