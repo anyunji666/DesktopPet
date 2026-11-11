@@ -62,7 +62,7 @@ contextBridge.exposeInMainWorld('petAPI', {
   onOutfitsSwitchAsk: (cb) => ipcRenderer.on('outfits-switch-ask', (_e, name) => cb(name)),
   outfitsSwitch: (characterName) => ipcRenderer.send('outfits-switch-confirm', characterName),
   // 附加要求（memory index，全局共用）读取 / 保存（API 与全局设置窗口用）
-  // mode：'story'（故事模式，默认）或 'chat'（对话模式），两个模式各一份
+  // mode：'story'（故事模式，默认）或 'chat'（网聊模式），两个模式各一份
   getMemoryIndex: (mode) => ipcRenderer.invoke('get-memory-index', mode),
   saveMemoryIndex: (text, mode) => ipcRenderer.invoke('save-memory-index', text, mode),
   fetchModelList: (apiUrl, apiKey) => ipcRenderer.invoke('fetch-model-list', apiUrl, apiKey),
@@ -105,7 +105,7 @@ contextBridge.exposeInMainWorld('petAPI', {
   getStoryOverview: (characterName) => ipcRenderer.invoke('get-story-overview', characterName),
   saveStoryOverview: (characterName, text) => ipcRenderer.invoke('save-story-overview', characterName, text),
 
-  // 聊天模式（聊天记录窗口 ⋯ 菜单里切换）：'story' 故事模式 / 'chat' 对话模式，按角色保存
+  // 聊天模式（聊天记录窗口 ⋯ 菜单里切换）：'story' 故事模式 / 'chat' 网聊模式，按角色保存
   getChatMode: (characterName) => ipcRenderer.invoke('get-chat-mode', characterName),
   setChatMode: (characterName, mode) => ipcRenderer.invoke('set-chat-mode', characterName, mode),
 

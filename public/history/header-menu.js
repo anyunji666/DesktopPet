@@ -82,13 +82,13 @@ async function doInsert(role) {
 insertAsUser.addEventListener('click', () => doInsert('user'));
 insertAsAssistant.addEventListener('click', () => doInsert('assistant'));
 
-// ---- 模式切换：故事模式 / 对话模式（按角色保存，主进程 chat-mode.js） ----
+// ---- 模式切换：故事模式 / 网聊模式（按角色保存，主进程 chat-mode.js） ----
 const modeOverlay = document.getElementById('mode-overlay');
 const modeOptions = [...modeOverlay.querySelectorAll('.mode-option')];
-const MODE_LABEL = { story: '故事模式', chat: '对话模式' };
+const MODE_LABEL = { story: '故事模式', chat: '网聊模式' };
 let currentMode = 'story';
 
-// 总览在两种模式下叫法不同：故事模式"剧情总览"，对话模式"对话总览"（菜单项、弹窗标题 / 说明 / 占位提示、保存提示都跟着换）
+// 总览在两种模式下叫法不同：故事模式"剧情总览"，网聊模式"对话总览"（菜单项、弹窗标题 / 说明 / 占位提示、保存提示都跟着换）
 const OVERVIEW_TEXTS = {
   story: {
     name: '剧情总览',

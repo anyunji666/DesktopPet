@@ -60,7 +60,7 @@ function startEdit(row) {
 
   // AI 消息：编辑框里是完整原文，末尾的 <story_overview> 摘要块也在里面（摘要用于压缩历史，整块删掉 = 这一轮在历史中发原文）；
   // 保存时由主进程校验摘要块格式
-  // 对话模式没有摘要块，不显示这条提示：点编辑时现读一次当前模式（config.json 的 chatModes），读完再把提示插进去；
+  // 网聊模式没有摘要块，不显示这条提示：点编辑时现读一次当前模式（config.json 的 chatModes），读完再把提示插进去；
   // 读取失败就不显示（提示只是辅助）。读的间隙里如果已经退出编辑态或提示已存在，就不再插
   if (row.classList.contains('assistant')) {
     window.petAPI.getChatMode(characterName).then((mode) => {

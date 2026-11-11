@@ -103,7 +103,7 @@ function computeLastPastDayKey(history, refDayKey) {
 // 和 flattenChatHistory 里发给正式回复 prompt 的格式（带时间戳、按天分组）是两回事。
 // AI 回复只取正文，去掉存档末尾拼着的 <story_overview> 摘要块，只在行尾留一个 [故事时间:…]
 // （跟聊天记录窗口气泡末尾的时间标签一致；用方括号而不是圆括号，圆括号在这套约定里是元指令）。
-// 对话模式（mode === 'chat'）没有故事时间这个概念，行尾不加 [故事时间:…]（切换前留下的老消息也不加）。
+// 网聊模式（mode === 'chat'）没有故事时间这个概念，行尾不加 [故事时间:…]（切换前留下的老消息也不加）。
 function flattenDayLines(characterName, history, dayKey, mode = 'story') {
   const lines = [];
   for (const h of history) {
@@ -151,7 +151,7 @@ function parseSummaryAndMemory(rawText) {
 
 // 剧情总览的标题行："元时间 X年X月X日 及之前的旧剧情总览："（水位线 coveredUntil 为空 = 用户手写、还没合并过的总览，不带日期）。
 // 摊平历史（发给模型）和合并总览的提示词（llm.js 的 buildOverviewPrompt）共用
-// 对话模式叫"对话总览"，日期前不带"元时间"（对话模式里只有现实时间，不需要区分故事时间）
+// 网聊模式叫"对话总览"，日期前不带"元时间"（网聊模式里只有现实时间，不需要区分故事时间）
 function overviewHeading(coveredUntil, mode = 'story') {
   if (mode === 'chat') return coveredUntil ? `${formatDayCN(coveredUntil)} 及之前的旧对话总览：` : '旧对话总览：';
   return coveredUntil ? `元时间 ${formatDayCN(coveredUntil)} 及之前的旧剧情总览：` : '旧剧情总览：';
@@ -189,7 +189,7 @@ function collectUnmergedSummaries(characterName, history, todayKey = dayKeyOf(Da
 // 时间戳：用户消息若与上一条间隔 >= 5 分钟，或者跨天了（哪怕间隔很短），都会带 [元时间 YYYY年M月D日 HH:mm] 前缀；
 // 角色的回复永远不带时间戳，但"跨天"是按实际发送时间判断的，不看是谁发的这条。
 //
-// 对话模式（mode === 'chat'）和上面的差别：不做轮次压缩（今天 / 上一天的消息全部发原文，不用每轮摘要块）；
+// 网聊模式（mode === 'chat'）和上面的差别：不做轮次压缩（今天 / 上一天的消息全部发原文，不用每轮摘要块）；
 // 不输出"故事时间"行；时间戳前缀只写 [YYYY年M月D日 HH:mm]（没有"元时间"字样），日总结 / 总览的标题也不带"元时间""故事"字样。
 // 日总结和总览仍然保留。
 function flattenChatHistory(characterName, history, mode = 'story') {
@@ -267,7 +267,7 @@ function flattenChatHistory(characterName, history, mode = 'story') {
   const recentStart = Math.max(0, rounds.length - RECENT_RAW_ROUNDS);
   for (let r = 0; r < rounds.length; r++) {
     const round = rounds[r];
-    if (chat || r >= recentStart) { // 对话模式不压缩：每一轮都发原文
+    if (chat || r >= recentStart) { // 网聊模式不压缩：每一轮都发原文
       for (const item of round) item.renderMode = 'raw';
       continue;
     }

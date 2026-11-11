@@ -129,7 +129,7 @@ async function runChatTurnInner(characterName, text, imageDataURL, imageHolder, 
   // 找到图就带上 dataURL 给聊天记录窗口显示，规范化后的标签落档时再补回（见下面的 replyTextForHistory）；找不到图只摘标签
   const imagePick = pickLibraryImage(characterName, rawReplyBody);
   const replyBody = imagePick.text;
-  // 对话模式不要求摘要块；模型万一还是写了也丢掉，不落档（聊天记录里不出现故事时间标签）
+  // 网聊模式不要求摘要块；模型万一还是写了也丢掉，不落档（聊天记录里不出现故事时间标签）
   const summaryBlock = getChatMode(characterName) === 'chat' ? '' : rawSummaryBlock;
   // 摘要块 / 语气都不该进气泡、聊天记录、IPC 返回值：reply 是摘掉所有语气后的干净正文，气泡 / 返回值 / 落档都用它；
   // replyBody 还带着逐句语气，只给朗读用（TTS 按「」拆出每段自己的语气）

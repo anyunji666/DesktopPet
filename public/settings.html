@@ -165,16 +165,16 @@
 
   <label>用户自定义前置文本</label>
   <textarea id="prompt_prefix" placeholder="设定AI的前置背景 身份/职务，和 ta 的工作要求。（可用于回复用户发送的元指令，元指令内容需要用括号包裹）"></textarea>
-  <p class="tip">只在故事模式发送（故事对话、每日总结、剧情总览）；对话模式下的聊天、每日总结、对话总览都不发送这段前置文本。</p>
+  <p class="tip">只在故事模式发送（故事对话、每日总结、剧情总览）；网聊模式下的聊天、每日总结、对话总览都不发送这段前置文本。</p>
 
   <label>附加要求 · 故事模式</label>
   <textarea id="memory_index" style="min-height: 90px" placeholder="一行一条&#10;例如：&#10;故事保持轻松日常节奏&#10;战斗场景略写不细描&#10;不要突然跳过时间线"></textarea>
   <p class="tip"><span id="memory-count">0 / 200</span>　故事模式下所有角色共用。跨天总结时 AI 会自动从元交流中提炼并追加，你也可以在这里增删修改；建议每条 20 字内，总量上限 200 字，超出无法保存。</p>
   <p class="msg" id="msg-memory"></p>
 
-  <label>附加要求 · 对话模式</label>
+  <label>附加要求 · 网聊模式</label>
   <textarea id="memory_index_chat" style="min-height: 90px" placeholder="一行一条&#10;例如：&#10;说话简短一点&#10;多关心我的作息&#10;不要用太多语气词"></textarea>
-  <p class="tip"><span id="memory-count-chat">0 / 200</span>　对话模式下所有角色共用，和故事模式的附加要求互相独立。规则同上。</p>
+  <p class="tip"><span id="memory-count-chat">0 / 200</span>　网聊模式下所有角色共用，和故事模式的附加要求互相独立。规则同上。</p>
   <p class="msg" id="msg-memory-chat"></p>
 
   <div class="section-title">⚙ 对话功能 · API 设置（全局生效，不区分角色）</div>
@@ -232,10 +232,10 @@
 
 <script>
   const $ = (id) => document.getElementById(id);
-  // 附加要求（故事模式 / 对话模式各一份）：加载时记下原文与上限，保存时只有改过才提交
+  // 附加要求（故事模式 / 网聊模式各一份）：加载时记下原文与上限，保存时只有改过才提交
   const MEMORY_FIELDS = {
     story: { input: 'memory_index', count: 'memory-count', msg: 'msg-memory', label: '故事模式附加要求', loaded: null },
-    chat: { input: 'memory_index_chat', count: 'memory-count-chat', msg: 'msg-memory-chat', label: '对话模式附加要求', loaded: null },
+    chat: { input: 'memory_index_chat', count: 'memory-count-chat', msg: 'msg-memory-chat', label: '网聊模式附加要求', loaded: null },
   };
 
   // 与后端 normalizeMemoryText 同一口径：每行去首尾空白、丢空行

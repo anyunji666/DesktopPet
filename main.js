@@ -857,7 +857,7 @@ ipcMain.on('outfits-switch-confirm', (_e, characterName) => {
 });
 // ---------- IPC：附加要求（memory index）编辑（API 与全局设置窗口用） ----------
 // 附加要求 = 跨天总结时 AI 从元交流里自动提炼的长期设定/要求，这里允许用户手动增删改。全局共用一份，不区分角色。
-// 故事模式和对话模式各一份（mode：'story' | 'chat'，省略 = 'story'），跨角色共用
+// 故事模式和网聊模式各一份（mode：'story' | 'chat'，省略 = 'story'），跨角色共用
 const memoryModeOf = (mode) => (mode === 'chat' ? 'chat' : 'story');
 ipcMain.handle('get-memory-index', (_e, mode) => ({ text: loadMemoryIndex(memoryModeOf(mode)), maxChars: MEMORY_MAX_CHARS }));
 ipcMain.handle('save-memory-index', (_e, text, mode) => {
@@ -1136,7 +1136,7 @@ ipcMain.handle('save-story-overview', (_e, characterName, text) => {
   return true;
 });
 
-// 聊天模式（聊天记录窗口"⋯ → 模式切换"）：按角色读取 / 保存 'story'（故事模式）或 'chat'（对话模式），见 chat-mode.js。
+// 聊天模式（聊天记录窗口"⋯ → 模式切换"）：按角色读取 / 保存 'story'（故事模式）或 'chat'（网聊模式），见 chat-mode.js。
 // 保存时这个角色正在等回复会拦下：这一轮的 prompt 已经按旧模式拼好，回复落盘时又要按当前模式处理，中途切换会前后不一致
 ipcMain.handle('get-chat-mode', (_e, characterName) => {
   if (!validCharacter(characterName)) throw new Error('未知角色');
@@ -1189,7 +1189,7 @@ ipcMain.handle('clear-chat-history', (_e, characterName) => {
   clearChatVoices(characterName); // 回复语音文件夹也整个清掉
   clearDaySummaries(characterName); // 按天总结缓存也一起清掉
   clearStoryOverview(characterName); // 剧情总览也一起清掉
-  if (getChatMode(characterName) === 'story') resetAssetsStoryClock(characterName); // 故事资产结算跟着删除，之后回到初始资产设定（对话模式清空不影响故事模式的数据）
+  if (getChatMode(characterName) === 'story') resetAssetsStoryClock(characterName); // 故事资产结算跟着删除，之后回到初始资产设定（网聊模式清空不影响故事模式的数据）
   return true;
 });
 

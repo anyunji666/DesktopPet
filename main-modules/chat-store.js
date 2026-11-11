@@ -81,8 +81,8 @@ function savePersonaFile(characterName, { system, storyBackground, aliases, read
   fs.writeFileSync(p, JSON.stringify({ system: sys, storyBackground: bg, aliases: al, readerInfo: reader }, null, 2), 'utf-8');
 }
 
-// 故事模式和对话模式的聊天数据（聊天记录 / 每日总结 / 总览 / 图片 / 语音）分开存、互不打扰：
-// 故事模式沿用原来的文件名（<角色名>…，老用户的数据不用迁移），对话模式在角色名后面加 @chat（<角色名>@chat…）。
+// 故事模式和网聊模式的聊天数据（聊天记录 / 每日总结 / 总览 / 图片 / 语音）分开存、互不打扰：
+// 故事模式沿用原来的文件名（<角色名>…，老用户的数据不用迁移），网聊模式在角色名后面加 @chat（<角色名>@chat…）。
 // 下面所有按角色存取的路径都经过 storeName，按"当前模式"自动选；mode 参数可选，显式指定时不看当前模式
 // （资产配置这类只属于故事模式的功能固定传 'story'）。附加要求（__global-memory.md）本来就是全局的，两个模式共用。
 const CHAT_MODE_SUFFIX = '@chat';
@@ -149,7 +149,7 @@ function saveChatHistory(characterName, history) {
     console.error(`[pet] 保存聊天记录失败: ${err.message}`);
     throw new Error('保存聊天记录失败：' + err.message);
   }
-  // 只有写盘成功才通知监听（失败已经抛出，不会走到这里）。监听方（资产配置窗口）只关心故事时间，对话模式的记录不通知
+  // 只有写盘成功才通知监听（失败已经抛出，不会走到这里）。监听方（资产配置窗口）只关心故事时间，网聊模式的记录不通知
   if (historySavedListener && getChatMode(characterName) === 'story') {
     try {
       historySavedListener(characterName, history);
@@ -266,8 +266,8 @@ function clearStoryOverview(characterName) {
 const MEMORY_MAX_CHARS = 200;
 const MEMORY_TAG_MAX_CHARS = 20;
 
-// 附加要求也按聊天模式分成两份（跨角色共用，但故事模式和对话模式各读各的）：
-// 故事模式 __global-memory.md（原文件，不用迁移），对话模式 __global-memory@chat.md。mode 省略 = 'story'。
+// 附加要求也按聊天模式分成两份（跨角色共用，但故事模式和网聊模式各读各的）：
+// 故事模式 __global-memory.md（原文件，不用迁移），网聊模式 __global-memory@chat.md。mode 省略 = 'story'。
 function memoryPath(mode) {
   const dir = getChatDir();
   fs.mkdirSync(dir, { recursive: true });

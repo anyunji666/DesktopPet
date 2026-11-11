@@ -44,7 +44,7 @@ async function mergeStoryOverview(characterName, history) {
   if (!items.length) return null;
   const prev = loadStoryOverview(characterName);
   const coveredUntil = items[items.length - 1].dayKey;
-  const mode = getChatMode(characterName); // 对话模式下总览按"聊天总结"的口径写
+  const mode = getChatMode(characterName); // 网聊模式下总览按"聊天总结"的口径写
 
   let text = '';
   for (let attempt = 0; attempt < 2; attempt++) {

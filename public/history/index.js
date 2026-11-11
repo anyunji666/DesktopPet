@@ -15,7 +15,7 @@ import './voice-player.js';
 import './confirm-dialog.js';
 import './header-menu.js';
 
-// 窗口标题（"故事模式 · 角色名" / "对话模式 · 角色名"）由 header-menu.js 按当前模式设置
+// 窗口标题（"故事模式 · 角色名" / "网聊模式 · 角色名"）由 header-menu.js 按当前模式设置
 
 // ---------------- 跟主进程同步"等回复"状态 ----------------
 // 有消息发出去开始等回复 / 回复落盘或报错后解锁（payload 为 null）

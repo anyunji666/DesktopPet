@@ -151,7 +151,7 @@ function deleteApiProfile(url) {
 }
 
 // ---------- Prompt 模板配置（存进 config.json 的 promptConfig 字段，全局生效，不区分角色） ----------
-// 目前只有用户自定义前置文本（只在故事模式的对话/每日总结/剧情总览里发送，对话模式一律不发）。
+// 目前只有用户自定义前置文本（只在故事模式的对话/每日总结/剧情总览里发送，网聊模式一律不发）。
 // "你的资料"已改为跟随角色（存在各角色的 persona.json 里），config.json 里残留的旧 promptConfig.readerInfo 不再读取。
 function getPromptConfig() {
   const cfg = loadConfig().promptConfig;
@@ -242,42 +242,43 @@ const SPEAKER_RULE = `- **说话者标注：** 每句「对话」前面都必须
   - 其他店员、群演、路人以及用户所扮演的角色：前面统一写\`${COMMON_LABEL}：\`。即使这个人物有资料设定，只要不属于<special_roles>都写\`${COMMON_LABEL}：\`。
 - 一句「对话」只能是一个角色说的，不要把两个角色的话写进同一个「」里。`;
 
-// ---------- 对话模式（和角色聊天，不编故事）专用的提示词段落 ----------
-// 对话模式和故事模式的差别见 chat-mode.js。这里是对话模式独有的输出规则（分有 / 无语气指令两版），比故事模式精简：
+// ---------- 网聊模式（和角色聊天，不编故事）专用的提示词段落 ----------
+// 网聊模式和故事模式的差别见 chat-mode.js。这里是网聊模式独有的输出规则（分有 / 无语气指令两版），比故事模式精简：
 // 不发"用户的输入说明"，也没有摘要模块（回复末尾不要求 <story_overview>，所以输出规则后面不接 SUMMARY_FOOTER）。
-// 朗读仍然只读「」里的台词（见 tts/text-clean.js），所以对话模式也要求角色说的话用「」包裹。
+// 聊天形式（网络通讯、像真人发消息）写在角色卡注释里（见 buildPromptText 的 cardNote），不在这段规则里重复；
+// *星号* 只留给内心想法。朗读仍然只读「」里的台词（见 tts/text-clean.js），所以网聊模式也要求角色说的话用「」包裹。
 const OUTPUT_RULES_CHAT_PLAIN = `## **必须遵守的强制性输出规则**
 
 - **语言：** 简体中文
 - **符号规范**（严格区分）：
-  - 对话内容：用「」包裹，例：「刚下班吗？」
-  - 动作或内心想法：用*星号*（不超过15字，不是每条都要有），例：*笑着看过来*
-- 「对话」内容灵活使用标点符号：
+  - 回复内容：用「」包裹，例：「刚下班吗？」
+  - 内心想法：用*星号*（不超过15字，不是每条都要有，只写心里想的，不要写动作），例：*他今天回得好慢*
+- 「回复」内容灵活使用标点符号：
   - 正常陈述：「嗯，我知道了。」
   - 句中停顿：「嗯……我知道了。」
   - 句末拖长音：「不要嘛～」
   - 句末重音：「什么！」
   - 疑问/质疑：「是这样吗？」
-- **字数：** 总字数不超过100字，每个「」里的台词字数控制在 1~30 字。可以连发几句「」，像停顿片刻后继续说。
-- 格式示例：「你终于回来啦～」*探头看了看你*「今天累不累？」`;
+- **字数：** 总字数不超过100字，每个「」里的台词字数控制在 1~30 字。可以连发几句「」，像停顿片刻后继续发的。
+- 格式示例：「刚下班吗？」*他好像不太想聊这个*「累不累？」`;
 
 const OUTPUT_RULES_CHAT_TONE = `## **必须遵守的强制性输出规则**
 
 - **语言：** 简体中文
 - **符号规范**（严格区分）：
-  - 对话内容：用「」包裹，例：「【随口问候，语气轻快】刚下班吗？」
-  - 动作或内心想法：用*星号*（不超过15字，不是每条都要有），例：*笑着看过来*
-- 「对话」内容灵活使用标点符号：
+  - 回复内容：用「」包裹，例：「【随口问候，语气轻快】刚下班吗？」
+  - 内心想法：用*星号*（不超过15字，不是每条都要有，只写心里想的，不要写动作），例：*他今天回得好慢*
+- 「回复」内容灵活使用标点符号：
   - 正常陈述：「嗯，我知道了。」
   - 句中停顿：「嗯……我知道了。」
   - 句末拖长音：「【撒娇软糯，尾音拖长】不要嘛～」
   - 句末重音：「【震惊拔高，语气急促】什么！」
   - 疑问/质疑：「【将信将疑，语调上扬】是这样吗？」
-- **语气描述：** 每个「对话」里面、台词的第一个字之前，先用【】包裹写一句该对话的语气指导，不超过 20 字。要写成有画面感的具体描述，包含情绪和说话状态。每句只写它自己的语气，前后两句情绪有变化就要写出变化。【】只能写在「」里面、台词之前，其他地方不要使用。
-- **字数：** 总字数（含「对话」、对话的语气描述和*星号*内容）不超过100字，每个「」里的台词字数控制在 1~30 字。可以连发几句「」，像停顿片刻后继续说。
-- 格式示例：「【开心上扬，语速轻快】你终于回来啦～」*探头看了看你*「【关切温柔，语速放缓】今天累不累？」`;
+- **语气描述：** 每个「回复」里面、台词的第一个字之前，先用【】包裹写一句该回复的语气指导，不超过 20 字。要写成有画面感的具体描述，包含情绪和说话状态。每句只写它自己的语气，前后两句情绪有变化就要写出变化。【】只能写在「」里面、台词之前，其他地方不要使用。
+- **字数：** 总字数（含「回复」、回复的语气描述和*星号*内容）不超过100字，每个「」里的台词字数控制在 1~30 字。可以连发几句「」，像停顿片刻后继续发的。
+- 格式示例：「【些许无奈，语速平缓】你终于回复了。」*我以为你不想理我了*「【关切温柔，语速放缓】今天玩的还开心吗？」`;
 
-// 对话模式的"现实日期"播报：只用现实日期算星期 + 近三天内的国际 / 中国节日，内容和排版跟故事模式的
+// 网聊模式的"现实日期"播报：只用现实日期算星期 + 近三天内的国际 / 中国节日，内容和排版跟故事模式的
 // <the_festivals_in_the_story> 一致（不含时分——具体几点已经在聊天历史的时间戳里给了，这里只补"今天周几、有没有节日"）。
 // 每轮都变，所以和故事模式的节日播报一样放在固定前缀之后、紧贴 <user_input>
 function buildCurrentTimeBlock(now = new Date()) {
@@ -306,23 +307,23 @@ const SUMMARY_FOOTER = `- **摘要模块：** 对本轮的正文内容进行一�
 
 // 生成"某天聊天总结"用的 prompt：单独一次总结任务，不带角色人设/语气/输出格式那些约束，
 // 避免总结文本也带上角色口癖，污染归档内容。前置词（prefix）是全局的、给 AI 本身设定身份用的，
-// 只有故事模式带上（跟 buildPromptText 一致）；对话模式的总结不带前置词，避免身份设定混进聊天总结。
+// 只有故事模式带上（跟 buildPromptText 一致）；网聊模式的总结不带前置词，避免身份设定混进聊天总结。
 // 结构：前置词（仅故事模式） → <memory_index> 已有记忆 → <historical_conversation> 对话记录 → 任务说明与输出格式（指令放在对话后面，长对话里不容易被冲淡）。
 // 不带角色名：故事里有具体的角色名，总结让模型直接用故事里的称呼。
 // 对话行里的括号元交流原样保留（不再在存档时过滤），[总结] 不对它做特殊处理。
-// mode === 'chat'（对话模式）：素材是和角色的日常聊天而不是故事，总结要点和措辞随之调整，输出格式（[总结]/[记忆]）不变
+// mode === 'chat'（网聊模式）：素材是和角色的日常聊天而不是故事，总结要点和措辞随之调整，输出格式（[总结]/[记忆]）不变
 function buildSummaryPrompt(dayKey, dayLines, mode = 'story') {
   const chat = mode === 'chat';
   const { prefix } = getPromptConfig();
   const parts = [];
-  // 对话模式不发用户的前置设定词
+  // 网聊模式不发用户的前置设定词
   if (!chat && prefix.trim()) {
     parts.push(prefix.trim());
     parts.push('');
   }
   // 已有记忆索引：旧条目不在这次的对话素材里，不带这一段模型就不知道"什么已经记过"，
   // [记忆] 段也就没法真的去重（只能靠 appendMemoryLines 的整行子串匹配兜底）。没内容就不发这一段
-  const memoryIndex = loadMemoryIndex(mode); // 故事模式 / 对话模式各读各的附加要求
+  const memoryIndex = loadMemoryIndex(mode); // 故事模式 / 网聊模式各读各的附加要求
   if (memoryIndex.trim()) {
     parts.push(`<memory_index>\n<!-- 之前提炼的用户 附加要求，用于比对新[记忆]项不重复提取 -->\n${memoryIndex.trim()}\n</memory_index>`);
     parts.push('');
@@ -359,13 +360,13 @@ function buildSummaryPrompt(dayKey, dayLines, mode = 'story') {
 // 和 buildSummaryPrompt 一样是单独的一次总结任务：不带角色人设/语气/输出格式约束，前置词只在故事模式带（对话总览不带）；指令放在素材后面。
 // prevOverview 为空表示还没有过总览（第一次合并）；items = [{ dayKey, text }]，按日期从早到晚。
 // tooLong=true 是上一次输出超字数后的重试，额外强调一次长度。
-// mode === 'chat'（对话模式）：素材是聊天总结，输出叫"对话总览"，措辞随之调整
+// mode === 'chat'（网聊模式）：素材是聊天总结，输出叫"对话总览"，措辞随之调整
 function buildOverviewPrompt(prevOverview, prevCoveredUntil, items, tooLong = false, mode = 'story') {
   const chat = mode === 'chat';
   const tag = chat ? 'chat_summaries' : 'story_history';
   const { prefix } = getPromptConfig();
   const parts = [];
-  // 对话模式不发用户的前置设定词
+  // 网聊模式不发用户的前置设定词
   if (!chat && prefix.trim()) {
     parts.push(prefix.trim());
     parts.push('');
@@ -405,7 +406,7 @@ function buildOverviewPrompt(prevOverview, prevCoveredUntil, items, tooLong = fa
 // --- 可变部分（<chat_history> + <user_input>）
 // --- 尾部固定说明（用户输入说明 + 必须遵守的强制性输出规则，两段都紧跟在最新内容后面，强化权重）
 //
-// 对话模式（chat-mode.js）下的差别：不发用户的前置文本、<story_background> 世界背景、<character_outfit> 服饰和财产状况这几段；
+// 网聊模式（chat-mode.js）下的差别：不发用户的前置文本、<story_background> 世界背景、<character_outfit> 服饰和财产状况这几段；
 // 历史不做每轮摘要压缩；用 <current_time> 现实时间代替故事时间的节日播报；不发用户的输入说明，输出规则换成对话版，
 // 输出规则后面也不接摘要模块。角色卡 / 附加要求的注释文案也换成对话版。
 function buildPromptText(characterName, history, text) {
@@ -420,20 +421,20 @@ function buildPromptText(characterName, history, text) {
   // 固定内容（前缀/世界背景/角色卡/用户设定/输出说明）全部前置且逐字节不变，聊天历史/本轮输入这些每次都在变的内容后置，
   // 这样发给 DeepSeek / Gemini 这类"自动前缀缓存"的 API 时，前面这一大段固定前缀才能被复用命中、省 token。
   const parts = [];
-  // 对话模式不发用户的前置设定词（那是给故事模式设定 AI 身份用的）
-  // 有前置文本才发它和分隔线，否则 prompt 开头是一根孤零零的 `---`（对话模式永远没有前置文本，故直接以角色卡开头）
+  // 网聊模式不发用户的前置设定词（那是给故事模式设定 AI 身份用的）
+  // 有前置文本才发它和分隔线，否则 prompt 开头是一根孤零零的 `---`（网聊模式永远没有前置文本，故直接以角色卡开头）
   if (!chat && prefix.trim()) {
     parts.push(prefix.trim());
     parts.push('---');
   }
-  // 世界背景拼在角色资料前面，没填就不发这一段；对话模式不是写故事，不发世界背景
+  // 世界背景拼在角色资料前面，没填就不发这一段；网聊模式不是写故事，不发世界背景
   if (!chat && storyBackground.trim()) {
     parts.push(`<story_background>\n<!-- 故事的世界背景以及设定 -->\n${storyBackground.trim()}\n</story_background>`);
   }
   // 用户没填角色资料就不发这一段
   if (characterCard.trim()) {
     const cardNote = chat
-      ? '请扮演 该角色与用户对话，要符合该角色的个性。'
+      ? '请扮演 该角色与用户进行网络通讯，回复的消息内容要符合该角色的个性，像真实的发送语音或文字信息网聊一样。你所扮演的角色和用户是不同时空的存在，无法真正在线下互动。'
       : '角色的设定资料。设计/扮演 该角色的行为对话时，要符合该角色的个性。';
     parts.push(`<character_card>\n<!-- ${cardNote} -->\n${characterCard}\n</character_card>`);
   }
@@ -441,10 +442,10 @@ function buildPromptText(characterName, history, text) {
     parts.push(`<user_persona>\n<!-- 用户所扮演的角色设定资料 -->\n${readerInfo.trim()}\n</user_persona>`);
   }
   // 角色当前穿搭（角色服饰配置里设为"穿着中"的那套的描述），没选就不发这一段；切换服饰那一轮前缀缓存失效一次
-  const outfitBlock = chat ? '' : buildOutfitBlock(characterName); // 对话模式不发服饰配置
+  const outfitBlock = chat ? '' : buildOutfitBlock(characterName); // 网聊模式不发服饰配置
   if (outfitBlock) parts.push(outfitBlock);
   // 财产状况：角色和用户两方的资产 / 负债 / 收支（角色资产配置里填的），都没填就不发这一段
-  const financialBlock = chat ? '' : buildFinancialBlock(characterName, history); // 里面按最新的故事时间推算资产；对话模式不发资产配置
+  const financialBlock = chat ? '' : buildFinancialBlock(characterName, history); // 里面按最新的故事时间推算资产；网聊模式不发资产配置
   if (financialBlock) parts.push(financialBlock);
   // 角色图库清单（Character/<角色>/images/ 现扫生成，子文件夹名 = 类别）：模型可在回复正文前用 [img:类别/图片名] 发一张图。
   // 没有 images/ 文件夹或里面没有图片就不发这一段；两种模式都发；只有增删图片才会变，不影响前缀缓存
@@ -452,7 +453,7 @@ function buildPromptText(characterName, history, text) {
   if (imageLibraryBlock) parts.push(imageLibraryBlock);
   // hot 记忆索引：常驻的、只存没有时效性的附加要求的小索引，由跨天总结/滚动总结
   // 那次 LLM 调用顺带产出并追加，不需要每轮从全量历史里现猜。没内容就不发这一段
-  const memoryIndex = loadMemoryIndex(mode); // 附加要求：跨角色共用，但故事模式和对话模式各一份
+  const memoryIndex = loadMemoryIndex(mode); // 附加要求：跨角色共用，但故事模式和网聊模式各一份
   if (memoryIndex.trim()) {
     const memoryNote = chat ? '用户的附加要求，需持续遵守' : '用户的长期设定与创作要求，来自元交流，需持续遵守';
     parts.push(`<memory_index>\n<!-- ${memoryNote} -->\n${memoryIndex.trim()}\n</memory_index>`);
@@ -461,7 +462,7 @@ function buildPromptText(characterName, history, text) {
   // 不影响前缀缓存）。名单只用来让模型标注说话者时对照角色名，不代表这些角色一定出现在当前故事里。
   // 至少有一个角色配置了语音才发，同时输出规则里会追加 SPEAKER_RULE（见下面 footerParts）；
   // 朗读时据此把台词路由到各自的音色，没配置语音的角色台词整句跳过
-  // 对话模式只扮演当前这一个角色，不需要多角色说话者标注（不发 <special_roles>，也不追加 SPEAKER_RULE）；没有前缀的台词朗读时默认就是当前角色
+  // 网聊模式只扮演当前这一个角色，不需要多角色说话者标注（不发 <special_roles>，也不追加 SPEAKER_RULE）；没有前缀的台词朗读时默认就是当前角色
   const speakerMode = !chat && anyVoiceConfigured(); // 一个角色都没配语音就不用标注说话者
   const specialRoles = speakerMode ? getSpecialRoles() : [];
   if (specialRoles.length) {
@@ -479,12 +480,12 @@ function buildPromptText(characterName, history, text) {
   }
   // 故事时间的星期 + 国际/中国节日（取自上一轮摘要的"故事时间"，解析不出日期就不发这一段）。
   // 每轮都会变，所以放在固定前缀之后、紧贴 user_input，不破坏前缀缓存
-  // 对话模式没有故事时间：改发现实的当前时间（星期 + 近期节日）
+  // 网聊模式没有故事时间：改发现实的当前时间（星期 + 近期节日）
   const festivalBlock = chat ? buildCurrentTimeBlock() : buildFestivalBlock(history);
   if (festivalBlock) parts.push(festivalBlock);
   parts.push(`<user_input>\n<!-- 用户本轮最新输入 -->\n${text}\n</user_input>`);
   parts.push('---');
-  // 用户的输入说明：解释怎么读括号元指令，只有故事模式发；对话模式没有元指令这一层，直接接输出规则
+  // 用户的输入说明：解释怎么读括号元指令，只有故事模式发；网聊模式没有元指令这一层，直接接输出规则
   if (!chat) {
     parts.push(INPUT_NOTE);
     parts.push('---');
@@ -499,7 +500,7 @@ function buildPromptText(characterName, history, text) {
   const tone = toneEnabled(characterName);
   const footerParts = [chat ? (tone ? OUTPUT_RULES_CHAT_TONE : OUTPUT_RULES_CHAT_PLAIN) : (tone ? OUTPUT_RULES_TONE : OUTPUT_RULES_PLAIN)];
   if (speakerMode) footerParts.push(SPEAKER_RULE);
-  if (!chat) footerParts.push(SUMMARY_FOOTER); // 对话模式不要求每轮摘要块
+  if (!chat) footerParts.push(SUMMARY_FOOTER); // 网聊模式不要求每轮摘要块
   parts.push(footerParts.join('\n'));
 
   return parts.join('\n\n');
