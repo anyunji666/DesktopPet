@@ -186,12 +186,18 @@ function isOverChatBox(e) {
 //      桌面模式跳舞时的掉帧主要就是这里每帧对几万顶点做一次全量求交造成的。
 const HOVER_PRECISE_INTERVAL_MS = 32; // 精确求交最快约每两帧一次
 const HOVER_PRECISE_MOVE_PX = 6; // 鼠标明显移动时立刻重算，不用等节流窗口
+// 已经在模型上待了这么久（中途没有真的离开），说明用户就是在长看：精确求交降到低频，
+// 免得持续压在模型上时一直和动画抢主线程。不做成"完全停止"是因为跳舞时模型自己会在屏幕上移动，
+// 鼠标不动、模型挪开的判定会一直过期，完全停掉会导致点不到桌面（鼠标已不在角色身上却仍不穿透）。
+const HOVER_LONG_STAY_MS = 3000;
+const HOVER_PRECISE_INTERVAL_LONG_MS = 250;
 let pendingHoverEvent = null;
 let hoverRafId = null;
 let lastPreciseAt = 0;
 let lastPreciseX = 0;
 let lastPreciseY = 0;
 let lastPreciseOver = false;
+let overSince = 0; // 连续判定为"在模型上"的起点，离开即清零
 
 function scheduleHoverHitCheck(e) {
   pendingHoverEvent = e;
@@ -208,16 +214,25 @@ function scheduleHoverHitCheck(e) {
     if (!hitModelBounds(ev)) {
       // 连包围球都没碰到：肯定不在模型上，直接切回穿透，不做精确求交
       lastPreciseOver = false;
+      overSince = 0;
       setClickThrough(true);
       return;
     }
     const now = performance.now();
     const moved = Math.hypot(ev.clientX - lastPreciseX, ev.clientY - lastPreciseY);
-    if (now - lastPreciseAt >= HOVER_PRECISE_INTERVAL_MS || moved >= HOVER_PRECISE_MOVE_PX) {
+    // 长悬停：已经连续在模型上待满 HOVER_LONG_STAY_MS，精确求交降到低频（鼠标明显移动时仍立即重算）
+    const longStay = overSince > 0 && now - overSince >= HOVER_LONG_STAY_MS;
+    const interval = longStay ? HOVER_PRECISE_INTERVAL_LONG_MS : HOVER_PRECISE_INTERVAL_MS;
+    if (now - lastPreciseAt >= interval || moved >= HOVER_PRECISE_MOVE_PX) {
       lastPreciseAt = now;
       lastPreciseX = ev.clientX;
       lastPreciseY = ev.clientY;
       lastPreciseOver = hitModel(ev);
+      if (lastPreciseOver) {
+        if (!overSince) overSince = now;
+      } else {
+        overSince = 0;
+      }
     }
     setClickThrough(!lastPreciseOver);
   });
@@ -229,7 +244,7 @@ function updateClickThroughByHover(e) {
     setClickThrough(false); // 便宜分支，同步执行
     return;
   }
-  scheduleHoverHitCheck(e); // 命中检测分支，节流到每帧一次
+  scheduleHoverHitCheck(e); // 命中检测分支：粗判每帧一次，精确求交按上面两条常量节流
 }
 
 // ---------------- 交互：拖拽 / 点击 / 右键 ----------------
