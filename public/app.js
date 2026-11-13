@@ -1,5 +1,5 @@
 import { state, clock, scene, camera, renderer, audio, voiceAudio, tmpV, desiredPos, desiredTgt, curTgt } from './modules/state.js';
-import { showLoading, showBubble, playVoice, stopVoice, hitModel } from './modules/ui.js';
+import { showLoading, showBubble, playVoice, stopVoice, hitModel, hitModelBounds } from './modules/ui.js';
 import { triggerBlink, idlePose, updateBlink, applyIdleArms, restoreIdleArms } from './modules/idle-animation.js';
 import { resettlePhysics } from './modules/physics.js';
 import './modules/physics-debug.js'; // 控制台调试入口 window.__phys（排查个别模型物理抖动用）
@@ -176,11 +176,23 @@ function isOverChatBox(e) {
 // 只有鼠标真的落在对话框范围内才算），决定窗口这一刻要不要对鼠标穿透。
 // 旋转进行中不重新判断，强制保持"不穿透"，避免鼠标划得快时中途漏判、手势被打断
 // mousemove 在鼠标划得快时一帧内可能触发好几次；"强制不穿透"这条分支很便宜（不带射线检测），
-// 同步执行不节流，保证拖拽/旋转过程中穿透状态切换没有延迟。真正开销大的是命中模型那条分支
-// （hitModel 里的射线检测），这部分节流成每帧最多算一次，同一帧内的多次调用只更新坐标、
-// 复用下一帧的一次计算结果——桌面模式跳舞卡顿主要就是这里每次 mousemove 都全量算一遍导致的。
+// 同步执行不节流，保证拖拽/旋转过程中穿透状态切换没有延迟。
+//
+// 命中模型分两步，都是为了把开销压住：
+//   1. 粗判 hitModelBounds（射线 × 包围球，O(1)）：没碰到包围球就直接切回穿透，
+//      鼠标在空白处移动时完全不碰模型网格；
+//   2. 精确求交 hitModel（遍历整个骨骼网格）：只有粗判命中才做，且压在模型上持续移动时
+//      节流到 HOVER_PRECISE_INTERVAL_MS 一次（鼠标明显移动时立即重算），中间沿用上次结果。
+//      桌面模式跳舞时的掉帧主要就是这里每帧对几万顶点做一次全量求交造成的。
+const HOVER_PRECISE_INTERVAL_MS = 32; // 精确求交最快约每两帧一次
+const HOVER_PRECISE_MOVE_PX = 6; // 鼠标明显移动时立刻重算，不用等节流窗口
 let pendingHoverEvent = null;
 let hoverRafId = null;
+let lastPreciseAt = 0;
+let lastPreciseX = 0;
+let lastPreciseY = 0;
+let lastPreciseOver = false;
+
 function scheduleHoverHitCheck(e) {
   pendingHoverEvent = e;
   if (hoverRafId !== null) return; // 已经排了一次，本帧内的后续调用不用重复排
@@ -189,8 +201,25 @@ function scheduleHoverHitCheck(e) {
     const ev = pendingHoverEvent;
     // rAF 触发前状态可能已经变了（比如开始拖拽），这种情况交回同步分支处理，这里跳过即可
     if (!desktopMode || rotating) return;
-    const over = isOverChatBox(ev) || hitModel(ev);
-    setClickThrough(!over);
+    if (isOverChatBox(ev)) {
+      setClickThrough(false);
+      return;
+    }
+    if (!hitModelBounds(ev)) {
+      // 连包围球都没碰到：肯定不在模型上，直接切回穿透，不做精确求交
+      lastPreciseOver = false;
+      setClickThrough(true);
+      return;
+    }
+    const now = performance.now();
+    const moved = Math.hypot(ev.clientX - lastPreciseX, ev.clientY - lastPreciseY);
+    if (now - lastPreciseAt >= HOVER_PRECISE_INTERVAL_MS || moved >= HOVER_PRECISE_MOVE_PX) {
+      lastPreciseAt = now;
+      lastPreciseX = ev.clientX;
+      lastPreciseY = ev.clientY;
+      lastPreciseOver = hitModel(ev);
+    }
+    setClickThrough(!lastPreciseOver);
   });
 }
 

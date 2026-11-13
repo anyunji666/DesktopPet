@@ -184,21 +184,31 @@ function ensureBounds(mesh) {
   localRadius = worldSphere.radius * BOUNDS_PADDING;
 }
 
-export function hitModel(e) {
-  const mesh = state.mesh;
-  if (!mesh) return false;
-  // 用 canvas 自身的包围盒而不是 window.innerWidth/innerHeight：
-  // 普通模式下 canvas 铺满整个窗口，两者等价；桌面模式下 canvas 只占虚拟视口那一块，
-  // 用窗口尺寸算出来的 NDC 会偏，模型点不中。
+// 把鼠标位置换算成 NDC 并让射线从相机射出。
+// 用 canvas 自身的包围盒而不是 window.innerWidth/innerHeight：
+// 普通模式下 canvas 铺满整个窗口，两者等价；桌面模式下 canvas 只占虚拟视口那一块，
+// 用窗口尺寸算出来的 NDC 会偏，模型点不中。
+function aimRayAt(e) {
   const rect = renderer.domElement.getBoundingClientRect();
   ndc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
   ndc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(ndc, camera);
+}
 
+// 粗判：射线打到模型的包围球就算"可能在模型上"，不遍历三角形（比精确求交便宜几个数量级）。
+// 桌面模式下鼠标在空白处移动时先用它短路，只有落在包围球里才值得做精确求交（见 app.js 的悬停节流）。
+export function hitModelBounds(e) {
+  const mesh = state.mesh;
+  if (!mesh) return false;
+  aimRayAt(e);
   ensureBounds(mesh);
   worldCenter.copy(localCenter).applyMatrix4(mesh.matrixWorld);
   sphere.set(worldCenter, localRadius);
-  if (raycaster.ray.intersectSphere(sphere, sphereHit) === null) return false; // 连包围球都没碰到，跳过精确测试
+  return raycaster.ray.intersectSphere(sphere, sphereHit) !== null;
+}
 
+export function hitModel(e) {
+  const mesh = state.mesh;
+  if (!mesh || !hitModelBounds(e)) return false; // 连包围球都没碰到，跳过精确测试
   return raycaster.intersectObject(mesh, true).length > 0;
 }
