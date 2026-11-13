@@ -10,24 +10,6 @@ const { send } = require('./main-window');
 const { rebuildMenu } = require('./menu-actions');
 const pkg = require('../../package.json');
 
-// ---------- 关于：作者 / 版本 / GitHub 地址，读 package.json 里的 author / homepage，只在这里维护一份 ----------
-const APP_VERSION_LABEL = pkg.version;
-const APP_REPO_URL = pkg.homepage || '';
-
-function getAboutInfo() {
-  return {
-    description: pkg.description || pkg.name,
-    author: pkg.author || '未知',
-    version: APP_VERSION_LABEL,
-    repoUrl: APP_REPO_URL,
-  };
-}
-
-// 只打开 package.json 里配置的那个地址，不接受渲染进程传来的任意 URL
-function openRepoUrl() {
-  if (APP_REPO_URL) shell.openExternal(APP_REPO_URL);
-}
-
 // ---------- 开子窗口的公共流程 ----------
 // 桌面模式下宠物窗口纵向展开（通常接近整个屏幕高度）、又是持续渲染的透明覆盖层，新开一个子窗口时
 // 会跟它的首次绘制抢 GPU/合成资源，表现为"窗口本身出来了，但里面内容半天不出来"。
@@ -318,6 +300,24 @@ function openHistoryWindow(characterName) {
     state.historyWin.loadURL(historyWindowUrl(characterName));
     return state.historyWin;
   }, { resumeOn: 'content-ready', signalChannel: 'history-content-ready' });
+}
+
+// ---------- 关于：作者 / 版本 / GitHub 地址，读 package.json 里的 author / homepage，只在这里维护一份 ----------
+const APP_VERSION_LABEL = pkg.version;
+const APP_REPO_URL = pkg.homepage || '';
+
+function getAboutInfo() {
+  return {
+    description: pkg.description || pkg.name,
+    author: pkg.author || '未知',
+    version: APP_VERSION_LABEL,
+    repoUrl: APP_REPO_URL,
+  };
+}
+
+// 只打开 package.json 里配置的那个地址，不接受渲染进程传来的任意 URL
+function openRepoUrl() {
+  if (APP_REPO_URL) shell.openExternal(APP_REPO_URL);
 }
 
 // ---------- 关于窗口 ----------
