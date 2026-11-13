@@ -8,7 +8,8 @@ const { buildOutfitBlock } = require('./outfits');
 const { buildImageLibraryBlock } = require('./image-library');
 const { toneEnabled } = require('./tts/tone');
 const { getSpecialRoles, anyVoiceConfigured, COMMON_LABEL } = require('./tts/config');
-const { flattenChatHistory, formatDayCN, overviewHeading } = require('./history-flatten');
+const { flattenChatHistory, overviewHeading, smallSummaryHeading } = require('./history-flatten');
+const { SMALL_SUMMARY_TARGET_CHARS, OVERVIEW_TARGET_CHARS } = require('./summary-config');
 const { buildFestivalBlock } = require('./holiday');
 const { buildHolidaySuffix, WEEKDAY_LABELS, daysInMonth } = require('./holiday/calc');
 const { getChatMode } = require('./chat-mode');
@@ -151,7 +152,7 @@ function deleteApiProfile(url) {
 }
 
 // ---------- Prompt 模板配置（存进 config.json 的 promptConfig 字段，全局生效，不区分角色） ----------
-// 目前只有用户自定义前置文本（只在故事模式的对话/每日总结/剧情总览里发送，网聊模式一律不发）。
+// 目前只有用户自定义前置文本（只在故事模式的对话/小总结/剧情总览里发送，网聊模式一律不发）。
 // "你的资料"已改为跟随角色（存在各角色的 persona.json 里），config.json 里残留的旧 promptConfig.readerInfo 不再读取。
 function getPromptConfig() {
   const cfg = loadConfig().promptConfig;
@@ -305,14 +306,16 @@ const SUMMARY_FOOTER = `- **摘要模块：** 对本轮的正文内容进行一�
   概述: 小林以漏水为由深夜造访阿远的公寓，想拖延离开并试探阿远的态度；阿远识破借口，仍配合小林演下去，两人关系从房东房客变为互相试探。
   </story_overview>`;
 
-// 生成"某天聊天总结"用的 prompt：单独一次总结任务，不带角色人设/语气/输出格式那些约束，
+// 生成"小总结"用的 prompt：单独一次总结任务，不带角色人设/语气/输出格式那些约束，
 // 避免总结文本也带上角色口癖，污染归档内容。前置词（prefix）是全局的、给 AI 本身设定身份用的，
 // 只有故事模式带上（跟 buildPromptText 一致）；网聊模式的总结不带前置词，避免身份设定混进聊天总结。
 // 结构：前置词（仅故事模式） → <memory_index> 已有记忆 → <historical_conversation> 对话记录 → 任务说明与输出格式（指令放在对话后面，长对话里不容易被冲淡）。
 // 不带角色名：故事里有具体的角色名，总结让模型直接用故事里的称呼。
-// 对话行里的括号元交流原样保留（不再在存档时过滤），[总结] 不对它做特殊处理。
+// 素材 lines：网聊模式是带时间前缀的聊天原文；故事模式大部分是逐轮的"故事时间 / 概述"摘要，缺摘要的轮次是原文，
+// 用户写了括号元交流（设定 / 要求）的轮次整轮发原文（摘要块剔除），让模型直接在原文里读到这些要求。
+// 时间区间不发给模型：由程序按首尾故事时间 / 消息时间算好，只用来当历史里的标题行和大总结的水位线文案。
 // mode === 'chat'（网聊模式）：素材是和角色的日常聊天而不是故事，总结要点和措辞随之调整，输出格式（[总结]/[记忆]）不变
-function buildSummaryPrompt(dayKey, dayLines, mode = 'story') {
+function buildSmallSummaryPrompt(lines, mode = 'story') {
   const chat = mode === 'chat';
   const { prefix } = getPromptConfig();
   const parts = [];
@@ -329,21 +332,22 @@ function buildSummaryPrompt(dayKey, dayLines, mode = 'story') {
     parts.push('');
   }
   parts.push('<historical_conversation>');
-  parts.push(dayLines.join('\n'));
+  parts.push(lines.join('\n'));
   parts.push('</historical_conversation>');
   parts.push('');
   parts.push(
     chat
-      ? `<historical_conversation>是用户和你（扮演的角色）在 ${formatDayCN(dayKey)} 的聊天记录。需要对聊天进行总结和提取用户的长期要求。`
-      : `<historical_conversation>是用户和你在 ${formatDayCN(dayKey)} 扮演各自角色所创作的故事。其中带有括号的内容是用户和你的元交流，不带括号的内容是扮演各自角色的故事。需要对故事进行总结，对元交流提取 设定/要求。`
+      ? `<historical_conversation>是用户和你（扮演的角色）的一段聊天记录。需要对聊天进行总结和提取用户的长期要求。`
+      : `<historical_conversation>是用户和你扮演各自角色所创作的一段故事，大部分是故事摘要，个别轮次是原文；带有括号的内容也是用户和你的元交流，不带括号的内容是扮演各自角色的故事。需要对故事进行总结，对元交流提取 设定/要求。`
   );
   parts.push('');
   parts.push('请严格按下面的格式输出：');
   parts.push('[总结]');
+  const limit = SMALL_SUMMARY_TARGET_CHARS;
   parts.push(
     chat
-      ? '<不超200字总结<historical_conversation>里的聊天；按时间顺序列出聊了什么话题与结果，平铺直叙，不用比喻，内容太多压不进200字就列几个要点，不要分段；[总结]标记下面直接写总结正文，不要加"总结："这类前缀和分点符号。>'
-      : '<不超200字总结<historical_conversation>里的故事；按时间顺序列出关键事件，平铺直叙，不用比喻，内容太多压不进200字就列几个要点，不要分段；[总结]标记下面直接写总结正文，不要加"总结："这类前缀和分点符号。>'
+      ? `<不超${limit}字总结<historical_conversation>里的聊天；按时间顺序列出聊了什么话题与结果，平铺直叙，不用比喻，内容太多压不进${limit}字就列几个要点，不要分段；[总结]标记下面直接写总结正文，不要加"总结："这类前缀和分点符号。>`
+      : `<不超${limit}字总结<historical_conversation>里的故事；按时间顺序列出关键事件，平铺直叙，不用比喻，内容太多压不进${limit}字就列几个要点，不要分段；[总结]标记下面直接写总结正文，不要加"总结："这类前缀和分点符号。>`
   );
   parts.push('[记忆]');
   parts.push(
@@ -356,12 +360,12 @@ function buildSummaryPrompt(dayKey, dayLines, mode = 'story') {
   return parts.join('\n');
 }
 
-// 生成"剧情总览"用的 prompt：把 上一版总览 + 一批日总结 再压缩成一份不超过 1200 字的总览。
-// 和 buildSummaryPrompt 一样是单独的一次总结任务：不带角色人设/语气/输出格式约束，前置词只在故事模式带（对话总览不带）；指令放在素材后面。
-// prevOverview 为空表示还没有过总览（第一次合并）；items = [{ dayKey, text }]，按日期从早到晚。
+// 生成"大总结"（剧情总览 / 对话总览）用的 prompt：把 上一版大总结 + 一批小总结 再压缩成一份不超过 1200 字的总览。
+// 和 buildSmallSummaryPrompt 一样是单独的一次总结任务：不带角色人设/语气/输出格式约束，前置词只在故事模式带（对话总览不带）；指令放在素材后面。
+// prevOverview 为空表示还没有过大总结（第一次合并）；items = [{ label, text }]，按时间从早到晚。
 // tooLong=true 是上一次输出超字数后的重试，额外强调一次长度。
 // mode === 'chat'（网聊模式）：素材是聊天总结，输出叫"对话总览"，措辞随之调整
-function buildOverviewPrompt(prevOverview, prevCoveredUntil, items, tooLong = false, mode = 'story') {
+function buildOverviewPrompt(prevOverview, prevCoveredLabel, items, tooLong = false, mode = 'story') {
   const chat = mode === 'chat';
   const tag = chat ? 'chat_summaries' : 'story_history';
   const { prefix } = getPromptConfig();
@@ -373,31 +377,32 @@ function buildOverviewPrompt(prevOverview, prevCoveredUntil, items, tooLong = fa
   }
   parts.push(`<${tag}>`);
   if (prevOverview) {
-    parts.push(overviewHeading(prevCoveredUntil, mode)); // 用户手写的总览可能还没有水位线，标题行里就不带日期
+    parts.push(overviewHeading(prevCoveredLabel, mode)); // 用户手写的总览可能还没有水位线，标题行里就不带时间
     parts.push(prevOverview);
     parts.push('——');
   }
   for (const it of items) {
-    parts.push(chat ? `${formatDayCN(it.dayKey)} 的聊天总结：${it.text}` : `元时间 ${formatDayCN(it.dayKey)} 的故事总结：${it.text}`);
+    parts.push(`${smallSummaryHeading(it.label, mode)}${it.text}`);
   }
   parts.push(`</${tag}>`);
   parts.push('');
+  const cap = OVERVIEW_TARGET_CHARS;
   if (chat) {
     parts.push(
       prevOverview
-        ? `<${tag}>是你和用户按时间顺序排列的分段聊天概述。请把旧对话总览和之后的聊天总结重新提炼成一份不超过1200字的新对话总览。`
-        : `<${tag}>是你和用户按时间顺序排列的分段聊天概述。请把这些聊天总结提炼成一份不超过1200字的对话总览。`
+        ? `<${tag}>是你和用户按时间顺序排列的分段聊天概述。请把旧对话总览和之后的聊天总结重新提炼成一份不超过${cap}字的新对话总览。`
+        : `<${tag}>是你和用户按时间顺序排列的分段聊天概述。请把这些聊天总结提炼成一份不超过${cap}字的对话总览。`
     );
-    parts.push('要求：按时间顺序展现聊天的完整脉络；保留用户透露的重要信息；不要加"新对话总览："这类前缀和分点符号，直接输出总览内容；内容不足1200字时不要硬凑。');
+    parts.push(`要求：按时间顺序展现聊天的完整脉络；保留用户透露的重要信息；不要加"新对话总览："这类前缀和分点符号，直接输出总览内容；内容不足${cap}字时不要硬凑。`);
   } else {
     parts.push(
       prevOverview
-        ? '<story_history>是这个故事按时间顺序排列的分段事件概述。请把旧剧情总览和之后的日总结重新提炼成一份不超过1200字的新剧情总览。'
-        : '<story_history>是这个故事按时间顺序排列的分段事件概述。请把这些日总结提炼成一份不超过1200字的剧情总览。'
+        ? `<story_history>是这个故事按时间顺序排列的分段事件概述。请把旧剧情总览和之后的历史故事重新提炼成一份不超过${cap}字的新剧情总览。`
+        : `<story_history>是这个故事按时间顺序排列的分段事件概述。请把这些历史故事提炼成一份不超过${cap}字的剧情总览。`
     );
-    parts.push('要求：按事件顺序展现故事的完整脉络；保留人物关系的变化；不要加"新剧情总览："这类前缀和分点符号，直接输出总览内容；内容不足1200字时不要硬凑。');
+    parts.push(`要求：按事件顺序展现故事的完整脉络；保留人物关系的变化；不要加"新剧情总览："这类前缀和分点符号，直接输出总览内容；内容不足${cap}字时不要硬凑。`);
   }
-  if (tooLong) parts.push('注意：上一次输出超过了字数限制。这次务必精简，总字数严格控制在1200字以内。');
+  if (tooLong) parts.push(`注意：上一次输出超过了字数限制。这次务必精简，总字数严格控制在${cap}字以内。`);
   return parts.join('\n');
 }
 
@@ -408,7 +413,7 @@ function buildOverviewPrompt(prevOverview, prevCoveredUntil, items, tooLong = fa
 // --- 尾部固定说明（用户输入说明 + 必须遵守的强制性输出规则，两段都紧跟在最新内容后面，强化权重）
 //
 // 网聊模式（chat-mode.js）下的差别：不发用户的前置文本、<story_background> 世界背景、<character_outfit> 服饰和财产状况这几段；
-// 历史不做每轮摘要压缩；用 <current_time> 现实时间代替故事时间的节日播报；不发用户的输入说明，输出规则换成对话版，
+// 历史不用每轮摘要（原文超过字数线再整体压成小总结）；用 <current_time> 现实时间代替故事时间的节日播报；不发用户的输入说明，输出规则换成对话版，
 // 输出规则后面也不接摘要模块。角色卡 / 附加要求的注释文案也换成对话版。
 function buildPromptText(characterName, history, text) {
   const mode = getChatMode(characterName);
@@ -443,7 +448,7 @@ function buildPromptText(characterName, history, text) {
   if (characterCard.trim()) {
     const cardNote = chat
       ? '请扮演 该角色与用户进行网络通讯，回复的消息内容要符合该角色的个性，像真实的发送语音或文字信息网聊一样。你所扮演的角色和用户是不同时空的存在，无法真正在线下互动。'
-      : '角色的设定资料。设计/扮演 该角色的行为对话时，要符合该角色的个性。';
+      : '你所 设计/扮演 角色的设定资料';
     parts.push(`<character_card>\n<!-- ${cardNote} -->\n${characterCard}\n</character_card>`);
   }
   // 角色图库清单（Character/<角色>/images/ 现扫生成，子文件夹名 = 类别）：模型可在回复开头用 [img:类别/图片名] 发一张图。
@@ -471,18 +476,18 @@ function buildPromptText(characterName, history, text) {
   // 财产状况：角色和用户两方的资产 / 负债 / 收支（角色资产配置里填的），都没填就不发这一段
   const financialBlock = chat ? '' : buildFinancialBlock(characterName, history); // 里面按最新的故事时间推算资产；网聊模式不发资产配置
   if (financialBlock) parts.push(financialBlock);
-  // hot 记忆索引：常驻的、只存没有时效性的附加要求的小索引，由跨天总结/滚动总结
+  // hot 记忆索引：常驻的、只存没有时效性的附加要求的小索引，由压缩小总结
   // 那次 LLM 调用顺带产出并追加，不需要每轮从全量历史里现猜。没内容就不发这一段。
-  // 它是固定前缀里最会长大的块（每次总结都可能追加），所以压在固定前缀最末尾：它变的时候前面全部还能命中缓存
+  // 它是固定前缀里最会长大的块（每次压缩都可能追加），所以压在固定前缀最末尾：它变的时候前面全部还能命中缓存
   const memoryIndex = loadMemoryIndex(mode); // 附加要求：跨角色共用，但故事模式和网聊模式各一份
   if (memoryIndex.trim()) {
-    const memoryNote = chat ? '用户的附加要求，需持续遵守' : '用户的长期设定与创作要求，来自元交流，需持续遵守';
+    const memoryNote = chat ? '用户的附加要求，需持续遵守' : '用户的长期设定与创作要求，需持续遵守';
     parts.push(`<memory_index>\n<!-- ${memoryNote} -->\n${memoryIndex.trim()}\n</memory_index>`);
   }
   parts.push('---');
   // ---- 以上是固定前缀，以下是每轮都会变化的内容 ----
   if (chatHistoryText.trim()) {
-    const historyNote = chat ? '你和用户的历史聊天记录' : '故事/对话 记录；元时间指实际聊天日期，不同于故事时间';
+    const historyNote = chat ? '你和用户的历史聊天记录' : '故事/对话 记录';
     parts.push(`<chat_history>\n<!-- ${historyNote} -->\n${chatHistoryText}\n</chat_history>`);
   }
   // 故事时间的星期 + 国际/中国节日（取自上一轮摘要的"故事时间"，解析不出日期就不发这一段）。
@@ -524,6 +529,6 @@ module.exports = {
   getPromptConfig,
   savePromptConfig,
   buildPromptText,
-  buildSummaryPrompt,
+  buildSmallSummaryPrompt,
   buildOverviewPrompt,
 };

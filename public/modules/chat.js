@@ -16,19 +16,18 @@ let chatBoxTimer = null;
 //   remoteBusy：主进程广播"有一条消息在等回复"（包括聊天记录窗口发的那条）
 let localSending = false;
 let remoteBusy = false;
-// 主进程锁当前所处阶段：'summarizing' 跨天总结整理中 / 'merging' 合并剧情总览中 / 'waiting' 等待回复；没人在等时为 null。
+// 主进程锁当前所处阶段：'summarizing' 等后台压缩小总结 / 'merging' 等后台合并大总结 / 'waiting' 等待回复；没人在等时为 null。
 // 本窗口刚点发送、主进程推送还没到的那一瞬间也当作 'waiting'，推送到了再按真实阶段更新
 let pendingPhase = null;
-let pendingSummaryDay = null; // 总结阶段被总结的那天（YYYY-MM-DD），提示里要写具体日期
 const isBusy = () => localSending || remoteBusy;
-// 给喝水提醒用：正在等回复（含跨天总结）/ 正在语音输入时，提醒先不插话
+// 给喝水提醒用：正在等回复（含等后台整理总结）/ 正在语音输入时，提醒先不插话
 export const isChatBusy = () => isBusy();
 export const isVoiceInputActive = () => voiceState !== 'idle';
 
-// 各阶段给人看的提示：气泡 / 输入框 placeholder（总结阶段写具体日期，不写"上一日"——被总结的通常比昨天更早）
+// 各阶段给人看的提示：气泡 / 输入框 placeholder
 const currentPhase = () => (pendingPhase === 'summarizing' || pendingPhase === 'merging' ? pendingPhase : 'waiting');
-const phaseBubble = () => phaseHint(currentPhase(), pendingSummaryDay, true);
-const phasePlaceholder = () => phaseHint(currentPhase(), pendingSummaryDay, false);
+const phaseBubble = () => phaseHint(currentPhase(), true);
+const phasePlaceholder = () => phaseHint(currentPhase(), false);
 // AI 回复气泡的显示时长
 const REPLY_BUBBLE_MS = 5000;
 // 等回复期间的气泡：本窗口自己发的才显示（别的窗口发的，这里仍只收起输入框，不弹气泡）。
@@ -291,11 +290,10 @@ micBtn.addEventListener('click', (e) => {
 window.petAPI.onChatPendingChanged((pending) => {
   remoteBusy = !!pending;
   pendingPhase = pending ? pending.phase || 'waiting' : null;
-  pendingSummaryDay = pending ? pending.summaryDay || null : null;
   if (remoteBusy) {
     if (voiceState !== 'idle') stopVoiceInput(); // 正在录音时别人发了消息：结束录音，识别出的文字留在输入框里
     if (!localSending) hideChatBox(); // 别的窗口发起的，跟自己发送时一样把输入框收起来
-    if (localSending) showPendingBubble(); // 自己发的：阶段变了（总结 -> 等回复）同步刷新气泡文字
+    if (localSending) showPendingBubble(); // 自己发的：阶段变了（整理 -> 等回复）同步刷新气泡文字
   }
   applyBusyUI();
 });
@@ -303,7 +301,6 @@ window.petAPI.onChatPendingChanged((pending) => {
 window.petAPI.getChatPending().then((pending) => {
   remoteBusy = !!pending;
   pendingPhase = pending ? pending.phase || 'waiting' : null;
-  pendingSummaryDay = pending ? pending.summaryDay || null : null;
   applyBusyUI();
 });
 

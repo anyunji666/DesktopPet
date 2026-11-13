@@ -39,7 +39,7 @@ function isBusy() {
     !canPlayVoice() || // 舞蹈 / 退场舞
     isTtsPlaying() || // AI 回复语音：合成中 / 排队 / 播放中
     isVoicePlaying() || // 点击台词等其他语音正在播
-    isChatBusy() || // 正在等 AI 回复（含跨天总结）
+    isChatBusy() || // 正在等 AI 回复（含等后台整理总结）
     isVoiceInputActive() // 正在语音输入：外放的提醒会被麦克风收进去
   );
 }

@@ -18,7 +18,8 @@ const { state } = require('./main-modules/state');
 const { constrainMove, constrainResize, isCenterVisible } = require('./main-modules/win-limit');
 const { requestClickThrough } = require('./main-modules/drag-guard');
 const { beginChat, endChat, getChatPending, assertHistoryEditable, assertGlobalMemoryEditable } = require('./main-modules/chat-lock');
-const { planCrossDaySummary, runChatTurn } = require('./main-modules/chat-turn');
+const { runChatTurn } = require('./main-modules/chat-turn');
+const { startBackgroundCompaction, getCompactionJob } = require('./main-modules/summarizer');
 const { exportToFile, importFromFile } = require('./main-modules/chat-transfer');
 const { loadConfig, updateConfig, migrateSecrets } = require('./main-modules/config');
 const { scanCharacters } = require('./main-modules/character');
@@ -35,7 +36,8 @@ const {
   readChatVoice,
   deleteChatVoice,
   clearChatVoices,
-  clearDaySummaries,
+  clearSmallSummaries,
+  invalidateSmallSummaries,
   loadMemoryIndex,
   saveMemoryIndexManual,
   MEMORY_MAX_CHARS,
@@ -705,8 +707,8 @@ ipcMain.on('mute-changed', (_e, muted) => {
 // ---------- IPC：AI 对话 ----------
 // 一次只能发一条：chat-send 开头上锁（chat-lock.js），LLM 回复且落盘/报错之后才解锁，
 // 期间主界面和聊天记录窗口的发送都被禁用，同一角色的聊天记录也不允许编辑/插入/删除/清空。
-// 这里只做 IPC 层（校验 / 上锁 / 解锁 / 推送）；一轮对话本身怎么跑（跨天总结 -> 存图 -> 拼 prompt ->
-// 调 LLM -> 落盘 -> TTS）在 main-modules/chat-turn.js。
+// 这里只做 IPC 层（校验 / 上锁 / 解锁 / 推送）；一轮对话本身怎么跑（等上一轮后台整理 -> 存图 -> 拼 prompt ->
+// 调 LLM -> 落盘 -> TTS）在 main-modules/chat-turn.js；回复落档、解锁之后再启动后台压缩（小总结 / 大总结，summarizer.js）。
 
 ipcMain.handle('chat-send', async (e, characterName, message, imageDataURL) => {
   if (typeof characterName !== 'string' || !state.characters.some((c) => c.name === characterName)) {
@@ -717,27 +719,28 @@ ipcMain.handle('chat-send', async (e, characterName, message, imageDataURL) => {
 
   // === 上锁 ===
   // 已经有一条在等回复时 beginChat 会直接抛错，本次发送被拒绝（不影响正在进行的那一条）
-  // 先判断要不要做跨天总结 / 合并剧情总览，锁一开始就带上对应阶段（同步、无 await，判断到上锁之间不会有别的改动插进来）
-  const summaryPlan = planCrossDaySummary(characterName);
+  // 上一轮回复后触发的后台整理（小总结 / 大总结）还在跑的话，这一轮要先等它，锁一开始就带上对应阶段（同步、无 await）
+  const compactionJob = getCompactionJob(characterName);
   const fromMainWindow = state.win && !state.win.isDestroyed() && e.sender === state.win.webContents;
   beginChat({
     character: characterName,
     source: fromMainWindow ? 'main' : 'history',
     user: text,
     imageDataURL,
-    phase: summaryPlan ? summaryPlan.startPhase : 'waiting', // summarizing 跨天总结 / merging 只欠合并剧情总览 / waiting
-    summaryDay: summaryPlan ? summaryPlan.dayToSummarize : null, // 总结阶段界面提示里要写具体是哪一天
+    phase: compactionJob ? (compactionJob.stage === 'merge' ? 'merging' : 'summarizing') : 'waiting', // summarizing 等小总结 / merging 等大总结 / waiting
   });
 
   // === 跑一轮对话，成功/失败都要解锁 ===
   let turn;
   try {
-    turn = await runChatTurn(characterName, text, imageDataURL, summaryPlan);
+    turn = await runChatTurn(characterName, text, imageDataURL);
   } catch (err) {
     endChat({ ok: false });
     throw err;
   }
   endChat({ ok: true, committed: turn.committed, startIndex: turn.startIndex });
+  // 回复已落档、锁已放开：未压缩部分超过字数线就在后台压成小总结（不 await，不阻塞用户；失败只记日志，下一轮再试）
+  startBackgroundCompaction(characterName);
 
   // 主窗口自己发起的对话，气泡由渲染进程本地展示（chat.js 里 chatSend 之后直接 showBubble）；
   // 聊天记录窗口发起的对话，额外把回复推给主宠物窗口头顶显示一下。
@@ -856,12 +859,12 @@ ipcMain.on('outfits-switch-confirm', (_e, characterName) => {
   confirmOutfitsSwitch(characterName);
 });
 // ---------- IPC：附加要求（memory index）编辑（API 与全局设置窗口用） ----------
-// 附加要求 = 跨天总结时 AI 从元交流里自动提炼的长期设定/要求，这里允许用户手动增删改。全局共用一份，不区分角色。
+// 附加要求 = 生成小总结时 AI 从元交流里自动提炼的长期设定/要求，这里允许用户手动增删改。全局共用一份，不区分角色。
 // 故事模式和网聊模式各一份（mode：'story' | 'chat'，省略 = 'story'），跨角色共用
 const memoryModeOf = (mode) => (mode === 'chat' ? 'chat' : 'story');
 ipcMain.handle('get-memory-index', (_e, mode) => ({ text: loadMemoryIndex(memoryModeOf(mode)), maxChars: MEMORY_MAX_CHARS }));
 ipcMain.handle('save-memory-index', (_e, text, mode) => {
-  // 任何角色正在等回复 / 做跨天总结时，总结那次调用可能马上要往这份附加要求里追加，此时手动保存会互相覆盖，直接拦下
+  // 任何角色正在等回复时拦下（后台生成小总结也会往这份附加要求里追加，两边几乎不会撞上；真撞上时追加那边读到的是最新内容，只是可能覆盖掉手动保存的那一刻的改动）
   assertGlobalMemoryEditable();
   saveMemoryIndexManual(text, memoryModeOf(mode));
   return true;
@@ -1060,6 +1063,7 @@ ipcMain.handle('edit-chat-message', (_e, characterName, index, content) => {
     target.content = text;
   }
   saveChatHistory(characterName, history);
+  invalidateSmallSummaries(characterName, [target.ts]); // 改过的消息如果已被压进某条小总结，那条小总结作废，这段消息重新参与字数统计
   if (target.role === 'assistant') {
     const sp = splitTurnSummary(target.content);
     const pick = pickLibraryImage(characterName, sp.body); // 编辑后标签可能被改 / 删，气泡图片跟着更新
@@ -1091,6 +1095,7 @@ ipcMain.handle('delete-chat-message', (_e, characterName, index) => {
   if (index >= history.length) throw new Error('无效的消息索引');
   const removed = history.splice(index, 1)[0];
   saveChatHistory(characterName, history); // 先落盘，成功后再删图片/语音文件，避免记录还在、附件却没了
+  if (removed) invalidateSmallSummaries(characterName, [removed.ts]); // 覆盖过这条消息的小总结作废，其余消息重新参与字数统计
   if (removed && removed.image) deleteChatImage(characterName, removed.image); // 图片文件跟着删
   if (removed) deleteChatVoice(characterName, removed.ts); // 回复语音也跟着删
   return true;
@@ -1107,6 +1112,7 @@ ipcMain.handle('truncate-chat-history', (_e, characterName, fromIndex) => {
   if (fromIndex >= history.length) throw new Error('无效的消息索引');
   const removed = history.splice(fromIndex);
   saveChatHistory(characterName, history); // 先落盘，成功后再删图片文件，避免记录还在图片却没了
+  invalidateSmallSummaries(characterName, removed.map((m) => m && m.ts)); // 覆盖过这些消息的小总结作废
   for (const m of removed) {
     if (!m) continue;
     if (m.image) deleteChatImage(characterName, m.image);
@@ -1115,9 +1121,9 @@ ipcMain.handle('truncate-chat-history', (_e, characterName, fromIndex) => {
   return removed.length;
 });
 
-// 剧情总览（聊天记录窗口"⋯ → 剧情总览"）：读取 / 手动保存。总览由跨天总结后的合并流程自动生成（story-overview.js），
-// 这里允许用户读和改正文；水位线 coveredUntil 只读，保存时原样保留。
-// 保存时这个角色正在等回复 / 做总结 / 合并总览会拦下：合并那次调用马上要写同一个文件，手动保存会和它互相覆盖
+// 大总结（聊天记录窗口"⋯ → 剧情总览 / 对话总览"）：读取 / 手动保存。大总结由小总结攒够字数后的合并流程自动生成（story-overview.js），
+// 这里允许用户读和改正文；水位线 coveredUntil / coveredLabel 只读，保存时原样保留。
+// 保存时这个角色正在等回复会拦下；后台合并（回复后在后台跑，不占聊天锁）写盘前会核对大总结有没有被改过，被改过就丢弃合并结果
 ipcMain.handle('get-story-overview', (_e, characterName) => {
   if (!validCharacter(characterName)) throw new Error('未知角色');
   return { ...loadStoryOverview(characterName), maxChars: STORY_OVERVIEW_MAX_CHARS };
@@ -1130,9 +1136,9 @@ ipcMain.handle('save-story-overview', (_e, characterName, text) => {
     throw new Error(`剧情总览超过 ${STORY_OVERVIEW_MAX_CHARS} 字上限（当前 ${t.length} 字），请删减后再保存`);
   }
   const cur = loadStoryOverview(characterName);
-  // 全部清空 = 用户想去掉总览：水位线保留（那些天的日总结不会因此重新冒出来）；本来就没有总览、又保存空文本则什么都不写
+  // 全部清空 = 用户想去掉总览：水位线保留（那些已并入的小总结 / 消息不会因此重新冒出来）；本来就没有总览、又保存空文本则什么都不写
   if (!t && !cur.text && !cur.coveredUntil) return true;
-  saveStoryOverview(characterName, { text: t, coveredUntil: cur.coveredUntil });
+  saveStoryOverview(characterName, { text: t, coveredUntil: cur.coveredUntil, coveredLabel: cur.coveredLabel });
   return true;
 });
 
@@ -1187,8 +1193,8 @@ ipcMain.handle('clear-chat-history', (_e, characterName) => {
   saveChatHistory(characterName, []);
   clearChatImages(characterName); // 图片文件夹整个清掉
   clearChatVoices(characterName); // 回复语音文件夹也整个清掉
-  clearDaySummaries(characterName); // 按天总结缓存也一起清掉
-  clearStoryOverview(characterName); // 剧情总览也一起清掉
+  clearSmallSummaries(characterName); // 小总结也一起清掉
+  clearStoryOverview(characterName); // 大总结也一起清掉
   if (getChatMode(characterName) === 'story') resetAssetsStoryClock(characterName); // 故事资产结算跟着删除，之后回到初始资产设定（网聊模式清空不影响故事模式的数据）
   return true;
 });

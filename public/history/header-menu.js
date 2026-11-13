@@ -4,7 +4,6 @@ import { editLocked, notifyEditLocked, onPendingChange } from './pending.js';
 import { alertError, showToast } from './toast.js';
 import { appendMsg, reload } from './messages.js';
 import { confirmDialog } from './confirm-dialog.js';
-import { dayLabelCN } from '../day-label.js';
 
 const menuWrap = document.getElementById('menu-wrap');
 const menu = document.getElementById('menu');
@@ -92,13 +91,13 @@ let currentMode = 'story';
 const OVERVIEW_TEXTS = {
   story: {
     name: '剧情总览',
-    hint: '日总结攒够 2000 字后，会由 AI 连同上一版总览一起再压缩成这份总览，作为更早剧情的脉络发给 AI。可以直接修改，保存后下次对话就会按改后的内容发送；清空保存则不再发送这些天的内容。',
-    placeholder: '还没有剧情总览。日总结攒够字数后会自动生成，也可以在这里手动写一份。',
+    hint: '小总结攒够 2000 字后，会由 AI 连同上一版总览一起再压缩成这份总览，作为更早剧情的脉络发给 AI。可以直接修改，保存后下次对话就会按改后的内容发送；清空保存则不再发送这段时间的内容。',
+    placeholder: '还没有剧情总览。小总结攒够字数后会自动生成，也可以在这里手动写一份。',
   },
   chat: {
     name: '对话总览',
-    hint: '每日总结攒够 2000 字后，会由 AI 连同上一版总览一起再压缩成这份总览，作为更早聊天的脉络发给 AI。可以直接修改，保存后下次对话就会按改后的内容发送；清空保存则不再发送这些天的内容。',
-    placeholder: '还没有对话总览。每日总结攒够字数后会自动生成，也可以在这里手动写一份。',
+    hint: '小总结攒够 2000 字后，会由 AI 连同上一版总览一起再压缩成这份总览，作为更早聊天的脉络发给 AI。可以直接修改，保存后下次对话就会按改后的内容发送；清空保存则不再发送这段时间的内容。',
+    placeholder: '还没有对话总览。小总结攒够字数后会自动生成，也可以在这里手动写一份。',
   },
 };
 function overviewTexts() {
@@ -167,8 +166,8 @@ renderMode();
 window.petAPI.getChatMode(characterName).then((m) => { currentMode = m; renderMode(); }).catch(() => {});
 
 // ---- 剧情总览：查看 / 手动编辑 ----
-// 总览由日总结攒够字数后自动合并生成（主进程 story-overview.js），这里只改正文；水位线（"已整理到哪天"）只读展示。
-// 等回复期间（含总结 / 合并总览）不能保存：合并那次调用马上要写同一个文件，主进程也会拦。
+// 总览由小总结攒够字数后自动合并生成（主进程 story-overview.js），这里只改正文；水位线（"已整理到哪个时间点"）只读展示。
+// 等回复期间不能保存（主进程也会拦）；后台合并写盘前会核对总览有没有被改过，被改过就丢弃合并结果。
 const overviewOverlay = document.getElementById('overview-overlay');
 const overviewText = document.getElementById('overview-text');
 const overviewCovered = document.getElementById('overview-covered');
@@ -194,8 +193,8 @@ async function openOverview() {
   }
   overviewMax = data.maxChars || 1600;
   overviewText.value = data.text || '';
-  const label = dayLabelCN(data.coveredUntil);
-  overviewCovered.textContent = label ? `已整理到 ${label}（这天及以前的日总结不再单独发送）` : '';
+  const label = data.coveredLabel || '';
+  overviewCovered.textContent = label ? `已整理到 ${label}（这个时间点及以前的小总结不再单独发送）` : '';
   refreshOverviewCount();
   overviewOverlay.classList.remove('hidden');
   setTimeout(() => overviewText.focus(), 50);
@@ -254,7 +253,7 @@ menuExportBtn.addEventListener('click', async () => {
 menuImportBtn.addEventListener('click', async () => {
   closeMenu();
   if (editLocked()) return notifyEditLocked();
-  if (!(await confirmDialog(`导入会用文件里的内容覆盖和「${characterName}」现有的全部聊天记录（包括按天总结），此操作不可撤销。建议先导出备份。继续选择文件吗？`))) return;
+  if (!(await confirmDialog(`导入会用文件里的内容覆盖和「${characterName}」现有的全部聊天记录（包括小总结和总览），此操作不可撤销。建议先导出备份。继续选择文件吗？`))) return;
   if (editLocked()) return notifyEditLocked(); // 确认期间刚好发出了新消息
   try {
     const r = await window.petAPI.importChatHistory(characterName);

@@ -1,15 +1,14 @@
 // ---------- AI 对话的"一次只能发一条"锁 ----------
 // 主界面输入框和聊天记录窗口都能发消息，而一条消息从发出到回复落盘之间有一段不短的等待
-// （LLM 请求 + 可能的跨天总结）。这期间：
+// （LLM 请求 + 可能要先等上一轮的后台整理）。这期间：
 //   1) 不允许再发第二条（两个窗口共用同一把锁，任何一边在等，另一边也发不了）
 //   2) 不允许改动同一角色的聊天记录（编辑/插入/删除/清空），否则 chat-send 结尾整份落盘时会把改动覆盖掉
 // 锁放在主进程，不依赖任何一个窗口自己的界面状态；界面上的禁用只是给人看的，真正的拦截在这里。
 // 状态存在 state.chatPending 上，开始/结束都会广播给主窗口和聊天记录窗口，两边按钮据此联动。
 // 锁内分三个阶段（phase），只影响界面上给人看的提示文案，不影响拦截规则：
-//   'summarizing'：跨天了，正在先给某一天生成总结（这次 LLM 调用完才会去生成回复）。被总结的不一定是昨天：
-//                  昨天是"上一天"、发原文，被总结的通常是更早的一天，日期放在 summaryDay 里给界面显示
-//   'merging'    ：日总结攒够字数，正在把它们并进剧情总览（story-overview.js）；总览整理完才会去生成回复
-//   'waiting'    ：等待 LLM 回复（没有总结/合并要做的对话从头到尾都是这个阶段）
+//   'summarizing'：上一轮回复后触发的后台压缩（未压缩部分超过字数线，压成小总结，summarizer.js）还没跑完，这一轮要先等它
+//   'merging'    ：小总结攒够字数，后台正在把它们并进大总结（story-overview.js）；整理完才会去生成回复
+//   'waiting'    ：等待 LLM 回复（没有后台整理要等的对话从头到尾都是这个阶段）
 const { state } = require('./state');
 
 function sendTo(win, channel, payload) {
@@ -18,7 +17,7 @@ function sendTo(win, channel, payload) {
 
 // 主窗口只需要知道"有人在等"，不用带上用户消息/图片
 function lightPending(p) {
-  return p ? { character: p.character, source: p.source, phase: p.phase, summaryDay: p.summaryDay } : null;
+  return p ? { character: p.character, source: p.source, phase: p.phase } : null;
 }
 
 function broadcastPending() {
@@ -29,15 +28,14 @@ function broadcastPending() {
 }
 
 // 开始一轮对话：已经有一轮在等就抛错（这就是"一次只能发一条"的兜底），否则上锁并广播
-// phase 是起始阶段：已知要先做跨天总结就传 'summarizing'（只欠合并总览就传 'merging'），这样界面从一开始就显示对的提示，不会先闪一下"等待回复"
-// summaryDay：phase 为 'summarizing' 时被总结的那天（YYYY-MM-DD），只用于界面提示
-function beginChat({ character, source, user, imageDataURL, phase = 'waiting', summaryDay = null }) {
+// phase 是起始阶段：已知要先等后台整理就传 'summarizing'（正在合并大总结就传 'merging'），这样界面从一开始就显示对的提示，不会先闪一下"等待回复"
+function beginChat({ character, source, user, imageDataURL, phase = 'waiting' }) {
   if (state.chatPending) throw new Error('上一条消息还没有回复，请等它回复或报错后再发送');
-  state.chatPending = { character, source, user, imageDataURL: imageDataURL || null, ts: Date.now(), phase, summaryDay };
+  state.chatPending = { character, source, user, imageDataURL: imageDataURL || null, ts: Date.now(), phase };
   broadcastPending();
 }
 
-// 切换阶段并广播（比如总结整理完了，进入等待回复）。没有在等的对话、或阶段没变就什么都不做
+// 切换阶段并广播（比如后台整理跑完了，进入等待回复）。没有在等的对话、或阶段没变就什么都不做
 function setChatPhase(phase) {
   const p = state.chatPending;
   if (!p || p.phase === phase) return;
@@ -67,8 +65,8 @@ function assertHistoryEditable(characterName) {
   }
 }
 
-// 修改全局共用的附加要求前调用：任何角色正在等回复 / 做跨天总结时都抛错。
-// 附加要求是全局一份，不管哪个角色的跨天总结都可能马上往里追加，手动保存会互相覆盖，所以不再按角色区分
+// 修改全局共用的附加要求前调用：任何角色正在等回复时都抛错。
+// 附加要求是全局一份，不管哪个角色的小总结都可能往里追加，手动保存会互相覆盖，所以不再按角色区分
 function assertGlobalMemoryEditable() {
   if (state.chatPending) {
     throw new Error('正在等待回复，暂时不能修改附加要求');

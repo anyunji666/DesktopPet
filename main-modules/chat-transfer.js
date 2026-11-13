@@ -1,14 +1,14 @@
 // ---------- 聊天记录导入 / 导出 ----------
-// 导出成一个 JSON 文件：消息（图片以 dataURL 内嵌）+ 按天总结 + 剧情总览，方便备份 / 换电脑迁移。
+// 导出成一个 JSON 文件：消息（图片以 dataURL 内嵌）+ 小总结 + 大总结（剧情总览 / 对话总览），方便备份 / 换电脑迁移。
 // 导入是"整份覆盖"：先把文件完整校验一遍，确认没问题才动现有数据，坏文件不会把原来的记录弄丢。
 // 回复语音也不导出（体积大），导入覆盖时把旧的语音一并清掉。
 const fs = require('fs');
 const {
   loadChatHistory,
   saveChatHistory,
-  loadDaySummaries,
-  saveDaySummary,
-  clearDaySummaries,
+  loadSmallSummaries,
+  saveSmallSummaries,
+  clearSmallSummaries,
   loadStoryOverview,
   saveStoryOverview,
   clearStoryOverview,
@@ -26,7 +26,6 @@ const { getChatMode } = require('./chat-mode');
 const FORMAT = 'desktop-pet-chat';
 const VERSION = 1;
 const MAX_IMPORT_BYTES = 300 * 1024 * 1024; // 图片是 base64 内嵌的，文件可能不小；再大就当异常文件
-const DAY_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 // ---------- 导出 ----------
 function buildExport(characterName) {
@@ -45,8 +44,8 @@ function buildExport(characterName) {
     character: characterName,
     exportedAt: new Date().toISOString(),
     messages,
-    daySummaries: loadDaySummaries(characterName),
-    storyOverview: loadStoryOverview(characterName), // { text, coveredUntil }；没有总览时是空文本
+    smallSummaries: loadSmallSummaries(characterName), // [{ fromTs, toTs, text, label, endLabel }]
+    storyOverview: loadStoryOverview(characterName), // { text, coveredUntil, coveredLabel }；没有大总结时是空文本
   };
   // 故事资产结算（手动调整过的资产和物品，带故事开始日期 / 截至日期）跟着这段故事走；初始资产设定属于角色，不导出
   // 网聊模式没有故事资产（那属于故事模式的数据），不导出
@@ -62,10 +61,10 @@ function exportToFile(characterName, filePath) {
 }
 
 // ---------- 导入：校验 ----------
-// 返回清洗后的 { messages, daySummaries, storyOverview }；格式不对直接抛错（此时还没动任何数据）
+// 返回清洗后的 { messages, smallSummaries, storyOverview }；格式不对直接抛错（此时还没动任何数据）
 function parseImport(data) {
   let rawMessages;
-  let rawSummaries = {};
+  let rawSummaries = [];
   let rawOverview = null;
   let rawStoryAssets = null;
   if (Array.isArray(data)) {
@@ -76,10 +75,8 @@ function parseImport(data) {
       throw new Error('文件版本比当前程序新，请先更新程序再导入');
     }
     rawMessages = data.messages;
-    if (data.daySummaries && typeof data.daySummaries === 'object' && !Array.isArray(data.daySummaries)) {
-      rawSummaries = data.daySummaries;
-    }
-    if (data.storyOverview && typeof data.storyOverview === 'object') rawOverview = data.storyOverview; // 旧版导出文件没有这个字段
+    if (Array.isArray(data.smallSummaries)) rawSummaries = data.smallSummaries; // 不是小总结格式的（比如旧版的按天总结）直接忽略
+    if (data.storyOverview && typeof data.storyOverview === 'object') rawOverview = data.storyOverview;
     if (data.storyAssets && typeof data.storyAssets === 'object') rawStoryAssets = data.storyAssets; // 旧版导出文件 / 当时没建立故事资产：没有这个字段
     // 旧版导出文件里的 memoryIndex（当时附加要求跟随角色）直接忽略：附加要求现在是全局共用的，不随单个角色的聊天记录导入导出
   } else {
@@ -107,18 +104,29 @@ function parseImport(data) {
   }
   if (!messages.length) throw new Error('文件里没有可导入的有效消息');
 
-  const daySummaries = {};
-  for (const [k, v] of Object.entries(rawSummaries)) {
-    if (DAY_KEY_RE.test(k) && typeof v === 'string' && v) daySummaries[k] = v;
+  // 小总结：缺字段 / 时间范围不对的丢掉；没有对应消息（时间范围内一条消息都没有）的也丢掉，免得残留的总结一直发给模型
+  const smallSummaries = [];
+  for (const it of rawSummaries) {
+    const text = it && typeof it.text === 'string' ? it.text.trim() : '';
+    if (!text || !Number.isFinite(it.fromTs) || !Number.isFinite(it.toTs) || it.toTs < it.fromTs) continue;
+    if (!messages.some((m) => m.ts >= it.fromTs && m.ts <= it.toTs)) continue;
+    smallSummaries.push({
+      fromTs: it.fromTs,
+      toTs: it.toTs,
+      text,
+      label: typeof it.label === 'string' ? it.label : '',
+      endLabel: typeof it.endLabel === 'string' ? it.endLabel : '',
+    });
   }
-  // 剧情总览：正文太长（超过上限）/ 水位线格式不对的直接丢弃，不让坏数据进来；丢弃后那几天的日总结仍照常发送
-  let storyOverview = { text: '', coveredUntil: '' };
+  // 大总结：正文太长（超过上限）的直接丢弃，不让坏数据进来；水位线不是时间戳就当没有（没有水位线的总览当作用户手写的）
+  let storyOverview = { text: '', coveredUntil: 0, coveredLabel: '' };
   if (rawOverview) {
     const text = typeof rawOverview.text === 'string' ? rawOverview.text.trim() : '';
-    const coveredUntil = typeof rawOverview.coveredUntil === 'string' && DAY_KEY_RE.test(rawOverview.coveredUntil) ? rawOverview.coveredUntil : '';
-    if (text.length <= STORY_OVERVIEW_MAX_CHARS) storyOverview = { text, coveredUntil: text ? coveredUntil : '' };
+    const coveredUntil = Number.isFinite(rawOverview.coveredUntil) && rawOverview.coveredUntil > 0 ? rawOverview.coveredUntil : 0;
+    const coveredLabel = typeof rawOverview.coveredLabel === 'string' ? rawOverview.coveredLabel : '';
+    if (text.length <= STORY_OVERVIEW_MAX_CHARS) storyOverview = { text, coveredUntil: text ? coveredUntil : 0, coveredLabel: text && coveredUntil ? coveredLabel : '' };
   }
-  return { messages, daySummaries, storyOverview, storyAssets: rawStoryAssets, skipped };
+  return { messages, smallSummaries, storyOverview, storyAssets: rawStoryAssets, skipped };
 }
 
 // ---------- 导入：落盘 ----------
@@ -126,7 +134,7 @@ function parseImport(data) {
 // 如果一上来就清空旧图片 / 旧总结，中途失败（磁盘满、写入出错）时旧记录还在、它引用的图片却已经没了；
 // 现在中途失败会把已存的新图片回滚掉，原有的记录、图片、总结原封不动。
 function applyImport(characterName, data) {
-  const { messages, daySummaries, storyOverview, storyAssets, skipped } = parseImport(data);
+  const { messages, smallSummaries, storyOverview, storyAssets, skipped } = parseImport(data);
 
   const history = [];
   const newImages = new Set(); // 这次导入新存下来的图片文件名
@@ -154,9 +162,9 @@ function applyImport(characterName, data) {
   // 新记录已经落盘：整份覆盖，把旧数据清掉，跟"清空对话"清掉的东西保持一致
   purgeImagesExcept(characterName, newImages);
   clearChatVoices(characterName);
-  clearDaySummaries(characterName);
+  clearSmallSummaries(characterName);
   clearStoryOverview(characterName);
-  for (const [k, v] of Object.entries(daySummaries)) saveDaySummary(characterName, k, v);
+  if (smallSummaries.length) saveSmallSummaries(characterName, smallSummaries);
   if (storyOverview.text) saveStoryOverview(characterName, storyOverview);
   // 网聊模式的导入只动网聊模式自己的数据，不碰故事模式的故事资产结算
   if (getChatMode(characterName) === 'story') restoreStoryAssets(characterName, storyAssets); // 文件里有故事资产就还原，没有就删掉当前的（之后按初始资产重新生成）

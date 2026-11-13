@@ -1,27 +1,21 @@
 // ---------- AI 对话：一轮对话的完整流程 ----------
-// 跨天总结 -> 剧情总览合并（日总结攒够字数时）-> 存图 -> 拼 prompt -> 调 LLM -> 落盘 -> 触发 TTS。
+// （上一轮的后台整理还没跑完就先等它）-> 存图 -> 拼 prompt -> 调 LLM -> 落盘 -> 触发 TTS。
 // 只管"这一轮怎么跑"：不碰 IPC、不上锁——上锁/解锁、校验角色名、把回复推给窗口都在 main.js 的 chat-send 里；
-// 这里只在阶段变化时通过 chat-lock.js 的 setChatPhase 切换锁的阶段（总结 -> 合并总览 -> 等待回复），界面提示随之切换。
+// 回复落档之后要不要压缩小总结 / 合并大总结，由 main.js 解锁后调 summarizer.js 的 startBackgroundCompaction 在后台处理，
+// 这里只在"上一轮后台整理还没跑完"时通过 chat-lock.js 的 setChatPhase 切换锁的阶段（整理 -> 等待回复），界面提示随之切换。
 const { setChatPhase } = require('./chat-lock');
-const { needsOverviewMerge, mergeCoolingDown, tryMergeStoryOverview } = require('./story-overview');
+const { getCompactionJob } = require('./summarizer');
 const {
   loadChatHistory,
   saveChatHistory,
   saveChatImage,
   deleteChatImage,
-  loadDaySummary,
-  saveDaySummary,
-  appendMemoryLines,
 } = require('./chat-store');
-const { getApiConfig, buildPromptText, buildSummaryPrompt } = require('./llm');
+const { getApiConfig, buildPromptText } = require('./llm');
 const {
   splitTurnSummary,
   extractStoryTime,
   extractOverview,
-  dayKeyOf,
-  computeLastPastDayKey,
-  flattenDayLines,
-  parseSummaryAndMemory,
 } = require('./history-flatten');
 const { callLLM } = require('./llm-client');
 const { getChatMode } = require('./chat-mode');
@@ -29,75 +23,34 @@ const { pickLibraryImage, withImageTag } = require('./image-library');
 const { speakReply } = require('./tts');
 const { stripTones, stripSpeakers } = require('./tts/tone');
 
-// 一轮对话的完整流程：跨天总结 -> 合并剧情总览 -> 存图 -> 拼 prompt -> 调 LLM -> 落盘 -> 触发 TTS。
+// 一轮对话的完整流程：等上一轮后台整理 -> 存图 -> 拼 prompt -> 调 LLM -> 落盘 -> 触发 TTS。
 // 成功返回 { reply, committed, startIndex }；任何一步抛错都不会落历史。
 // imageDataURL 可选：用户随这条消息发的图片（选文件/粘贴/截图）。图片会：
 // 1) 存进 chat-history/images/<角色>/，消息里记文件名（记录窗口里能回看）
 // 2) vision 开启时按 OpenAI 视觉格式随本轮消息直发给模型；关闭时只以 "[图片]" / 用户附言的文字形式进 prompt
-// 报错时（总结/回复请求失败、超时等）本轮不落历史，已经存进磁盘的图片文件就成了没人引用的孤儿，
+// 报错时（回复请求失败、超时等）本轮不落历史，已经存进磁盘的图片文件就成了没人引用的孤儿，
 // 这里统一在失败时删掉；图片仍留在渲染进程里，界面会把它放回预览区方便直接重发
-async function runChatTurn(characterName, text, imageDataURL, summaryPlan) {
+async function runChatTurn(characterName, text, imageDataURL) {
   const imageHolder = { file: null }; // 已存盘、但还没写进聊天记录的图片文件名
   try {
-    return await runChatTurnInner(characterName, text, imageDataURL, imageHolder, summaryPlan);
+    return await runChatTurnInner(characterName, text, imageDataURL, imageHolder);
   } catch (err) {
     if (imageHolder.file) deleteChatImage(characterName, imageHolder.file);
     throw err;
   }
 }
 
-// 判断这一轮要不要先做"整理"：
-//   1) 跨天总结：跨天了（本轮消息和历史最后一条不是同一天），"上一天"要往前挪一格，原文不再发送，
-//      退之前得先把被挪出去的那天总结好、缓存起来（没缓存过才需要总结）；
-//   2) 合并剧情总览：未并入总览的日总结超过 2000 字（见 story-overview.js）。刚生成完新日总结时在 runChatTurnInner 里判断；
-//      这里只处理"日总结都齐了、但上次合并失败还欠着"的情况。
-// 需要就返回 { dayToSummarize, dayLines, startPhase }（只欠合并时 dayToSummarize / dayLines 为 null），不需要返回 null。
-// 纯同步、只读磁盘：chat-send 上锁前先调它，这样锁一开始就能带上正确的阶段（summarizing / merging / waiting），
-// runChatTurnInner 再按这份结果去执行。
-function planCrossDaySummary(characterName) {
-  const history = loadChatHistory(characterName);
-  if (!history.length) return null;
-  const lastMsgDayKey = dayKeyOf(history[history.length - 1].ts || Date.now());
-  if (dayKeyOf(Date.now()) !== lastMsgDayKey) {
-    const dayToSummarize = computeLastPastDayKey(history, lastMsgDayKey);
-    if (dayToSummarize && !loadDaySummary(characterName, dayToSummarize)) {
-      const dayLines = flattenDayLines(characterName, history, dayToSummarize, getChatMode(characterName));
-      if (dayLines.length) return { dayToSummarize, dayLines, startPhase: 'summarizing' };
-    }
-  }
-  if (needsOverviewMerge(characterName, history) && !mergeCoolingDown(characterName)) {
-    return { dayToSummarize: null, dayLines: null, startPhase: 'merging' };
-  }
-  return null;
-}
-
-async function runChatTurnInner(characterName, text, imageDataURL, imageHolder, summaryPlan) {
-  const history = loadChatHistory(characterName);
-
-  // === 跨天总结 + 合并剧情总览 ===
-  // 这两次调用和下面生成回复的调用串行执行，不并发。
-  // 日总结失败了（网络/接口报错）直接抛出去，本轮不生成回复、不落历史，跟 callLLM 本身失败的表现一致；
-  // 合并总览失败不抛：水位线不动，那几天的日总结照常发送，下次再试（见 story-overview.js）。
-  // 日总结落盘后，如果未并入总览的日总结超过 2000 字，紧接着合并一次（"当日总结字数到了就跟着做大总结"），然后才去生成回复。
-  // 每个阶段结束都把锁切到下一个阶段，界面提示随之切换。
-  if (summaryPlan) {
-    if (summaryPlan.dayToSummarize) {
-      const { dayToSummarize, dayLines } = summaryPlan;
-      const summaryPrompt = buildSummaryPrompt(dayToSummarize, dayLines, getChatMode(characterName));
-      const rawSummary = await callLLM(
-        [{ role: 'user', content: summaryPrompt }],
-        `总结生成 - ${characterName}`
-      );
-      const { summary, memoryLines } = parseSummaryAndMemory(rawSummary);
-      saveDaySummary(characterName, dayToSummarize, summary || rawSummary.trim());
-      if (memoryLines.length) appendMemoryLines(memoryLines, getChatMode(characterName)); // 提炼出的要求记进当前模式自己的那份
-    }
-    if (needsOverviewMerge(characterName, history)) {
-      setChatPhase('merging');
-      await tryMergeStoryOverview(characterName, history);
-    }
+async function runChatTurnInner(characterName, text, imageDataURL, imageHolder) {
+  // === 等上一轮的后台整理 ===
+  // 上一轮回复后触发的小总结 / 大总结还没跑完：等它跑完再拼这一轮的 prompt，这样 prompt 里用的是压缩后的历史。
+  // 后台整理失败不会抛到这里（summarizer.js 里兜住了），那段内容照常按原样发送。
+  const job = getCompactionJob(characterName);
+  if (job) {
+    setChatPhase(job.stage === 'merge' ? 'merging' : 'summarizing');
+    await job.promise;
     setChatPhase('waiting');
   }
+  const history = loadChatHistory(characterName);
 
   // === 存图并拼 prompt ===
   // 先落图片文件，再拼 prompt（vision 模式需要 dataURL，拼完就能丢掉）
@@ -121,7 +74,7 @@ async function runChatTurnInner(characterName, text, imageDataURL, imageHolder, 
   }
 
   // === 调 LLM 并拆解回复 ===
-  // 回复末尾会带一个 <story_overview> 摘要块（给历史轮次压缩用）；配音语气则写在正文每个「」里面、台词前面
+  // 回复末尾会带一个 <story_overview> 摘要块（给历史里较早的轮次替换原文用）；配音语气则写在正文每个「」里面、台词前面
   // （例：「【嗔怪，语速偏快】你不要过来～」），和摘要块的位置互不影响。
   const rawReply = await callLLM(messages, `对话回复 - ${characterName}`);
   const { body: rawReplyBody, summaryBlock: rawSummaryBlock } = splitTurnSummary(rawReply);
@@ -142,7 +95,7 @@ async function runChatTurnInner(characterName, text, imageDataURL, imageHolder, 
   const userContentForHistory = text;
   // 存档保留说话者前缀：模型看到历史里带前缀，才会继续标注；发过图的话正文前补回规范化的 [img:类别/图片名]，模型下一轮能看到自己发过什么
   const replyTextForHistory = replyKeepSpeakers ? withImageTag(imagePick.id, replyKeepSpeakers) : replyKeepSpeakers;
-  // 摘要块重新拼回存档内容末尾——flattenChatHistory 做轮次压缩要靠它才能把老轮次换成摘要；
+  // 摘要块重新拼回存档内容末尾——flattenChatHistory 要靠它才能把老轮次换成摘要，压缩字数也按摘要算；
   // 语气【】不拼回去，跟现在的设计一致：语气只给 TTS 用，不落档、也不发回模型
   const replyContentForHistory = summaryBlock ? `${replyTextForHistory}\n${summaryBlock}` : replyTextForHistory;
   // committed 是这轮"实际落盘"的消息（给聊天记录窗口用，内容和 get-chat-history 返回的一致：
@@ -178,4 +131,4 @@ async function runChatTurnInner(characterName, text, imageDataURL, imageHolder, 
   return { reply: bubbleReply, committed, startIndex };
 }
 
-module.exports = { planCrossDaySummary, runChatTurn };
+module.exports = { runChatTurn };

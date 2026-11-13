@@ -101,7 +101,7 @@ contextBridge.exposeInMainWorld('petAPI', {
   clearChatHistory: (characterName) => ipcRenderer.invoke('clear-chat-history', characterName),
   exportChatHistory: (characterName) => ipcRenderer.invoke('export-chat-history', characterName),
   importChatHistory: (characterName) => ipcRenderer.invoke('import-chat-history', characterName),
-  // 剧情总览（聊天记录窗口 ⋯ 菜单里查看 / 手动编辑）：get 返回 { text, coveredUntil, maxChars }
+  // 大总结：剧情总览 / 对话总览（聊天记录窗口 ⋯ 菜单里查看 / 手动编辑）：get 返回 { text, coveredUntil(时间戳), coveredLabel(标题里的时间点), maxChars }
   getStoryOverview: (characterName) => ipcRenderer.invoke('get-story-overview', characterName),
   saveStoryOverview: (characterName, text) => ipcRenderer.invoke('save-story-overview', characterName, text),
 

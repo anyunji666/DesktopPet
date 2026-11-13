@@ -81,7 +81,7 @@ function savePersonaFile(characterName, { system, storyBackground, aliases, read
   fs.writeFileSync(p, JSON.stringify({ system: sys, storyBackground: bg, aliases: al, readerInfo: reader }, null, 2), 'utf-8');
 }
 
-// 故事模式和网聊模式的聊天数据（聊天记录 / 每日总结 / 总览 / 图片 / 语音）分开存、互不打扰：
+// 故事模式和网聊模式的聊天数据（聊天记录 / 小总结 / 大总结 / 图片 / 语音）分开存、互不打扰：
 // 故事模式沿用原来的文件名（<角色名>…，老用户的数据不用迁移），网聊模式在角色名后面加 @chat（<角色名>@chat…）。
 // 下面所有按角色存取的路径都经过 storeName，按"当前模式"自动选；mode 参数可选，显式指定时不看当前模式
 // （资产配置这类只属于故事模式的功能固定传 'story'）。附加要求（__global-memory.md）本来就是全局的，两个模式共用。
@@ -159,59 +159,92 @@ function saveChatHistory(characterName, history) {
   }
 }
 
-// ---------- 历史总结缓存：chat-history/<角色名>-summaries.json，{ "YYYY-MM-DD": "总结文本" } ----------
-// 跨天时把"刚结束那天"的原文总结一次并缓存在这里，之后 flattenChatHistory 摊平历史时，
-// 不在"今天 / 上一天"原文范围内、又还没并进剧情总览的天直接读这里的总结，不用每次都重新让 LLM 总结。
-// 日总结本身永远保留（并进总览之后只是不再发送），总览出问题时随时有素材可以重做。
+// ---------- 小总结：chat-history/<角色名>-summaries.json，{ "version": 2, "items": [ { fromTs, toTs, text, label, endLabel } ] } ----------
+// 未压缩部分（见 summary-config.js）超过字数线时，summarizer.js 把最老的一批消息压成一条小总结存在这里。
+// fromTs / toTs 是这条小总结覆盖的第一条 / 最后一条消息的时间戳（ts），范围内的消息不再单独发送；
+// label 是标题里的时间区间（"9月27日 10:00～9月28日 9:00"，故事模式取故事时间），endLabel 是区间终点，合并进大总结时拿来当标题。
+// 小总结并进大总结之后仍留在磁盘上（toTs <= 大总结水位线的不再发送），大总结出问题时随时有素材可以重做。
 function summaryPath(characterName) {
   const dir = getChatDir();
   fs.mkdirSync(dir, { recursive: true });
   return path.join(dir, storeName(characterName) + '-summaries.json');
 }
 
-function loadDaySummaries(characterName) {
+function cleanSmallSummary(it) {
+  if (!it || typeof it !== 'object') return null;
+  const text = typeof it.text === 'string' ? it.text.trim() : '';
+  if (!text || !Number.isFinite(it.fromTs) || !Number.isFinite(it.toTs) || it.toTs < it.fromTs) return null;
+  return {
+    fromTs: it.fromTs,
+    toTs: it.toTs,
+    text,
+    label: typeof it.label === 'string' ? it.label : '',
+    endLabel: typeof it.endLabel === 'string' ? it.endLabel : '',
+  };
+}
+
+// 读取全部小总结（含已并入大总结的），按起始时间从早到晚；没有 / 格式不对返回空数组
+function loadSmallSummaries(characterName) {
   try {
     const data = JSON.parse(fs.readFileSync(summaryPath(characterName), 'utf-8'));
-    return data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+    const raw = data && Array.isArray(data.items) ? data.items : [];
+    return raw.map(cleanSmallSummary).filter(Boolean).sort((x, y) => x.fromTs - y.fromTs);
   } catch (err) {
     if (err.code !== 'ENOENT') {
-      console.warn(`[pet] 角色 "${characterName}" 的历史总结读取失败: ${err.message}`);
+      console.warn(`[pet] 角色 "${characterName}" 的小总结读取失败: ${err.message}`);
+      if (err instanceof SyntaxError) backupCorruptFile(summaryPath(characterName));
     }
-    return {};
+    return [];
   }
 }
 
-// 取某一天的总结；没生成过返回 null（调用方据此决定是否显示占位文案）
-function loadDaySummary(characterName, dayKey) {
-  const all = loadDaySummaries(characterName);
-  return typeof all[dayKey] === 'string' && all[dayKey] ? all[dayKey] : null;
-}
-
-function saveDaySummary(characterName, dayKey, text) {
-  const all = loadDaySummaries(characterName);
-  all[dayKey] = text;
+// 整份覆盖保存；写盘失败要抛出去（后台整理据此知道这次没存上）
+function saveSmallSummaries(characterName, items) {
+  const clean = (Array.isArray(items) ? items : []).map(cleanSmallSummary).filter(Boolean).sort((x, y) => x.fromTs - y.fromTs);
   try {
-    fs.writeFileSync(summaryPath(characterName), JSON.stringify(all, null, 2));
+    writeFileAtomic(summaryPath(characterName), JSON.stringify({ version: 2, items: clean }, null, 2));
   } catch (err) {
-    console.error(`[pet] 保存历史总结失败: ${err.message}`);
+    console.error(`[pet] 保存小总结失败: ${err.message}`);
+    throw new Error('保存小总结失败：' + err.message);
   }
 }
 
-// 清空角色全部聊天记录时，总结缓存也一起清掉
-function clearDaySummaries(characterName) {
+function appendSmallSummary(characterName, item) {
+  const all = loadSmallSummaries(characterName);
+  all.push(item);
+  saveSmallSummaries(characterName, all);
+}
+
+// 用户编辑 / 删除了某些消息：覆盖过这些消息的小总结已经和原文对不上，直接作废，这段消息重新参与字数统计。
+// 已经并进大总结的（toTs <= 水位线）不回溯——那份内容已经融进大总结里了，作废它没有意义。
+// tsList 是被改动消息的时间戳；返回作废了几条
+function invalidateSmallSummaries(characterName, tsList) {
+  const stamps = (Array.isArray(tsList) ? tsList : []).filter((t) => Number.isFinite(t));
+  if (!stamps.length) return 0;
+  const all = loadSmallSummaries(characterName);
+  if (!all.length) return 0;
+  const { coveredUntil } = loadStoryOverview(characterName);
+  const keep = all.filter((s) => s.toTs <= coveredUntil || !stamps.some((t) => t >= s.fromTs && t <= s.toTs));
+  const removed = all.length - keep.length;
+  if (removed > 0) saveSmallSummaries(characterName, keep);
+  return removed;
+}
+
+// 清空角色全部聊天记录时，小总结也一起清掉
+function clearSmallSummaries(characterName) {
   try {
     fs.unlinkSync(summaryPath(characterName));
   } catch (err) {
-    if (err.code !== 'ENOENT') console.warn(`[pet] 清空历史总结失败: ${err.message}`);
+    if (err.code !== 'ENOENT') console.warn(`[pet] 清空小总结失败: ${err.message}`);
   }
 }
 
-// ---------- 剧情总览：chat-history/<角色名>-story-overview.json ----------
-// 日总结攒到一定字数后，由 story-overview.js 把"上一版总览 + 这批日总结"再压缩成一份不超过 1200 字的剧情总览，存在这里：
-//   { "text": "总览正文", "coveredUntil": "YYYY-MM-DD" }
-// coveredUntil 是水位线：这一天（含）以前的日总结都已经并进 text，之后不再单独发给模型；
-// 只有合并成功才会前移水位线，合并失败时那几天的日总结照常发送，不会丢内容。
-// 用户也可以在聊天记录窗口的"⋯ → 剧情总览"里手动改 text，水位线不受影响。
+// ---------- 大总结（剧情总览 / 对话总览）：chat-history/<角色名>-story-overview.json ----------
+// 小总结攒到一定字数后，由 story-overview.js 把"上一版大总结 + 这批小总结"再压缩成一份不超过 1200 字的总览，存在这里：
+//   { "text": "总览正文", "coveredUntil": 时间戳, "coveredLabel": "标题里显示的时间点" }
+// coveredUntil 是水位线（消息时间戳）：这个时间点（含）以前的消息和小总结都已经并进 text，之后不再单独发给模型；
+// 只有合并成功才会前移水位线，合并失败时那几条小总结照常发送，不会丢内容。
+// 用户也可以在聊天记录窗口的"⋯ → 剧情总览 / 对话总览"里手动改 text，水位线不受影响。
 const STORY_OVERVIEW_MAX_CHARS = 1600; // 总览正文上限（提示词要求 AI 控制在 1200 字内，留一点余量；手动保存同样按这个上限）
 
 function storyOverviewPath(characterName) {
@@ -220,40 +253,42 @@ function storyOverviewPath(characterName) {
   return path.join(dir, storeName(characterName) + '-story-overview.json');
 }
 
-// 读取总览；没有/格式不对返回 { text: '', coveredUntil: '' }（调用方据此不发送这一段）
+// 读取总览；没有/格式不对返回 { text: '', coveredUntil: 0, coveredLabel: '' }（调用方据此不发送这一段）
 function loadStoryOverview(characterName) {
   try {
     const data = JSON.parse(fs.readFileSync(storyOverviewPath(characterName), 'utf-8'));
     const text = data && typeof data.text === 'string' ? data.text.trim() : '';
-    const coveredUntil = data && typeof data.coveredUntil === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(data.coveredUntil) ? data.coveredUntil : '';
-    return { text, coveredUntil };
+    const coveredUntil = data && Number.isFinite(data.coveredUntil) && data.coveredUntil > 0 ? data.coveredUntil : 0;
+    const coveredLabel = data && typeof data.coveredLabel === 'string' ? data.coveredLabel : '';
+    return { text, coveredUntil, coveredLabel: coveredUntil ? coveredLabel : '' };
   } catch (err) {
     if (err.code !== 'ENOENT') {
-      console.warn(`[pet] 角色 "${characterName}" 的剧情总览读取失败: ${err.message}`);
+      console.warn(`[pet] 角色 "${characterName}" 的大总结读取失败: ${err.message}`);
       if (err instanceof SyntaxError) backupCorruptFile(storyOverviewPath(characterName)); // 损坏的留底，免得下一次保存把它盖掉
     }
-    return { text: '', coveredUntil: '' };
+    return { text: '', coveredUntil: 0, coveredLabel: '' };
   }
 }
 
 // 写盘失败要抛出去：合并 / 手动保存据此报错，而不是误以为已经保存（用原子写入，写到一半不会留下半截文件）
-function saveStoryOverview(characterName, { text, coveredUntil }) {
+function saveStoryOverview(characterName, { text, coveredUntil, coveredLabel }) {
   const t = typeof text === 'string' ? text.trim() : '';
-  const c = typeof coveredUntil === 'string' ? coveredUntil : '';
+  const c = Number.isFinite(coveredUntil) && coveredUntil > 0 ? coveredUntil : 0;
+  const l = c && typeof coveredLabel === 'string' ? coveredLabel : '';
   try {
-    writeFileAtomic(storyOverviewPath(characterName), JSON.stringify({ text: t, coveredUntil: c }, null, 2));
+    writeFileAtomic(storyOverviewPath(characterName), JSON.stringify({ text: t, coveredUntil: c, coveredLabel: l }, null, 2));
   } catch (err) {
-    console.error(`[pet] 保存剧情总览失败: ${err.message}`);
-    throw new Error('保存剧情总览失败：' + err.message);
+    console.error(`[pet] 保存大总结失败: ${err.message}`);
+    throw new Error('保存大总结失败：' + err.message);
   }
 }
 
-// 清空角色全部聊天记录 / 导入覆盖时，总览一起清掉
+// 清空角色全部聊天记录 / 导入覆盖时，大总结一起清掉
 function clearStoryOverview(characterName) {
   try {
     fs.unlinkSync(storyOverviewPath(characterName));
   } catch (err) {
-    if (err.code !== 'ENOENT') console.warn(`[pet] 清空剧情总览失败: ${err.message}`);
+    if (err.code !== 'ENOENT') console.warn(`[pet] 清空大总结失败: ${err.message}`);
   }
 }
 
@@ -331,7 +366,7 @@ function saveMemoryIndexManual(text, mode) {
 }
 
 // 追加若干条新记忆（去重：整行已经出现在现有内容里的直接跳过），单条超过 20 字就截断成标签长度，
-// 总量超限时自动从头部丢旧行。由跨天总结那次 LLM 调用顺带产出，不单独发起请求。
+// 总量超限时自动从头部丢旧行。由生成小总结那次 LLM 调用顺带产出，不单独发起请求。
 function appendMemoryLines(newLines, mode) {
   if (!Array.isArray(newLines) || !newLines.length) return;
   const cur = loadMemoryIndex(mode);
@@ -499,10 +534,11 @@ module.exports = {
   loadChatHistory,
   saveChatHistory,
   onChatHistorySaved,
-  loadDaySummaries,
-  loadDaySummary,
-  saveDaySummary,
-  clearDaySummaries,
+  loadSmallSummaries,
+  saveSmallSummaries,
+  appendSmallSummary,
+  invalidateSmallSummaries,
+  clearSmallSummaries,
   STORY_OVERVIEW_MAX_CHARS,
   loadStoryOverview,
   saveStoryOverview,

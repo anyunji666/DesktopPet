@@ -2,7 +2,7 @@
 // 每个角色两份存档（每份都同时存「这个角色」和「用户扮演的角色」两方的资产）：
 //   Character/<角色名>/assets.json   初始资产设定：不带日期，属于角色设定，跟着角色文件夹走。没有故事资产时给 AI 发这份；清空聊天记录后回到的就是它，故事进行中不会改动它。
 //   userData/chat-history/<角色名>-story-assets.json  故事资产结算：带故事开始日期（storyStart）和资产截至日期（asOf），
-//     属于这一段故事，和聊天记录、日总结、剧情总览放在一起。故事进行中以它为准，随故事时间自动推算；
+//     属于这一段故事，和聊天记录、小总结、剧情总览放在一起。故事进行中以它为准，随故事时间自动推算；
 //     故事第一次写出时间时由程序按初始资产生成（也可以用户填了开始日期后手动建立）；清空聊天记录时删除，导出 / 导入聊天记录时跟着走。
 // 估值口径和推算规则在 public/assets-calc.js（页面也用它实时算），这里只管存取、取当前故事日期，和把结果写成给 LLM 看的文字。
 // 记账由用户在资产配置页手动改；程序只读最新一轮摘要里的「故事时间」，按时间自己推算，不让 LLM 记账。
@@ -253,11 +253,7 @@ function buildFinancialBlock(characterName, history) {
   const hasUser = !calc.isPartyEmpty(data.user);
   if (!hasChar && !hasUser) return '';
 
-  const guide = [
-    '财产状况影响角色的行为：',
-    '- 角色日常消费要根据“直接可用账户资金”来，不能凭空变出超出额度的钱；',
-    '- 有钱的不必为小钱计较，缺钱的一方会被价格、债务影响，可能因此示弱、将就或冒险；',
-  ].join('\n');
+  const guide = '角色的财产状况。角色消费要根据“直接可用账户资金”来，会被物品价格、债务影响';
 
   const parts = [];
   if (hasChar) parts.push(`<character_finance character="${characterName}">\n${describeParty(data.character, cur)}\n</character_finance>`);
@@ -267,7 +263,7 @@ function buildFinancialBlock(characterName, history) {
       : `"${characterName}"并不清楚用户扮演的角色的真实财力，只能从衣着、住处、出手大方与否等表现去推测。`;
     parts.push(`<user_finance>\n<!-- 用户所扮演的角色的财产。${known} -->\n${describeParty(data.user, cur)}\n</user_finance>`);
   }
-  return `<financial_status>\n<!-- ${guide}\n-->\n${parts.join('\n\n')}\n</financial_status>`;
+  return `<financial_status>\n<!-- ${guide} -->\n${parts.join('\n\n')}\n</financial_status>`;
 }
 
 module.exports = { loadAssetSet, saveInitialAssets, saveStoryAssets, deleteStoryAssets, exportStoryAssets, restoreStoryAssets, buildFinancialBlock, currentStoryDate };

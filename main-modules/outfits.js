@@ -204,7 +204,7 @@ function buildOutfitBlock(characterName) {
   }
   const cur = doc.items.find((it) => it.id === doc.activeId);
   if (!cur || !cur.text.trim()) return '';
-  const lines = [`<character_outfit character="${characterName}">`, '<!-- 角色当前的穿搭。描写角色外貌、动作时以此为准，除非剧情中发生了换装 -->', cur.text.trim(), '</character_outfit>'];
+  const lines = [`<character_outfit character="${characterName}">`, '<!-- 角色当前的穿搭。描写角色外貌，设计角色动作时以此为准，除非剧情中发生了换装 -->', cur.text.trim(), '</character_outfit>'];
   return lines.join('\n');
 }
 
