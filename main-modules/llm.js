@@ -416,6 +416,7 @@ function buildOverviewPrompt(prevOverview, prevCoveredLabel, items, tooLong = fa
 // 历史不用每轮摘要（原文超过字数线再整体压成小总结）；用 <current_time> 现实时间代替故事时间的节日播报；不发用户的输入说明，输出规则换成对话版，
 // 输出规则后面也不接摘要模块。角色卡 / 附加要求的注释文案也换成对话版。
 function buildPromptText(characterName, history, text) {
+  // === 取当前模式与素材 ===
   const mode = getChatMode(characterName);
   const chat = mode === 'chat';
   const { prefix } = getPromptConfig();
@@ -427,6 +428,7 @@ function buildPromptText(characterName, history, text) {
   // 固定内容（前缀/世界背景/角色卡/用户设定/输出说明）全部前置且逐字节不变，聊天历史/本轮输入这些每次都在变的内容后置，
   // 这样发给 DeepSeek / Gemini 这类"自动前缀缓存"的 API 时，前面这一大段固定前缀才能被复用命中、省 token。
   const parts = [];
+  // === 固定前缀（一）：前置文本 / 世界背景 / 你的资料 / 角色设定 ===
   // 固定前缀内部按“变化越少越靠前”排：手改设定才变的（前置词/世界背景/你的资料/角色设定）在最前，
   // 其次是很久才动一次的（图库清单/语音名单），最易变的（穿搭/财产/记忆索引）压到最后——
   // 前缀缓存是逐 token 比对，越靠后的块变了，前面能命中的部分越多。
@@ -451,6 +453,7 @@ function buildPromptText(characterName, history, text) {
       : '你所 设计/扮演 角色的设定资料';
     parts.push(`<character_card>\n<!-- ${cardNote} -->\n${characterCard}\n</character_card>`);
   }
+  // === 固定前缀（二）：图库清单 / 多角色名单 / 穿搭 / 财产 / 记忆索引 ===
   // 角色图库清单（Character/<角色>/images/ 现扫生成，子文件夹名 = 类别）：模型可在回复开头用 [img:类别/图片名] 发一张图。
   // 紧跟角色设定（“这个角色有哪些图”属于角色资料）；没有 images/ 文件夹或里面没有图片就不发这一段；
   // 两种模式都发；只有增删图片才会变
@@ -485,6 +488,7 @@ function buildPromptText(characterName, history, text) {
     parts.push(`<memory_index>\n<!-- ${memoryNote} -->\n${memoryIndex.trim()}\n</memory_index>`);
   }
   parts.push('---');
+  // === 可变部分：聊天历史 / 当前时间或节日 / 本轮输入 ===
   // ---- 以上是固定前缀，以下是每轮都会变化的内容 ----
   if (chatHistoryText.trim()) {
     const historyNote = chat ? '你和用户的历史聊天记录' : '故事/对话 记录';
@@ -497,6 +501,7 @@ function buildPromptText(characterName, history, text) {
   if (festivalBlock) parts.push(festivalBlock);
   parts.push(`<user_input>\n<!-- 用户本轮最新输入 -->\n${text}\n</user_input>`);
   parts.push('---');
+  // === 尾部：输入说明 + 输出规则 ===
   // 用户的输入说明：解释怎么读括号元指令，只有故事模式发；网聊模式没有元指令这一层，直接接输出规则
   if (!chat) {
     parts.push(INPUT_NOTE);

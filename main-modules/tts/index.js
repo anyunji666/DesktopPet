@@ -139,6 +139,7 @@ function persistVoice(characterName, msgTs, clips) {
 async function speakReply(characterName, reply, msgTs = null) {
   let ctrl = null;
   try {
+    // === 前置判断：拆段 + 解析每个说话者的 TTS 配置 ===
     // 只有当前展示的角色才开口（聊天记录窗口里和非当前角色聊天时，宠物不该用别人的声音说话）
     if (currentCharacterName() !== characterName) return;
     // 说话者识别表 = 全部角色的名字 + 别名（不限已配置语音的，路由时再各自判断）
@@ -157,6 +158,7 @@ async function speakReply(characterName, reply, msgTs = null) {
     // 没有任何一段能发给 TTS（当前角色和各说话者都没配置语音）就不动现有的播放
     if (!segments.some((seg) => cfgFor(seg.speaker).voice.provider !== 'off')) return;
 
+    // === 路由日志 ===
     // 路由日志：看每句台词交给了谁 / 哪家服务商；认不出的"某某："也提示一下，方便排查别名没配的情况
     console.log('[pet] 语音路由:', segments.map((seg, i) => {
       const who = seg.speaker === COMMON_SPEAKER ? '普通角色' : seg.speaker || characterName;
@@ -166,11 +168,13 @@ async function speakReply(characterName, reply, msgTs = null) {
       if (seg.unknownLabel) console.warn(`[pet] 「」前的"${seg.unknownLabel}："不是已知角色名/别名，按当前角色 ${characterName} 朗读（如果这是某个角色，请在角色资料里给它加别名）`);
     }
 
+    // === 取消在途的旧合成，起一批新的 ===
     cancelSpeaking();
     ctrl = new AbortController();
     currentCtrl = ctrl;
     notifySynthState();
 
+    // === 逐段合成（SEGMENT_CONCURRENCY 路并发） ===
     // 每个「」一次请求，SEGMENT_CONCURRENCY 路并发；结果按原文顺序放进 results 缓存
     const results = new Array(segments.length).fill(null);
     let next = 0;
@@ -194,6 +198,7 @@ async function speakReply(characterName, reply, msgTs = null) {
     // 合成期间可能已经切了角色
     if (currentCharacterName() !== characterName) return;
 
+    // === 合并成整回合推给渲染进程，同时落盘缓存 ===
     // 整回合缓存好了才一起推。失败的段落跳过（readOffsetMs 是绝对位置，不受影响；兜底用的 gapBeforeMs 会并进下一段）
     const clips = [];
     let carryGap = 0;
@@ -217,6 +222,7 @@ async function speakReply(characterName, reply, msgTs = null) {
     }
     persistVoice(characterName, msgTs, clips); // 先推送播放，再落盘缓存，播放不等磁盘
   } catch (err) {
+    // === 失败只记日志；收尾统一清掉合成状态 ===
     if (ctrl && ctrl.signal.aborted) return;
     console.warn('[pet] 语音合成失败:', err && err.message ? err.message : err);
   } finally {

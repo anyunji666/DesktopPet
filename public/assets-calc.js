@@ -112,6 +112,7 @@
 
   // 整理一方（角色 / 用户）的数据，缺的字段补默认值，脏数据修正成合法值。保存和读取都走这里
   function sanitizeParty(p) {
+    // === 资产（一条现金类都没有就自动补「账户资金」） ===
     const src = p && typeof p === 'object' ? p : {};
     const assets = rows(
       src.assets,
@@ -135,6 +136,7 @@
       assets.unshift({ name: DEFAULT_CASH_NAME, category: CASH_CATEGORY, amount: 0, days: 0 });
     }
 
+    // === 负债 / 收支 / 随身携带物 ===
     return {
       assets,
       liabilities: rows(

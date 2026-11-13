@@ -30,6 +30,7 @@ function handleLine(line) {
  * @returns {Promise<{buffer: Buffer, mime: string}>}
  */
 async function synthesize(req) {
+  // === 校验参数、拼请求体与请求头 ===
   const { appId, accessKey, speaker, resourceId, text, tone, signal, timeoutMs = DEFAULT_TIMEOUT_MS, apiUrl = API_URL } = req || {};
   if (!(appId && accessKey && speaker && resourceId && text)) {
     throw new Error('豆包TTS请求参数不完整（需要 appId/accessKey/speaker/resourceId/text）');
@@ -54,6 +55,7 @@ async function synthesize(req) {
     'Content-Type': 'application/json',
   };
 
+  // === 发请求：超时重试一次 ===
   for (let attempt = 0; attempt <= TIMEOUT_RETRY_COUNT; attempt++) {
     if (signal && signal.aborted) throw new Error('已取消');
     const ctrl = new AbortController();
@@ -69,6 +71,7 @@ async function synthesize(req) {
       }
       if (!resp.body) throw new Error('响应无 body，无法流式读取');
 
+      // === 逐行解析流式响应（最后一行可能不带换行） ===
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
       const chunks = [];

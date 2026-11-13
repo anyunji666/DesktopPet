@@ -35,6 +35,7 @@ function nameUsable(name) {
 // 扫描图库，返回 [{ category, items: [{ name, file, mime }] }]，类别和图片都按名字排序（输出稳定，不破坏前缀缓存）。
 // 只扫一层子文件夹；同一类别里同名（不同扩展名）只留第一张；点开头的隐藏文件、不支持的扩展名、超大文件都跳过
 function scanImageLibrary(characterName) {
+  // === 读 images/ 目录（没有就当空图库） ===
   const root = imagesDir(characterName);
   if (!root) return [];
   let entries;
@@ -44,6 +45,7 @@ function scanImageLibrary(characterName) {
     return []; // 没有 images/ 文件夹
   }
 
+  // === 单个文件：过滤隐藏文件 / 不支持的扩展名 / 超大文件，再按名字去重 ===
   const byCategory = new Map(); // 类别名 -> Map<图片名, item>
   const addFile = (category, dir, fileName) => {
     if (fileName.startsWith('.')) return;
@@ -69,6 +71,7 @@ function scanImageLibrary(characterName) {
     if (!items.has(name)) items.set(name, { name, file, mime });
   };
 
+  // === 遍历：一层类别子目录 + 根目录下的散图（归"未分类"） ===
   const byName = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
   for (const ent of entries.slice().sort((a, b) => byName(a.name, b.name))) {
     const full = path.join(root, ent.name);
@@ -88,6 +91,7 @@ function scanImageLibrary(characterName) {
     }
   }
 
+  // === 输出：类别和图片都按名字排序，「未分类」放最后 ===
   const out = [];
   for (const [category, items] of byCategory) {
     out.push({ category, items: [...items.values()].sort((a, b) => byName(a.name, b.name)) });

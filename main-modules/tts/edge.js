@@ -85,6 +85,7 @@ function dateHeader() {
 function synthesizeOnce({ text, voice, rate, pitch, volume, timeoutMs, signal, endpoint }) {
   const WebSocket = loadWs();
   return new Promise((resolve, reject) => {
+    // === 拼连接地址 ===
     const connectionId = genConnectionId();
     const url =
       `${endpoint}?TrustedClientToken=${TRUSTED_CLIENT_TOKEN}&ConnectionId=${connectionId}` +
@@ -97,6 +98,7 @@ function synthesizeOnce({ text, voice, rate, pitch, volume, timeoutMs, signal, e
     let ws = null;
     let onAbort = null;
 
+    // === 本地状态与诊断信息 ===
     // 诊断信息：超时 / 没有音频时，用来说明卡在哪一步（未连上 / 连上没数据 / 有数据没结束）
     const t0 = Date.now();
     const diag = { openMs: null, messages: 0, paths: [] };
@@ -114,6 +116,7 @@ function synthesizeOnce({ text, voice, rate, pitch, volume, timeoutMs, signal, e
       return parts.join('，');
     };
 
+    // === 结束 / 失败统一收尾 ===
     const cleanup = () => {
       clearTimeout(timer);
       if (signal && onAbort) signal.removeEventListener('abort', onAbort);
@@ -135,6 +138,7 @@ function synthesizeOnce({ text, voice, rate, pitch, volume, timeoutMs, signal, e
       else reject(new Error(`Edge-TTS 未返回任何音频数据（可能是音色名不存在，或微软临时限制了访问）：${describeStage()}`));
     };
 
+    // === 取消与超时 ===
     if (signal) {
       if (signal.aborted) return reject(new Error('已取消'));
       onAbort = () => fail(new Error('已取消'));
@@ -142,6 +146,7 @@ function synthesizeOnce({ text, voice, rate, pitch, volume, timeoutMs, signal, e
     }
     timer = setTimeout(() => fail(new Error(`Edge-TTS 请求超时 (${timeoutMs / 1000}s)：${describeStage()}`)), timeoutMs);
 
+    // === 建立连接（带 Edge 的握手头） ===
     try {
       ws = new WebSocket(url, {
         headers: {
@@ -158,6 +163,7 @@ function synthesizeOnce({ text, voice, rate, pitch, volume, timeoutMs, signal, e
       return fail(new Error(`Edge-TTS 连接创建失败: ${e && e.message ? e.message : e}`));
     }
 
+    // === 连上之后：先发 speech.config，再发 SSML ===
     ws.on('open', () => {
       diag.openMs = Date.now() - t0;
       const now = dateHeader();
@@ -185,6 +191,7 @@ function synthesizeOnce({ text, voice, rate, pitch, volume, timeoutMs, signal, e
       );
     });
 
+    // === 收消息：文本帧看 Path，二进制帧拆 header 后取音频 ===
     ws.on('message', (data, isBinary) => {
       diag.messages++;
       if (!isBinary) {
@@ -209,6 +216,7 @@ function synthesizeOnce({ text, voice, rate, pitch, volume, timeoutMs, signal, e
       }
     });
 
+    // === 握手被拒 / 出错 / 服务端关闭 ===
     ws.on('unexpected-response', (_req, res) => {
       const err = new Error(`Edge-TTS 握手被拒绝 (HTTP ${res.statusCode})`);
       err.status = res.statusCode;

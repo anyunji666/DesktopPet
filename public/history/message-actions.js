@@ -22,6 +22,7 @@ function endEdit(row) {
 // 3) 图片保留显示，只把文字换成输入框；
 // 4) 取消/保存按钮替换掉底部的"时间戳 + ⋯"那一行，整体高度基本不变。
 function startEdit(row) {
+  // === 收掉别的编辑行，量出原始尺寸 ===
   // 一行进入编辑态前，先把别的还在编辑的行收掉
   list.querySelectorAll('.msg.editing').forEach((r) => endEdit(r));
   row.classList.remove('actions-show');
@@ -35,11 +36,13 @@ function startEdit(row) {
   const origHeight = textEl ? textEl.getBoundingClientRect().height : 0;
   const hasImg = !!line.querySelector('.msg-img');
 
+  // === 切到编辑态：锁宽度、藏起原文字 ===
   // 用 min-width 而不是 width：不会比原来窄；极短的消息（如"好的"）放不下两个按钮时才允许略微变宽
   if (lockWidth) row.style.minWidth = lockWidth;
   if (textEl) textEl.style.display = 'none';
   row.classList.add('editing');
 
+  // === 插入输入框并让它自动增高 ===
   const ta = document.createElement('textarea');
   ta.className = 'edit-input';
   // 不设 maxLength：插入的消息可能超过 300 字，编辑时不能被挡住
@@ -58,6 +61,7 @@ function startEdit(row) {
   };
   ta.addEventListener('input', autosize);
 
+  // === AI 消息的摘要块提示（网聊模式下不显示） ===
   // AI 消息：编辑框里是完整原文，末尾的 <story_overview> 摘要块也在里面（摘要用于压缩历史，整块删掉 = 这一轮在历史中发原文）；
   // 保存时由主进程校验摘要块格式
   // 网聊模式没有摘要块，不显示这条提示：点编辑时现读一次当前模式（config.json 的 chatModes），读完再把提示插进去；
@@ -72,6 +76,7 @@ function startEdit(row) {
     }).catch(() => {});
   }
 
+  // === 底部取消 / 保存按钮行 ===
   const btns = document.createElement('div');
   btns.className = 'edit-btns';
   const cancel = document.createElement('button');
@@ -88,6 +93,7 @@ function startEdit(row) {
   ta.focus();
 
   cancel.addEventListener('click', () => endEdit(row));
+  // === 保存：落盘后同步气泡里的文字 / 图片 / 故事时间 ===
   save.addEventListener('click', async () => {
     const text = ta.value.trim();
     if (!text) {
@@ -144,6 +150,7 @@ function startEdit(row) {
       save.disabled = false;
     }
   });
+  // === 键盘：Enter 保存 / Esc 取消 ===
   ta.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();

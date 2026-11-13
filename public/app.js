@@ -513,6 +513,7 @@ window.addEventListener('resize', () => {
 });
 
 function animate() {
+  // === 暂停：低频轮询等恢复 ===
   if (animPaused) {
     // 暂停期间不再 requestAnimationFrame（那样 GPU 渲染工作并没有真的让出去），
     // 改用低频轮询等恢复信号，占用可以忽略不计
@@ -522,6 +523,7 @@ function animate() {
   requestAnimationFrame(animate);
   const dt = clock.getDelta();
   const t = clock.elapsedTime;
+  // === 舞蹈结束 / 物理接管 / 待机姿态 ===
   // 舞蹈时长已到：在渲染最顶层回待机，重置姿态后再走待机流程
   if (state.danceMode && t >= state.danceEndAt) {
     const cb = state.danceEndCallback;
@@ -547,6 +549,7 @@ function animate() {
     idlePose(t);
   }
   updateBlink(t);
+  // === 朝向限速回正 ===
   // 朝向限速回正：程序化重置（右键菜单/回待机）只改 modelYawTarget，这里每帧最多转 YAW_MAX_STEP
   // 靠近目标值，和拖拽用同一套限速，避免瞬间跳变把裙摆/头发的物理甩飞、错位
   if (state.mesh && state.modelYaw !== state.modelYawTarget) {
@@ -555,7 +558,7 @@ function animate() {
     state.modelYaw += step;
     applyModelYaw();
   }
-  // 摄像机：跳舞时跟随舞台位移；待机时以模型为中心环绕
+  // === 摄像机：跳舞时跟随舞台位移，待机时以模型为中心环绕 ===
   if (state.camBase) {
     let targetOffX = 0;
     let targetOffZ = 0;
@@ -585,6 +588,7 @@ function animate() {
     curTgt.lerp(desiredTgt, k);
     camera.lookAt(curTgt);
   }
+  // === 渲染 ===
   renderer.render(scene, camera);
 }
 animate();

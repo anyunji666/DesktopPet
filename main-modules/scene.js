@@ -73,6 +73,7 @@ function normLight(l) {
 }
 
 function loadScene(name, dir) {
+  // === 读 scene.json 与目录清单 ===
   const { cfg, hasJson } = readSceneJson(dir, name);
   const files = fs.readdirSync(dir);
 
@@ -81,6 +82,7 @@ function loadScene(name, dir) {
     extras.map((e) => e && typeof e.file === 'string' && path.normalize(e.file)).filter(Boolean)
   );
 
+  // === 选本体模型 + 追加额外的模型 ===
   // 本体：scene.json 指定 > 自动选最大的模型文件（排除已被列为附加模型的）
   let mainFile = typeof cfg.model === 'string' ? cfg.model : null;
   if (!mainFile) {
@@ -102,6 +104,7 @@ function loadScene(name, dir) {
     if (m) models.push(m);
   }
 
+  // === 既没有模型也没有 scene.json：整个场景跳过 ===
   if (!models.length && !hasJson) {
     const hint = files.some((f) => /\.blend$/i.test(f))
       ? '（.blend 需要先在 Blender 里导出为 .glb）'
@@ -110,7 +113,7 @@ function loadScene(name, dir) {
     return null;
   }
 
-  // 背景图：相对场景目录
+  // === 背景图（相对场景目录） ===
   let backgroundImage = null;
   if (typeof cfg.backgroundImage === 'string') {
     const abs = path.resolve(dir, cfg.backgroundImage);
@@ -121,6 +124,7 @@ function loadScene(name, dir) {
     }
   }
 
+  // === 地面 / 雾 / 镜头 / 灯光的参数归一化 ===
   const g = cfg.ground && typeof cfg.ground === 'object' ? cfg.ground : null;
   const f = cfg.fog && typeof cfg.fog === 'object' ? cfg.fog : null;
   const cam = cfg.camera && typeof cfg.camera === 'object' ? cfg.camera : {};

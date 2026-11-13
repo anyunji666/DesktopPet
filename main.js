@@ -180,6 +180,7 @@ ipcMain.on('renderer-reload', (_e, reason) => {
 });
 
 async function createWindow() {
+  // === 迁移旧数据 + 起静态服务 ===
   startupLog('createWindow 开始');
   // 旧版本留下的明文密钥升级成加密存储（系统不支持加密时什么也不做）
   migrateSecrets();
@@ -188,6 +189,7 @@ async function createWindow() {
   state.serverPort = port;
   startupLog(`静态服务已启动，端口 ${port}`);
 
+  // === Gemini 轮询中转（有 Key 才起） ===
   // 如果之前保存过 Gemini 轮询代理的 Key，启动时自动把本地中转服务起起来（只监听 127.0.0.1）
   // 优先复用上次记住的端口，避免每次开机 Base URL 都要重新填
   (() => {
@@ -202,6 +204,7 @@ async function createWindow() {
       });
   })();
 
+  // === 扫描角色 / 场景，恢复上次的选择 ===
   state.characters = scanCharacters();
   const cfg = loadConfig();
   const savedIndex = state.characters.findIndex((c) => c.name === cfg.lastCharacter);
@@ -210,6 +213,7 @@ async function createWindow() {
   state.scenes = scanScenes();
   state.currentSceneName = state.scenes.some((s) => s.name === cfg.lastScene) ? cfg.lastScene : null;
 
+  // === 算初始位置和大小（上次的位置/尺寸仍可用就沿用） ===
   // 记住主窗口关闭前的位置：只在坐标仍落在当前屏幕范围内时采用，否则走默认居中
   const savedPos = cfg.winPosition;
 
@@ -239,6 +243,7 @@ async function createWindow() {
   // "LLM记录"/"开发者工具"菜单项：默认隐藏，上次在关于窗口里打开过才显示
   state.showDevEntries = cfg.showDevEntries === true;
 
+  // === 桌面模式：直接按展开后的布局创建 ===
   // 桌面模式下直接按桌面布局创建窗口（而不是先建正常小窗口再跳变），避免启动瞬间闪一下。
   // 布局算法跟运行中切换进入桌面模式共用 computeDesktopLayout：模型视口 = 普通窗口的位置/大小，
   // 窗口只在纵向展开。没有保存过位置时，普通窗口原本是交给系统居中的，但桌面布局需要确切坐标，
@@ -258,6 +263,7 @@ async function createWindow() {
     initialDesktopViewport = layout.viewport;
   }
 
+  // === 建主窗口 + 置顶 / 穿透 ===
   state.win = new BrowserWindow({
     ...createBounds,
     transparent: true,
@@ -272,6 +278,7 @@ async function createWindow() {
   state.win.setAlwaysOnTop(true, 'screen-saver');
   if (!state.bgMouseInteraction) state.win.setIgnoreMouseEvents(true, { forward: true });
 
+  // === 位置 / 大小持久化监听 ===
   // 拖动/缩放过程中和结束后都存位置（防抖）；用 move/resize 而不是 moved/resized，
   // 因为拖动是渲染进程通过 setPosition 驱动的，Windows 上 moved 只在系统自己的拖动循环结束时才触发
   state.win.on('move', scheduleSavePetBounds);
@@ -279,6 +286,7 @@ async function createWindow() {
   // Windows 关机/重启/注销：before-quit 不会触发，这里同步存一次
   state.win.on('session-end', savePetBounds);
 
+  // === 右键菜单 + 关掉页面缩放 + 加载页面 ===
   state.menu = buildMenu();
 
   // 禁用 Chromium 自带的 Ctrl+滚轮 / 捏合页面缩放（Ctrl+滚轮留给"背景前后移动"）
@@ -288,6 +296,7 @@ async function createWindow() {
 
   state.win.loadURL(`http://127.0.0.1:${port}/public/index.html`);
   const wc = state.win.webContents;
+  // === 加载失败 / 渲染进程崩溃的重载与日志 ===
   wc.on('did-fail-load', (_e, code, desc, url, isMainFrame) => {
     if (!isMainFrame || code === -3) return; // -3 = 被新的导航取消，不算失败
     startupLog(`页面加载失败 code=${code} ${desc} ${url}`);
@@ -301,6 +310,7 @@ async function createWindow() {
   app.on('child-process-gone', (_e, details) => {
     if (details.type === 'GPU') startupLog(`GPU 进程退出 reason=${details.reason}`);
   });
+  // === 页面就绪：启动看门狗 + 下发 init ===
   wc.on('did-finish-load', () => {
     startupLog('页面 did-finish-load，下发 init 并启动看门狗');
     armBootWatchdog();

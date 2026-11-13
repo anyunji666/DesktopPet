@@ -162,12 +162,14 @@ function parseSummaryAndMemory(rawText) {
 // （同一分钟连发的几条共用一个前缀，不然满屏重复）；模型据此判断这段聊天的时间跨度。
 // 故事模式不发任何现实时间，只发故事时间。
 function analyzeHistory(characterName, history, mode = 'story') {
+  // === 读水位线与仍然生效的小总结 ===
   const chat = mode === 'chat';
   const overview = loadStoryOverview(characterName);
   const watermark = overview.coveredUntil;
   const summaries = loadSmallSummaries(characterName).filter((s) => s.toTs > watermark); // 已并进大总结的小总结不再发送
 
-  // 第一遍：给每条消息标状态（merged 已并进大总结 / summarized 已压成小总结 / pending 还没压缩）和时间前缀
+  // === 第一遍：给每条消息标状态和时间前缀 ===
+  // 状态：merged 已并进大总结 / summarized 已压成小总结 / pending 还没压缩
   let prevUserMinute = null; // 上一条用户消息落在哪一分钟（epoch 分钟），null = 还没有过用户消息
   const items = history.map((h, index) => {
     const hasTs = typeof h.ts === 'number';
@@ -190,7 +192,8 @@ function analyzeHistory(characterName, history, mode = 'story') {
     return { h, index, prefix, state, summary };
   });
 
-  // 第二遍：把 pending 的消息按"轮"配对。被小总结 / 大总结隔开的消息不配对（seg 是连续段编号）
+  // === 第二遍：把 pending 的消息按"轮"配对 ===
+  // 被小总结 / 大总结隔开的消息不配对（seg 是连续段编号）
   const seq = [];
   let seg = 0;
   let prevPending = false;
@@ -217,6 +220,7 @@ function analyzeHistory(characterName, history, mode = 'story') {
   }
   const recentStart = Math.max(0, rounds.length - RECENT_RAW_ROUNDS);
 
+  // === 每一轮怎么发：原文 / 摘要 / 压缩素材 ===
   // 原文怎么发：用户说的话标"用户"，AI 说的话标"你"（不用角色名——发给 LLM 的历史里，AI 自己的发言统一用"你"指代，
   // 因为 AI 实际扮演的身份可能被角色资料/世界背景改写，不一定等于角色名本身）。
   // 图片消息在文字侧降级成 "[图片:文件名]" 标记；图片本身只在 vision 开启时对"本轮"消息以视觉格式直发，历史图片不重发（省 token）。
@@ -262,7 +266,7 @@ function analyzeHistory(characterName, history, mode = 'story') {
   for (const round of rounds) for (const it of round.items) roundOf.set(it, round);
   const pendingCost = rounds.reduce((n, r) => (r.recent ? n : n + r.cost), 0);
 
-  // 第三遍：按时间顺序拼最终文本
+  // === 第三遍：按时间顺序拼最终文本 ===
   // 摘要行 和 保留原文的轮次 之间插一条 "——" 分隔线，只插一次——让模型一眼分清"这段是概述，这段是原话"
   const lines = [];
   if (overview.text) lines.push(overviewHeading(overview.coveredLabel, mode), overview.text);

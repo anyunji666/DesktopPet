@@ -63,6 +63,7 @@ function exportToFile(characterName, filePath) {
 // ---------- 导入：校验 ----------
 // 返回清洗后的 { messages, smallSummaries, storyOverview }；格式不对直接抛错（此时还没动任何数据）
 function parseImport(data) {
+  // === 取出顶层字段（兼容纯消息数组） ===
   let rawMessages;
   let rawSummaries = [];
   let rawOverview = null;
@@ -84,6 +85,7 @@ function parseImport(data) {
   }
   if (!Array.isArray(rawMessages)) throw new Error('文件里没有找到聊天消息');
 
+  // === 逐条校验消息 ===
   const messages = [];
   let skipped = 0;
   for (const m of rawMessages) {
@@ -104,6 +106,7 @@ function parseImport(data) {
   }
   if (!messages.length) throw new Error('文件里没有可导入的有效消息');
 
+  // === 小总结：丢掉字段缺失、范围不合理、对应不到消息的 ===
   // 小总结：缺字段 / 时间范围不对的丢掉；没有对应消息（时间范围内一条消息都没有）的也丢掉，免得残留的总结一直发给模型
   const smallSummaries = [];
   for (const it of rawSummaries) {
@@ -118,6 +121,7 @@ function parseImport(data) {
       endLabel: typeof it.endLabel === 'string' ? it.endLabel : '',
     });
   }
+  // === 大总结：超长正文丢弃，坏水位线当没有 ===
   // 大总结：正文太长（超过上限）的直接丢弃，不让坏数据进来；水位线不是时间戳就当没有（没有水位线的总览当作用户手写的）
   let storyOverview = { text: '', coveredUntil: 0, coveredLabel: '' };
   if (rawOverview) {
@@ -126,6 +130,7 @@ function parseImport(data) {
     const coveredLabel = typeof rawOverview.coveredLabel === 'string' ? rawOverview.coveredLabel : '';
     if (text.length <= STORY_OVERVIEW_MAX_CHARS) storyOverview = { text, coveredUntil: text ? coveredUntil : 0, coveredLabel: text && coveredUntil ? coveredLabel : '' };
   }
+  // === 返回清洗后的结果（此时还没动任何数据） ===
   return { messages, smallSummaries, storyOverview, storyAssets: rawStoryAssets, skipped };
 }
 

@@ -12,6 +12,7 @@ function fmtTs(ts) {
 // 构造一条消息的 DOM。temp=true 是"已发出、还在等回复"的临时气泡：没有下标、没有"⋯"编辑/删除，
 // 时间处显示当前阶段的提示（整理总结中 / 等待回复中）；落盘后由 chat-settled 事件把它换成正式消息
 function buildMsgEl(role, content, ts, imageDataURL, temp, storyTime) {
+  // === 骨架 + 图片 ===
   const div = document.createElement('div');
   div.className = 'msg ' + (role === 'user' ? 'user' : 'assistant') + (temp ? ' sending' : '');
 
@@ -26,6 +27,7 @@ function buildMsgEl(role, content, ts, imageDataURL, temp, storyTime) {
     line.appendChild(img);
   }
 
+  // === 正文 ===
   if (content) {
     const text = document.createElement('div');
     text.className = 'msg-text';
@@ -35,6 +37,7 @@ function buildMsgEl(role, content, ts, imageDataURL, temp, storyTime) {
 
   div.appendChild(line);
 
+  // === 故事时间标签（AI 气泡才有） ===
   // AI 气泡末尾的故事时间标签（摘要里提取到才有，没有就不渲染）。放在正文后面、底部真实时间戳上面；
   // 它是单独的元素，不进 dataset.text / 编辑框，避免编辑保存后变成正文的一部分
   if (storyTime && role !== 'user' && !temp) {
@@ -44,6 +47,7 @@ function buildMsgEl(role, content, ts, imageDataURL, temp, storyTime) {
     div.appendChild(st);
   }
 
+  // === 底部一行：时间戳 + "⋯" ===
   // 气泡底部一行：时间戳 + "⋯"（临时气泡没有 ⋯），编辑/删除紧接在这一行下面展开
   const foot = document.createElement('div');
   foot.className = 'msg-foot';
@@ -60,6 +64,7 @@ function buildMsgEl(role, content, ts, imageDataURL, temp, storyTime) {
   }
   div.appendChild(foot);
 
+  // === 操作按钮行：删除 / 编辑 /（AI 回复才有）重新生成 ===
   if (!temp) {
     const actions = document.createElement('div');
     actions.className = 'msg-actions';

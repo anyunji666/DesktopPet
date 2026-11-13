@@ -120,9 +120,11 @@ function securityHeaders(extra) {
 }
 
 function startServer() {
+  // === 准备：白名单真实路径 + server 实例 ===
   let listenPort = 0;
   const realPrefixes = resolveRealPrefixes();
   const server = http.createServer((req, res) => {
+    // === 请求校验：Host / 方法 / URL / 隐藏文件 ===
     // 1. Host 校验：挡 DNS rebinding
     if (!isAllowedHost(req.headers.host, listenPort)) {
       res.writeHead(403, securityHeaders());
@@ -153,6 +155,7 @@ function startServer() {
       return res.end();
     }
 
+    // === 路径校验：目录白名单 + 软链复检 ===
     // 4. 目录白名单（按路径边界判断，不是字符串前缀）
     const filePath = path.normalize(path.join(ROOT, urlPath));
     if (!isAllowedPath(filePath)) {
@@ -174,6 +177,7 @@ function startServer() {
         const ext = path.extname(real).toLowerCase();
         const type = MIME[ext] || 'application/octet-stream';
 
+        // === 返回内容：HTML 现算 CSP 哈希，其它文件流式返回 ===
         // HTML：读进内存，按内联脚本算 CSP 哈希；其它文件直接流式返回
         if (ext === '.html') {
           fs.readFile(real, 'utf-8', (rerr2, html) => {
@@ -196,6 +200,7 @@ function startServer() {
       });
     });
   });
+  // === 超时与监听 ===
   server.requestTimeout = 30 * 1000;
   server.headersTimeout = 10 * 1000;
   return new Promise((resolve) =>

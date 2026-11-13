@@ -509,11 +509,13 @@ function applyAutoLaunchMode(mode) {
 }
 
 function buildMenu() {
+  // === 取数据：当前角色 + 动作池（过滤掉不进菜单的特殊动作） ===
   const current = state.characters[state.currentIndex];
   const dances = scanDances();
   // 保留在 scanDances() 结果里的原始下标 i：渲染进程按这个下标取动作，过滤特殊动作后不能重新编号
   const menuDances = dances.map((d, i) => ({ d, i })).filter(({ d }) => !SPECIAL_DANCE_NAMES.has(d.name));
   const template = [
+    // === 切换场景 ===
     {
       label: '🌄 切换场景',
       submenu: [
@@ -536,6 +538,7 @@ function buildMenu() {
         { label: '🔁 读取配置文件', click: () => reloadScenes() },
       ],
     },
+    // === 切换角色 ===
     {
       label: '🎭 切换角色',
       submenu: state.characters.map((c, i) => ({
@@ -544,6 +547,7 @@ function buildMenu() {
       })),
     },
     { type: 'separator' },
+    // === 舞蹈展示 / 模型朝向 / 待机 ===
     {
       // 一级"舞蹈展示"，二级是全部可选动作（悬停展开，跟"切换角色"一致）；没有可选动作时置灰，避免弹出空子菜单
       label: '💃 舞蹈展示',
@@ -557,6 +561,7 @@ function buildMenu() {
     { label: '🔄 重置模型朝向', click: () => send('menu-action', { type: 'resetYaw' }) },
     { label: '⏸ 待机（停止跳舞）', click: () => send('menu-action', { type: 'idle' }) },
     { type: 'separator' },
+    // === 设置窗口入口（全局设置 / 角色与音色 / 服饰 / 资产） ===
     {
       // 直接点开，没有二级：API / 前置文本 / 附加要求都是全局共用的
       label: '⚙ API 与全局设置',
@@ -580,6 +585,7 @@ function buildMenu() {
       submenu: state.characters.map((c) => ({ label: c.name, click: () => openAssetsWindow(c.name) })),
     },
     { type: 'separator' },
+    // === 声音开关 ===
     // 父菜单按当前状态后缀 ✅，两个子选项用 ✓ 前缀标出当前选择；声音 / 喝水提醒 / 开机自启动各自独立一格
     {
       // 声音开关（舞蹈音乐 + 角色语音一起静音/恢复）。实际开关在渲染进程，这里发 setMute 让它应用，
@@ -598,6 +604,7 @@ function buildMenu() {
       ],
     },
     { type: 'separator' },
+    // === 喝水提醒 ===
     {
       // 喝水提醒读 Character/<角色>/Time report/ 下的语音（没有该目录的角色不提醒），
       // 只在有语音的时间点提醒（不是每个整点都有）；开关状态记在 config.json，重启后保持
@@ -614,6 +621,7 @@ function buildMenu() {
         },
       ],
     },
+    // === 开机自启动（仅 Windows） ===
     // 开机自启动依赖 setLoginItemSettings 的 path/args 参数精确指定启动方式，该参数仅 Windows 支持，
     // mac/linux 上这个 API 要么不生效要么只能注册裸的 electron 本身，索性不在这两个平台显示这个入口
     ...(process.platform === 'win32'
@@ -636,6 +644,7 @@ function buildMenu() {
         ]
       : []),
     { type: 'separator' },
+    // === 桌面模式 / 关于 / 退出 ===
     {
       // 勾选样式跟"开机自启动"保持一致：不用原生 checkbox，靠 label 后缀 ✅ 表示当前状态。
       // 勾选＝桌面模式已开启：窗口在纵向上展开（给气泡留空间），场景/背景对鼠标点击穿透，
@@ -647,6 +656,7 @@ function buildMenu() {
     { label: 'ℹ️ 关于', click: () => openAboutWindow() },
     { type: 'separator' },
     { label: '❌ 退出', click: () => app.quit() },
+    // === 开发者菜单项（默认隐藏） ===
     // "LLM记录"/"开发者工具"默认隐藏，在关于窗口里连续点版本号 6 次切换显示
     ...(state.showDevEntries
       ? [
@@ -664,6 +674,7 @@ function buildMenu() {
         ]
       : []),
   ];
+  // === 构建菜单 ===
   return Menu.buildFromTemplate(template);
 }
 
