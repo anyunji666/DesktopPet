@@ -173,6 +173,11 @@ function applyMaterialFixes(m) {
     const brightness = pick(fixes.brightness, mat.name, 1);
     if (brightness !== 1) mat.color.multiplyScalar(brightness);
     if (emissiveScale !== 1 && mat.emissive) mat.emissive.multiplyScalar(emissiveScale);
+    // 高光（specular / shininess）：眼睛类材质别只给其中一层加。
+    // 眼睛通常由多层材质组成（眼白、虹膜、高光片、阴影层），只给其中一层加高光的话，
+    // 转头时只有那一层的高光在扫，会看到"一只眼先发白、另一只后发白"，
+    // 呈现为两只眼睛瞳色不一样，而且只在动作某一段出现——很容易误判成灯光问题。
+    // 要给就给全部眼睛材质同一个值，最稳的是保持 0（模型自带的"目光"贴片已经负责高光了）。
     const specular = pick(fixes.specular, mat.name, null);
     if (specular !== null && mat.specular) mat.specular.setScalar(specular);
     const shininess = pick(fixes.shininess, mat.name, null);
