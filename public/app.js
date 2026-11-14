@@ -1,6 +1,6 @@
 import { state, clock, scene, camera, renderer, audio, voiceAudio, tmpV, desiredPos, desiredTgt, curTgt } from './modules/state.js';
 import { showLoading, showBubble, playVoice, stopVoice, hitModel, hitModelBounds } from './modules/ui.js';
-import { triggerBlink, idlePose, updateBlink, applyIdleArms, restoreIdleArms } from './modules/idle-animation.js';
+import { triggerBlink, idlePose, updateBlink, applyIdleArms, restoreIdleArms, applyIdleTail, restoreIdleTail } from './modules/idle-animation.js';
 import { resettlePhysics } from './modules/physics.js';
 import './modules/physics-debug.js'; // 控制台调试入口 window.__phys（排查个别模型物理抖动用）
 import './modules/toon-debug.js'; // 控制台调试入口 window.__toon（实时调明暗渐变，调好后导出到 fixes.json）
@@ -586,9 +586,15 @@ function animate() {
       state.helper.enable('physics', true);
     }
     // 循环动作（待机）跨循环点时不重置物理，见 dance.js 里的 resetPhysicsOnLoop
-    if (state.idleAnim) restoreIdleArms(); // 撤销上一帧叠加的手臂外展，再让动画/IK/物理按原始姿态算
+    if (state.idleAnim) {
+      restoreIdleArms(); // 撤销上一帧叠加的手臂外展，再让动画/IK/物理按原始姿态算
+      restoreIdleTail(); // 尾巴抬升同理
+    }
     state.helper.update(dt);
-    if (state.idleAnim) applyIdleArms(); // 待机动画：算完后把手臂向外推开一点，避免手穿进裙子
+    if (state.idleAnim) {
+      applyIdleArms(); // 待机动画：算完后把手臂向外推开一点，避免手穿进裙子
+      applyIdleTail(); // 尾巴绕起始点抬起来，避免拖到地面以下
+    }
   } else if (state.mesh) {
     idlePose(t);
   }

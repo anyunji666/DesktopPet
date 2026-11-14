@@ -19,6 +19,21 @@
       "bodies": "^hairpin_base_|^fj_base_",
       "with": "^hair_base_|^hair_sf_|^頭|^首|^(上|下)半身[0-9]?$|^(左|右)(足|ひざ|腕|ひじ|手首)",
       "when": "idle"
+    },
+    {
+      "bodies": "^tail_base_M_",
+      "with": "^hair_",
+      "when": "always"
+    },
+    {
+      "bodies": "^hair_",
+      "with": "^tail_base_M_",
+      "when": "always"
+    }
+  ],
+  "ground": [
+    {
+      "bodies": "^tail_base_M_"
     }
   ]
 }

@@ -176,6 +176,46 @@ export function tweakDamping(physics, re, linear, angular) {
   return { bodies: targets.length, changed: targets.length };
 }
 
+// ---------------- 地面碰撞 ----------------
+// MMDPhysics 没有地面：尾巴、裙摆这些垂到 y=0（脚底贴地）以下也照样往下坠，
+// 看上去就是"尾巴比脚底还低、插进地里"。这里往物理世界加一块静态地面，
+// 但只让 bodiesRe 命中的刚体和它碰撞——地面单独占一个当前没被使用的碰撞组，
+// 其他刚体的掩码里没有这一组，行为完全不变（裙摆、头发会不会落地不受影响）。
+// 返回 null 表示没有可用碰撞组，或者 bodiesRe 一个刚体都没命中。
+export function addGroundCollision(physics, bodiesRe) {
+  const Ammo = window.Ammo;
+  if (!Ammo || !physics || !physics.world || physics.ground) return null;
+  const targets = findBodies(physics, bodiesRe);
+  if (!targets.length) return null;
+  // 挑一个没被任何刚体占用的组：撞地只影响目标刚体，别的刚体掩码里没有这一位
+  const used = new Set((physics.bodies || []).map((rb) => rb.params.groupIndex));
+  let group = 0;
+  while (group < 16 && used.has(group)) group++;
+  if (group >= 16) return null;
+
+  const half = 500; // 半边长（模型身高 20），够大，等效无限平面
+  const shape = new Ammo.btBoxShape(new Ammo.btVector3(half, 1, half));
+  const origin = new Ammo.btVector3(0, -1, 0); // 半厚 1，顶面正好落在 y=0（脚底）
+  const tr = new Ammo.btTransform();
+  tr.setIdentity();
+  tr.setOrigin(origin);
+  const motion = new Ammo.btDefaultMotionState(tr);
+  const zero = new Ammo.btVector3(0, 0, 0);
+  const info = new Ammo.btRigidBodyConstructionInfo(0, motion, shape, zero); // 质量 0 = 静态
+  const body = new Ammo.btRigidBody(info);
+  body.setFriction(0.9);
+  body.setRestitution(0);
+
+  let targetMask = 0;
+  for (const rb of targets) targetMask |= 1 << rb.params.groupIndex;
+  physics.world.addRigidBody(body, 1 << group, targetMask);
+  // 反过来也要把地面的组加进目标刚体的掩码，Bullet 的过滤是双向的
+  for (const rb of targets) setBodyMask(physics, rb, rb.params.groupTarget | (1 << group));
+
+  physics.ground = { body, shape, motion, info, tr, origin, zero, group, bodies: targets.length };
+  return physics.ground;
+}
+
 // 把 physics.json 的内容套到刚体上。写错名字（一个刚体都没命中）会在控制台提示，方便排查
 export function applyCharacterTweaks(physics, tweaks, opts = {}) {
   if (!tweaks) return;
@@ -199,6 +239,11 @@ export function applyCharacterTweaks(physics, tweaks, opts = {}) {
       if (!on(it, 'always')) continue;
       const r = tweakDamping(physics, it.bodies, it.linear, it.angular);
       if (!r.bodies) console.warn(`${tag} damping 没命中刚体："${it.bodies}"`);
+    }
+    for (const it of tweaks.ground || []) {
+      if (!addGroundCollision(physics, it.bodies)) {
+        console.warn(`${tag} ground 没命中刚体或没有空闲碰撞组："${it.bodies}"`);
+      }
     }
   } catch (err) {
     console.error(`${tag} 应用失败，已忽略剩余配置:`, err);
@@ -359,6 +404,17 @@ export function disposePhysics(physics) {
       for (const arr of [manager.transforms, manager.quaternions, manager.vector3s]) {
         for (const o of arr || []) safeDestroy(o);
       }
+    }
+    // 地面（physics.json 的 ground）：不是 MMDPhysics 造的，得自己从 world 摘掉并销毁
+    const ground = physics.ground;
+    if (ground) {
+      try {
+        if (ground.body && world) world.removeRigidBody(ground.body);
+      } catch {}
+      for (const o of [ground.body, ground.motion, ground.info, ground.shape, ground.tr, ground.origin, ground.zero]) {
+        safeDestroy(o);
+      }
+      physics.ground = null;
     }
     // world 必须先于它内部的 dispatcher/broadphase/solver/collisionConfig 销毁
     // （world 析构时还会用到它们；这几个反过来对 world 没有所有权关系）

@@ -17,6 +17,13 @@ const ARM_PAIRS = [
 ];
 const armAbduct = []; // { bone, base, sign }
 const armApplied = []; // 待机动画期间已叠加外展的骨骼：{ bone, saved }，saved = 叠加前的动画姿态
+// 尾巴抬高（可选，默认关闭）：把「尾巴起始点」那根骨骼绕 X 轴转一点，整条尾巴绕屁股根抬起来。
+// 尾巴穿地的正解是 physics.json 的 ground（尾巴与 y=0 的地面碰撞，垂到地面就停住，动作也自然），
+// 这里只在"想让尾巴整体离开地面、不接触地面"时用。
+// 单位弧度（0.12 ≈ 7°），0 = 关闭；尾巴尖还擦地就调大，翘得太高就调小。
+const TAIL_LIFT = 0;
+let tailLift = null; // { bone, base, sign }：尾巴根骨骼、它的原始旋转、抬升方向
+const tailApplied = []; // 待机动画期间已叠加抬升的骨骼：{ bone, saved }
 // 切入待机动画时外展角度从 0 平滑渐入到 ARM_ABDUCT，避免手臂突然"弹"开。
 // applyIdleArms 每帧调用；距上次调用超过 ARM_FADE_GAP 秒，说明是新一轮切入（或暂停后恢复），重新渐入。
 const ARM_FADE_IN = 0.5; // 渐入时长（秒）
@@ -51,6 +58,35 @@ function pickAbductSign(mesh, arm, elbow, outward) {
   return after >= before ? 1 : -1;
 }
 
+// 找出尾巴骨骼链的起始点（父骨骼不再是尾巴的那一根，也就是长在屁股上的那一根）和末梢，
+// 先试着绕 X 轴转一点，看哪个方向能把尾巴尖抬起来——不同模型的骨骼朝向不一致，
+// 写死符号会在某些模型上把尾巴扎进地里。试完立刻还原，只记下方向，不留下姿态改动。
+// 骨骼名不是 tail / 尾 开头的模型直接跳过。
+function setupTailLift(mesh) {
+  tailLift = null;
+  if (!TAIL_LIFT || !mesh.skeleton) return;
+  const bones = mesh.skeleton.bones;
+  const isTail = (b) => /^(tail|尾)/i.test(b.name);
+  const tails = bones.filter(isTail);
+  if (!tails.length) return;
+  const root = tails.find((b) => !(b.parent && isTail(b.parent)));
+  const tip = tails.find((b) => !(b.children || []).some(isTail));
+  if (!root || !tip) return;
+  const v = new THREE.Vector3();
+  const tipY = () => {
+    mesh.updateMatrixWorld(true);
+    return tip.getWorldPosition(v).y;
+  };
+  const base = root.rotation.clone();
+  const before = tipY();
+  root.rotation.x = base.x + 0.1;
+  const after = tipY();
+  root.rotation.copy(base);
+  mesh.updateMatrixWorld(true);
+  tailLift = { bone: root, base, sign: after >= before ? 1 : -1 };
+  console.log(`[pet] 尾巴抬升：${root.name} ${tailLift.sign > 0 ? '+' : '-'}${TAIL_LIFT} rad（绕尾巴起始点抬整条尾巴）`);
+}
+
 export function setupIdle() {
   const mesh = state.mesh;
   for (const name of IDLE_BONE_NAMES) {
@@ -73,6 +109,7 @@ export function setupIdle() {
   for (const key of Object.keys(dict)) {
     if (key === 'まばたき') blinkMorphIndex = dict[key];
   }
+  setupTailLift(mesh); // 只探测抬升方向，不改绑定姿态（物理按绑定姿态算 boneOffset，改了会打架）
   // 记录全身骨骼的初始（绑定）姿态；resetPose（dance.js）跳舞结束后要用它还原
   if (mesh.skeleton) {
     state.basePose = mesh.skeleton.bones.map((b) => ({
@@ -97,6 +134,7 @@ export function idlePose(t) {
   for (const { bone, base, sign } of armAbduct) {
     bone.rotation.set(base.x, base.y, base.z + sign * ARM_ABDUCT);
   }
+  applyTailLift();
   const center = idleBones['センター'];
   const upper = idleBones['上半身'];
   const head = idleBones['頭'];
@@ -131,6 +169,29 @@ export function restoreIdleArms() {
   armApplied.length = 0;
 }
 
+// 尾巴抬升：把尾巴起始点骨骼从它的原始旋转再绕 X 轴转 TAIL_LIFT。
+// 用绝对角度而不是累加，程序化待机每帧调用也不会越叠越高。
+function applyTailLift() {
+  if (!tailLift) return;
+  const { bone, base, sign } = tailLift;
+  bone.rotation.set(base.x + sign * TAIL_LIFT, base.y, base.z);
+}
+
+// 待机动画：helper.update() 算完动画后调用，在动画给出的尾巴姿态上再叠加抬升
+export function applyIdleTail() {
+  tailApplied.length = 0;
+  if (!tailLift) return;
+  const { bone, sign } = tailLift;
+  tailApplied.push({ bone, saved: bone.quaternion.clone() });
+  bone.rotation.x += sign * TAIL_LIFT;
+}
+
+// helper.update() 之前调用：撤销上一帧的尾巴抬升，让动画/物理从原始姿态重新算
+export function restoreIdleTail() {
+  for (const { bone, saved } of tailApplied) bone.quaternion.copy(saved);
+  tailApplied.length = 0;
+}
+
 export function updateBlink(t) {
   const mesh = state.mesh;
   if (blinkMorphIndex < 0 || !mesh) return;
@@ -159,6 +220,8 @@ export function resetIdle() {
   for (const key of Object.keys(idleBones)) delete idleBones[key];
   armAbduct.length = 0;
   armApplied.length = 0;
+  tailLift = null;
+  tailApplied.length = 0;
   armFade = 0;
   armLastAt = -1;
   blinkMorphIndex = -1;

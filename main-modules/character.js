@@ -301,6 +301,7 @@ function loadLights(characterName) {
 //   noCollide         [{ bodies, with, when }]  bodies 命中的刚体不再和 with 命中的刚体碰撞；when 默认 "idle"（仅待机）
 //   freeze            [{ bodies, when }]  bodies 命中的刚体改成跟随骨骼不再模拟；when 默认 "idle"（仅待机）
 //   damping           [{ bodies, linear, angular, when }]  覆盖命中刚体的线性 / 角阻尼（0~1）；when 默认 "always"
+//   ground            [{ bodies }]  在 y=0（脚底）加一块地面，只让 bodies 命中的刚体与它碰撞（尾巴/裙摆不再穿地）
 //   when 只有 "idle"（仅待机动画期间）和 "always"（任何动作）两种取值
 function loadPhysicsTweaks(characterName) {
   const p = path.join(CHARACTER_ROOT, characterName, 'physics.json');
@@ -326,7 +327,7 @@ function loadPhysicsTweaks(characterName) {
     warn('格式不对（应为对象），已忽略');
     return null;
   }
-  const out = { noCollide: [], freeze: [], damping: [] };
+  const out = { noCollide: [], freeze: [], damping: [], ground: [] };
   for (const it of Array.isArray(data.noCollide) ? data.noCollide : []) {
     if (it && isRe(it.bodies) && isRe(it.with)) {
       out.noCollide.push({ bodies: it.bodies, with: it.with, when: it.when === 'always' ? 'always' : 'idle' });
@@ -346,6 +347,10 @@ function loadPhysicsTweaks(characterName) {
         when: it.when === 'idle' ? 'idle' : 'always',
       });
     } else warn('里有一条 damping 缺少合法的 bodies 正则或 0~1 的 linear / angular，已跳过');
+  }
+  for (const it of Array.isArray(data.ground) ? data.ground : []) {
+    if (it && isRe(it.bodies)) out.ground.push({ bodies: it.bodies });
+    else warn('里有一条 ground 缺少合法的 bodies 正则，已跳过');
   }
   return out;
 }
