@@ -1,6 +1,11 @@
 {
   "noCollide": [
     {
+      "bodies": "^(clothes_base_[LR]_a_|ornament_base_[LR]_a_|prop_base_[LR]_a_|pz_base_[LR]_)",
+      "with": "^(上|下)半身[0-9]?$|^(左|右)(足|ひざ)|^tail_base_M_",
+      "when": "idle"
+    },
+    {
       "bodies": "^(prop|ornament|scapula)_base_|^clothes_base_[LR]_b_",
       "with": "^(prop|ornament|scapula)_base_|^clothes_base_[LR]_b_|^tail_base_M_|^(上|下)半身[0-9]?$|^(左|右)(足|ひざ)|^(左|右)(腕|ひじ|手首)",
       "when": "idle"
