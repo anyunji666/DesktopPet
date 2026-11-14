@@ -291,11 +291,36 @@ export function normalizeModelScale() {
   }
 }
 
+// 取景用的「身体前后中心」。包围盒的 z 中心会被尾巴、长后发、背后的武器拉偏（庄方宜的尾巴
+// 向后伸出 11 个单位，中心被拉到 -5，身体实际在 0 附近），于是镜头对准的是一个偏后的点，
+// 身体反而离镜头更近——看上去就是"这个角色站得比别人靠前、显得更大"。
+// 顶点 z 的中位数对这类少量离群顶点不敏感，各角色因此能对齐到同一个站立位置。
+function bodyCenterZ(root) {
+  const zs = [];
+  root.updateMatrixWorld(true);
+  root.traverse((obj) => {
+    const attr = obj.isMesh && obj.geometry && obj.geometry.attributes.position;
+    if (!attr) return;
+    const e = obj.matrixWorld.elements;
+    // 只用来定一个距离，十几万顶点没必要全取：中位数对抽样不敏感，控制在两万个左右
+    const stride = Math.max(1, Math.floor(attr.count / 20000));
+    for (let i = 0; i < attr.count; i += stride) {
+      zs.push(e[2] * attr.getX(i) + e[6] * attr.getY(i) + e[10] * attr.getZ(i) + e[14]);
+    }
+  });
+  if (!zs.length) return null;
+  zs.sort((a, b) => a - b);
+  return zs[zs.length >> 1];
+}
+
 export function frameModel() {
   const mesh = state.mesh;
   const box = new THREE.Box3().setFromObject(mesh);
   const size = box.getSize(new THREE.Vector3());
   const center = box.getCenter(new THREE.Vector3());
+  // 前后方向用中位数代替包围盒中心，避免尾巴/后发/背部配件把身体推"靠前"
+  const zMid = bodyCenterZ(mesh);
+  if (zMid !== null) center.z = zMid;
   // 给舞蹈位移和头脚留足余量
   const targetH = size.y * 1.45;
   const fov = (camera.fov * Math.PI) / 180;
