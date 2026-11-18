@@ -199,10 +199,9 @@ function describeParty(party, cur) {
     lines.push(`每月收入 ${m(s.monthlyIncome)}，每月支出 ${m(s.monthlyExpense)}，每月${s.monthlySurplus >= 0 ? '结余' : '亏空'} ${m(Math.abs(s.monthlySurplus))}`);
   }
   lines.push('不同时间内能拿出的钱：');
-  // 三档写法：不为负写「共 N」；为负：第一档写「无，已透支 N」，第二、三档写「无，倒欠 N」
+  // 两档写法：不为负写「共 N」；为负：第一档写「无，已透支 N」，第二档写「无，倒欠 N」
   const tier = (label, v, owe) => `  - ${label}：${v < 0 ? `无，${owe} ${m(-v)}` : `共 ${m(v)}`}`;
   lines.push(tier('直接可用账户资金', s.today, '已透支'));
-  lines.push(tier('卖掉 7 天内能到账的资产后的账户可用资金', s.within7, '倒欠'));
   lines.push(tier('卖掉所有资产并还清所有欠款后的账户可用资金', s.net31, '倒欠'));
 
   // 现金类资产已经算在「直接可用账户资金」里，这里只列还要卖才能变现的

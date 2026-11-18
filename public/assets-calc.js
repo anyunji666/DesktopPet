@@ -219,7 +219,6 @@
       monthlyExpense,
       monthlySurplus: r2(monthlyIncome - monthlyExpense), // 可以是负数（入不敷出）
       today: within(0), // 账户资金：现金类金额之和，被扣成负数时这里也是负数（透支）
-      within7: within(7),
       within31,
       net31: r2(within31 - totalDebt), // 一月以内：能到账的资产（最多 31 天，等于全部资产）减去全部欠款，可以是负数
     };

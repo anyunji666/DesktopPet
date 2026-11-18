@@ -60,7 +60,6 @@ function buildMenu() {
         click: () => send('menu-action', { type: 'dance', index: i }),
       })),
     },
-    { type: 'separator' },
     { label: '🔄 重置模型朝向', click: () => send('menu-action', { type: 'resetYaw' }) },
     { label: '⏸ 待机（停止跳舞）', click: () => send('menu-action', { type: 'idle' }) },
     { type: 'separator' },
